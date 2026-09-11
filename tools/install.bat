@@ -9,13 +9,15 @@ rem ---------------------------------------------------------------------------
 set ENVNAME=feabas-workbench
 set HERE=%~dp0..
 set CONDA=
-rem conda.exe on PATH wins; otherwise look in the usual install roots (same list as core\envs.py)
+rem conda.exe on PATH wins; otherwise look in the usual install roots (same list as core\envs.py).
+rem %%~$PATH:n is unquoted on purpose (the if argument needs the bare path), so the whole
+rem comparison must be quoted instead: an empty result would otherwise read `if not ==""`.
 for %%n in (conda.exe mamba.exe micromamba.exe) do (
-  if not defined CONDA if not "%%~$PATH:n"=="" set CONDA=%%~$PATH:n
+  if not defined CONDA if not "%%~$PATH:n" == "" set "CONDA=%%~$PATH:n"
 )
 for %%b in ("%LOCALAPPDATA%" "%USERPROFILE%" "C:\ProgramData" "C:") do (
   for %%d in (miniforge3 mambaforge miniconda3 anaconda3 Miniconda3 Anaconda3) do (
-    if exist "%%~b\%%d\Scripts\conda.exe" if not defined CONDA set CONDA=%%~b\%%d\Scripts\conda.exe
+    if exist "%%~b\%%d\Scripts\conda.exe" if not defined CONDA set "CONDA=%%~b\%%d\Scripts\conda.exe"
   )
 )
 if not defined CONDA (
@@ -50,9 +52,12 @@ if not exist "%PY%" (
 echo Installing the workbench into %PY%
 "%PY%" -m pip install --index-url https://pypi.org/simple -e "%HERE%"
 if errorlevel 1 goto :fail
-rem desktop shortcut
+rem desktop shortcut. PowerShell -Command parses single quotes inside double quotes itself, so
+rem a quote anywhere in a path (%SC%, %PY%, %HERE%) would break the command silently; wrapping
+rem every value in two quote styles keeps it one string for cmd and for PowerShell.
 set SC=%USERPROFILE%\Desktop\FEABAS Workbench.lnk
-powershell -NoProfile -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%SC%'); $s.TargetPath='%PY%'; $s.Arguments='-m feabas_workbench'; $s.WorkingDirectory='%HERE%'; $s.Save()"
+powershell -NoProfile -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut(""'%SC%'""); $s.TargetPath=""'%PY%'""; $s.Arguments='-m feabas_workbench'; $s.WorkingDirectory=""'%HERE%'""; $s.Save()"
+if errorlevel 1 echo Could not write the Desktop shortcut - start the app with start_gui.bat instead.
 echo.
 echo Done. Starting the workbench (also on the Desktop shortcut).
 "%PY%" -m feabas_workbench

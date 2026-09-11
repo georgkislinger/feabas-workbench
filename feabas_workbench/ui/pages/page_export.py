@@ -119,7 +119,7 @@ class ExportPage(Page):
         self.q_view.hovered.connect(lambda x, y: self.q_info.setText(f"x={x:.0f} y={y:.0f}   mip {self.q_view.current_mip}"))
 
         self.editor = ConfigEditor(); self.editor.changed.connect(self._editor_changed)
-        self.tabs.addTab(self.editor, "Alignment settings (all)")
+        self.tabs.addTab(self.editor, "Alignment settings")
         self.ctx.jobs.job_finished.connect(self._job_finished)
 
     # ------------------------------------------------------------------

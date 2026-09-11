@@ -46,8 +46,8 @@ class AlignPage(Page):
         self._build_qc()
         self.editor_t = ConfigEditor(); self.editor_t.changed.connect(lambda: self._editor_changed("thumbnail"))
         self.editor_a = ConfigEditor(); self.editor_a.changed.connect(lambda: self._editor_changed("alignment"))
-        self.tabs.addTab(self.editor_t, "Thumbnail settings (all)")
-        self.tabs.addTab(self.editor_a, "Alignment settings (all)")
+        self.tabs.addTab(self.editor_t, "Thumbnail settings")
+        self.tabs.addTab(self.editor_a, "Alignment settings")
         self.ctx.jobs.job_finished.connect(self._job_finished)
 
     # ---------------------------------------------------------------- coarse
@@ -180,7 +180,7 @@ class AlignPage(Page):
         self.s_show.currentIndexChanged.connect(self._show_structure)
         fb.clicked.connect(self.s_view.fit)
         tl.addWidget(f)
-        self.tabs.addTab(t, "Structure-guided (optional)")
+        self.tabs.addTab(t, "Structure-guided")
 
     # ---------------------------------------------------------------- fine
     def _build_fine(self) -> None:

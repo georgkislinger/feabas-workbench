@@ -46,7 +46,7 @@ class MainWindow(QMainWindow):
 
         self.nav = QListWidget()
         self.nav.setObjectName("Nav")
-        self.nav.setFixedWidth(230)
+        self.nav.setFixedWidth(200)
         self.stack = QStackedWidget()
         for cls in (SetupPage, ProjectPage, PreprocessPage, StitchPage, MasksPage, AlignPage, ExportPage):
             page = cls(self.ctx)
@@ -58,14 +58,13 @@ class MainWindow(QMainWindow):
         self.nav.currentRowChanged.connect(self._nav_changed)
 
         left = QWidget()
-        left.setFixedWidth(230)
+        left.setFixedWidth(200)
         llay = QVBoxLayout(left)
         llay.setContentsMargins(0, 0, 0, 0)
         llay.setSpacing(0)
         self.project_label = QLabel("no project")
         self.project_label.setObjectName("Hint")
         self.project_label.setWordWrap(True)
-        self.project_label.setMaximumWidth(230)
         self.project_label.setContentsMargins(12, 10, 12, 10)
         self.project_label.setStyleSheet(f"background: {theme.PANEL}; border-bottom: 1px solid {theme.BORDER};")
         llay.addWidget(self.project_label)
@@ -74,15 +73,19 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.stack, 1)
         self.setCentralWidget(central)
 
-        # log dock
+        # log dock: hidden until something worth reading arrives, so the workflow pages
+        # keep the whole window. View > Log (Ctrl+L) toggles it; it also opens on its
+        # own for errors and while a job runs, and the status bar mirrors the last line.
         self.log_panel = LogPanel()
         self.ctx.add_log_sink(self.log_panel.append)
+        self.ctx.add_log_sink(self._on_log)
         dock = QDockWidget("Log", self)
         dock.setObjectName("LogDock")
         dock.setWidget(self.log_panel)
-        dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable)
         self.addDockWidget(Qt.BottomDockWidgetArea, dock)
         dock.setMinimumHeight(160)
+        dock.setVisible(False)
         self.log_dock = dock
 
         # status bar
@@ -121,7 +124,12 @@ class MainWindow(QMainWindow):
         a = QAction("Re-read pipeline state", self); a.setShortcut("F5"); a.triggered.connect(self.ctx.state_changed.emit); p.addAction(a)
 
         v = mb.addMenu("&View")
-        a = QAction("Toggle log", self); a.setShortcut("Ctrl+L"); a.triggered.connect(lambda: self.log_dock.setVisible(not self.log_dock.isVisible())); v.addAction(a)
+        self.log_action = QAction("&Log", self)
+        self.log_action.setShortcut("Ctrl+L")
+        self.log_action.setCheckable(True)
+        self.log_action.toggled.connect(self.log_dock.setVisible)
+        self.log_dock.visibilityChanged.connect(self.log_action.setChecked)
+        v.addAction(self.log_action)
 
         h = mb.addMenu("&Help")
         a = QAction("FEABAS on GitHub", self); a.triggered.connect(lambda: self._open_url("https://github.com/YuelongWu/feabas")); h.addAction(a)
@@ -217,12 +225,22 @@ class MainWindow(QMainWindow):
                                          f"Vendored FEABAS 3.0.5 scripts; steps run in your own FEABAS environment.")
 
     # -- jobs ----------------------------------------------------------
+    def _on_log(self, level: str, text: str) -> None:
+        """Keep one log line in the status bar and open the dock when it matters."""
+        line = text.splitlines()[0] if text.splitlines() else ""
+        if len(line) > 160:
+            line = line[:157] + "…"
+        self.statusBar().showMessage(line, 10000)
+        if level == "error":
+            self.log_dock.setVisible(True)
+
     def _job_started(self, spec) -> None:
         self.job_label.setText(f"running: {spec.name}")
         self.progress.setVisible(True)
         self.progress.setRange(0, 0)
         self.cancel_btn.setVisible(True)
         self.ctx.log(f"started: {spec.name}")
+        self.log_dock.setVisible(True)   # a job's output lives in the log; show it while it runs
 
     def _job_progress(self, done: int, expected: int, msg: str) -> None:
         if expected > 0:
