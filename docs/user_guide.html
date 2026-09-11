@@ -478,7 +478,8 @@ old and new settings. The honest fix is <strong>Clear…</strong> on the earlies
 <li><strong>Run all steps below in order</strong> – queues the steps of that panel that are not already <em>done</em>.</li>
 </ul>
 <p>Only one job runs at a time; further submissions queue. The status bar shows progress and a <strong>Cancel
-job</strong> button; the log dock (Ctrl+L) carries FEABAS's own messages.</p>
+job</strong> button. The log dock opens on its own while a job runs (or when an error is logged); <strong>View →
+Log</strong> (Ctrl+L) shows or hides it, and it carries FEABAS's own messages.</p>
 <h3 id="24-settings-come-in-three-flavours">2.4 Settings come in three flavours</h3>
 <div class="table-wrap"><table>
 <thead>
@@ -1451,7 +1452,7 @@ image size works.</p>
 <hr />
 <h2 id="8-window-5-alignment">8. Window 5 – Alignment</h2>
 <p>Coarse alignment works on thumbnails, fine alignment on finite-element meshes at the working mip. Tabs:
-<em>Coarse alignment</em>, <em>Structure-guided (optional)</em>, <em>Fine alignment</em>, <em>Test on subset</em>, <em>Quality check</em>,
+<em>Coarse alignment</em>, <em>Structure-guided</em>, <em>Fine alignment</em>, <em>Test on subset</em>, <em>Quality check</em>,
 and the two full settings trees.</p>
 <h3 id="coarse-alignment-tab">Coarse alignment tab</h3>
 <div class="table-wrap"><table>
@@ -1494,8 +1495,8 @@ and the two full settings trees.</p>
 recommended, since it produces the aligned thumbnails the quality check needs).</p>
 <p><em>Match thumbnails</em> is the most failure-prone step in the whole pipeline; read its log. When a pair fails
 you can add manual BigWarp matches in Fiji, or use structure-guided matching (next tab).</p>
-<h3 id="structure-guided-tab-optional">Structure-guided tab (optional)</h3>
-<p>Off by default and it does not change the normal workflow when unused. The idea: align on structures you
+<h3 id="structure-guided-tab">Structure-guided tab</h3>
+<p>Switched off by default and it does not change the normal workflow when unused. The idea: align on structures you
 care about (nuclei, mitochondria, vessels) instead of anonymous texture features.</p>
 <p><strong>1. Detect structures</strong></p>
 <div class="table-wrap"><table>
