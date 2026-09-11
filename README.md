@@ -159,6 +159,6 @@ structure matching, match re-weighting, export), `feabas_workbench/ui` (PySide6 
 This is a front end for **[FEABAS](https://github.com/YuelongWu/feabas)** by Yuelong Wu (Center for
 Brain Science, Harvard University), which does the actual stitching and alignment. FEABAS is MIT-licensed;
 its driver scripts and default configuration files are vendored here unchanged, with their license, under
-`feabas_workbench/vendor/feabas_3_0_5/`.
+`feabas_workbench/vendor/feabas_3_0_5/` (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 
 The workbench is released under the [MIT License](LICENSE).

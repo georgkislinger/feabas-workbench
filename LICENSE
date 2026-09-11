@@ -19,17 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
---------------------------------------------------------------------------------
-
-Third-party software
-
-This repository vendors the driver scripts, tools and default configuration
-files of FEABAS 3.0.5 under feabas_workbench/vendor/feabas_3_0_5/, unmodified.
-
-    FEABAS - https://github.com/YuelongWu/feabas
-    Copyright (c) 2022 Yuelong Wu, Center for Brain Science, Harvard University
-    MIT License (see feabas_workbench/vendor/feabas_3_0_5/LICENSE)
-
-FEABAS itself is installed separately, as a Python package, into an environment
-of your choice; it is not modified by the workbench.
