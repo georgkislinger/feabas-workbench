@@ -1,0 +1,17 @@
+# Normalise text files; keep the launchers' line endings right for their platform
+* text=auto
+*.sh     text eol=lf
+*.bat    text eol=crlf
+*.py     text
+*.md     text
+*.yaml   text
+*.yml    text
+*.toml   text
+*.ijm    text
+
+# binaries
+*.ckpt   binary
+*.pt     binary
+*.png    binary
+*.tif    binary
+*.tiff   binary

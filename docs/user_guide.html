@@ -1,0 +1,2161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root { color-scheme: light dark; }
+html, body { margin: 0; }
+img { max-width: 100%; }
+[hidden] { display: none !important; }
+</style>
+<title>FEABAS Workbench Guide</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@400;500&display=swap">
+<style>
+:root {
+  --ground: #F2F4F7;
+  --surface: #FFFFFF;
+  --raised: #EDF1F6;
+  --rule: #D8DFE8;
+  --rule-soft: #E7ECF2;
+  --ink: #141C26;
+  --ink-soft: #3C4A5A;
+  --muted: #5D6B7C;
+  --accent: #1D4ED8;
+  --accent-soft: #E5EDFF;
+  --ok: #0F9D6E;
+  --warn: #B87503;
+  --err: #C33636;
+  --blocked: #6B7280;
+  --code-bg: #EEF2F7;
+  --code-ink: #1B3A6B;
+  --shadow: 0 1px 2px rgba(20, 28, 38, .06);
+  --rail-w: 274px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #111827;
+    --surface: #1A2332;
+    --raised: #273244;
+    --rule: #374151;
+    --rule-soft: #2B3648;
+    --ink: #E5E7EB;
+    --ink-soft: #C7CEDA;
+    --muted: #9CA3AF;
+    --accent: #60A5FA;
+    --accent-soft: #1E3A5F;
+    --ok: #34D399;
+    --warn: #F59E0B;
+    --err: #F87171;
+    --blocked: #6B7280;
+    --code-bg: #202B3C;
+    --code-ink: #A8C7F0;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .35);
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #111827;
+  --surface: #1A2332;
+  --raised: #273244;
+  --rule: #374151;
+  --rule-soft: #2B3648;
+  --ink: #E5E7EB;
+  --ink-soft: #C7CEDA;
+  --muted: #9CA3AF;
+  --accent: #60A5FA;
+  --accent-soft: #1E3A5F;
+  --ok: #34D399;
+  --warn: #F59E0B;
+  --err: #F87171;
+  --blocked: #6B7280;
+  --code-bg: #202B3C;
+  --code-ink: #A8C7F0;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .35);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.skip {
+  position: absolute; left: -9999px; top: 0; z-index: 20;
+  background: var(--surface); color: var(--ink); padding: 10px 14px; border: 1px solid var(--rule);
+}
+.skip:focus { left: 8px; top: 8px; }
+
+/* ---------- layout ---------- */
+.layout { display: grid; grid-template-columns: var(--rail-w) minmax(0, 1fr); align-items: start; }
+
+.rail {
+  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  background: var(--surface); border-right: 1px solid var(--rule);
+  display: flex; flex-direction: column; gap: 14px; padding: 22px 0 28px;
+}
+.rail-head { padding: 0 20px; display: flex; flex-direction: column; gap: 2px; }
+.rail-title { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+.eyebrow {
+  margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .11em; text-transform: uppercase; color: var(--muted);
+}
+.search { padding: 0 20px; display: flex; flex-direction: column; gap: 6px; }
+#q {
+  width: 100%; font: inherit; font-size: 13.5px; color: var(--ink);
+  background: var(--raised); border: 1px solid var(--rule); border-radius: 6px; padding: 7px 10px;
+}
+#q::placeholder { color: var(--muted); }
+#q:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.search-status { margin: 0; font-size: 12px; color: var(--muted); }
+
+#toc { display: flex; flex-direction: column; padding: 0 12px; }
+#toc a {
+  display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; align-items: baseline;
+  padding: 6px 8px; border-radius: 5px; text-decoration: none; color: var(--ink-soft); font-size: 13.5px;
+  border-left: 2px solid transparent;
+}
+#toc a .num { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+#toc a:hover { background: var(--raised); color: var(--ink); }
+#toc a.active { color: var(--accent); background: var(--accent-soft); font-weight: 500; }
+#toc a.sub {
+  grid-template-columns: 22px minmax(0, 1fr);
+  font-size: 12.5px; color: var(--muted); padding-top: 4px; padding-bottom: 4px;
+}
+#toc a.sub .num { visibility: hidden; }
+#toc a.sub.active { color: var(--accent); background: transparent; }
+#toc a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+#toc a[hidden] { display: none; }
+
+main { padding: 44px 48px 120px; min-width: 0; }
+.masthead { max-width: 78ch; display: flex; flex-direction: column; gap: 10px; }
+.masthead h1 {
+  margin: 0; font-size: clamp(30px, 4vw, 40px); line-height: 1.1; letter-spacing: -.02em; font-weight: 600;
+  text-wrap: balance;
+}
+.standfirst {
+  margin: 0; font-family: "IBM Plex Serif", Georgia, serif; font-size: 17px; line-height: 1.6; color: var(--ink-soft);
+  max-width: 62ch;
+}
+
+/* pipeline rail: the seven windows, in the order the pipeline runs */
+.pipeline {
+  list-style: none; margin: 22px 0 0; padding: 0;
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: stretch;
+  max-width: 100%;
+}
+.pipeline li { display: flex; align-items: center; gap: 6px; }
+.pipeline a {
+  display: flex; align-items: baseline; gap: 7px; text-decoration: none;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 5px;
+  padding: 6px 10px; color: var(--ink-soft); font-size: 12.5px; box-shadow: var(--shadow);
+}
+.pipeline a:hover { border-color: var(--accent); color: var(--ink); }
+.pipeline a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pipeline .n {
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px; color: var(--accent); font-weight: 500;
+}
+.pipeline .arrow { color: var(--rule); font-size: 12px; }
+
+/* ---------- document body ---------- */
+.doc { max-width: 78ch; margin-top: 40px; }
+.doc > * { margin: 0; }
+.doc > * + * { margin-top: 14px; }
+
+.doc h2 {
+  margin: 56px 0 0; padding-top: 18px; border-top: 1px solid var(--rule);
+  font-size: 24px; line-height: 1.2; letter-spacing: -.015em; font-weight: 600; text-wrap: balance;
+  scroll-margin-top: 20px;
+}
+.doc h2:first-child { margin-top: 0; border-top: none; padding-top: 0; }
+.doc h3 {
+  margin: 34px 0 0; font-size: 17px; font-weight: 600; letter-spacing: -.005em; color: var(--ink);
+  scroll-margin-top: 20px;
+}
+.doc h4 { margin: 24px 0 0; font-size: 14px; font-weight: 600; color: var(--ink-soft); scroll-margin-top: 20px; }
+.doc h2 + p, .doc h3 + p, .doc h4 + p { margin-top: 10px; }
+
+.doc p {
+  font-family: "IBM Plex Serif", Georgia, serif; font-size: 15.5px; line-height: 1.65; color: var(--ink-soft);
+  max-width: 68ch;
+}
+.doc strong { color: var(--ink); font-weight: 600; }
+.doc em { font-style: italic; }
+.doc a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+.doc ul, .doc ol { padding-left: 20px; max-width: 68ch; display: flex; flex-direction: column; gap: 7px; }
+.doc li { line-height: 1.55; }
+.doc li > p { margin: 0; }
+
+.doc hr { border: none; height: 0; margin: 0; }
+
+.doc code {
+  font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; font-size: .86em;
+  background: var(--code-bg); color: var(--code-ink); padding: .12em .38em; border-radius: 3px;
+  overflow-wrap: break-word;
+}
+.doc pre {
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 7px;
+  padding: 14px 16px; overflow-x: auto; box-shadow: var(--shadow);
+}
+.doc pre code {
+  background: none; color: var(--ink); padding: 0; font-size: 12.8px; line-height: 1.6; white-space: pre;
+}
+
+/* tables carry most of the reference content: give them room and their own scroll */
+.table-wrap {
+  overflow-x: auto; border: 1px solid var(--rule); border-radius: 7px; background: var(--surface);
+  box-shadow: var(--shadow); max-width: min(100%, 1040px);
+}
+.doc table { border-collapse: collapse; width: 100%; font-size: 13.6px; }
+.doc thead th {
+  text-align: left; font-weight: 600; font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted); padding: 10px 14px; border-bottom: 1px solid var(--rule); white-space: nowrap;
+  background: var(--raised);
+}
+.doc tbody td {
+  padding: 11px 14px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; color: var(--ink-soft);
+  line-height: 1.5;
+}
+.doc tbody tr:last-child td { border-bottom: none; }
+.doc tbody td:first-child { color: var(--ink); min-width: 11ch; }
+.doc table code { white-space: nowrap; }
+
+/* state chips + material swatches: the app's own vocabulary */
+.chip {
+  display: inline-flex; align-items: center; gap: 7px; white-space: nowrap;
+}
+.chip::before {
+  content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--dot, var(--blocked)); flex: none;
+}
+.chip-ok { --dot: var(--ok); }
+.chip-run { --dot: var(--accent); }
+.chip-stale { --dot: var(--warn); }
+.chip-err { --dot: var(--err); }
+.chip-off { --dot: var(--blocked); }
+.swatch {
+  display: inline-block; width: 13px; height: 13px; border-radius: 2px; border: 1px solid var(--rule);
+  margin-right: 8px; vertical-align: -2px; background: var(--sw, #000);
+}
+
+@media (max-width: 1180px) {
+  .doc, .masthead { max-width: none; }
+}
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+  .rail {
+    position: static; height: auto; border-right: none; border-bottom: 1px solid var(--rule);
+    padding-bottom: 16px;
+  }
+  #toc { max-height: 40vh; overflow-y: auto; }
+  main { padding: 28px 20px 80px; }
+  .doc table { font-size: 13px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; }
+}
+html { scroll-behavior: smooth; }
+</style>
+
+</head>
+<body>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<div class="layout">
+  <aside class="rail">
+    <div class="rail-head">
+      <p class="eyebrow">FEABAS Workbench</p>
+      <p class="rail-title">User guide</p>
+    </div>
+    <div class="search">
+      <input id="q" type="search" placeholder="Search, e.g. conf_thresh, mip, folds" aria-label="Search the guide" autocomplete="off">
+      <p class="search-status" id="qs" hidden></p>
+    </div>
+    <nav id="toc" aria-label="Contents"></nav>
+  </aside>
+
+  <main id="main">
+    <header class="masthead">
+      <p class="eyebrow">Serial-section EM · stitching, alignment, export</p>
+      <h1>FEABAS Workbench user guide</h1>
+      <p class="standfirst">Every window, every setting: what it does, when to touch it, and what it makes
+      stale if you change it later. Written against the seven windows of the app, in the order the pipeline
+      runs.</p>
+      <ol class="pipeline" id="pipeline" aria-label="The seven windows, in pipeline order"></ol>
+    </header>
+
+    <div class="doc" id="doc">
+<h2 id="1-installing-and-starting-the-workbench">1. Installing and starting the workbench</h2>
+<h3 id="11-get-the-code">1.1 Get the code</h3>
+<p>The workbench is distributed from GitHub for now (a PyPI package will follow). Either</p>
+<ul>
+<li><strong>Download a ZIP</strong>: open the repository page, click the green <strong>Code</strong> button → <strong>Download ZIP</strong>, and
+  unpack it somewhere permanent – the folder you unpack is the one you will start the app from. Avoid
+  paths with spaces or non-ASCII characters; they still work, but they make every later command harder
+  to type.</li>
+<li><strong>Clone it</strong> if you have git: <code>git clone https://github.com/&lt;owner&gt;/&lt;repo&gt;.git</code>. Cloning makes later
+  updates a single <code>git pull</code>.</li>
+</ul>
+<p>The download is small (about 50 MB, most of it the bundled fold-detection network). The example dataset
+is <strong>not</strong> included.</p>
+<h3 id="12-install-pick-the-row-that-matches-your-machine">1.2 Install – pick the row that matches your machine</h3>
+<p>The GUI itself needs Python 3.10 or newer with PySide6 and a few scientific packages. The heavy parts
+(FEABAS, PyTorch) live in <em>separate</em> environments that the app creates for you afterwards (§1.3), so
+the choice here only concerns the GUI.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>You already have</th>
+<th>Do this</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Nothing</strong> – no Python, no conda</td>
+<td>Install <strong>Miniforge</strong> from <a href="https://conda-forge.org/download/">https://conda-forge.org/download/</a> (accept the defaults; on Windows tick <em>Add to PATH</em> if offered, it is not required). Then follow the <em>conda</em> row. Miniforge is the recommended starting point because the FEABAS and deep-learning environments are conda environments too.</td>
+</tr>
+<tr>
+<td><strong>Miniforge, Miniconda or Anaconda</strong></td>
+<td>Windows: double-click <strong><code>tools\install.bat</code></strong>. Linux/macOS: <code>bash tools/install.sh</code>. The script finds your conda (on <code>PATH</code> or in its usual install folder), creates an environment called <code>feabas-workbench</code>, installs the app into it, puts a shortcut on the Windows Desktop and starts the GUI. Later, start it with <code>start_gui.bat</code> / <code>./start_gui.sh</code>.</td>
+</tr>
+<tr>
+<td><strong>Plain Python 3.10+</strong> (python.org, Microsoft Store, your distribution) but no conda</td>
+<td>In the unpacked folder: <br>Windows: <code>python -m venv .venv</code> then <code>.venv\Scripts\python.exe -m pip install -e .</code> <br>Linux/macOS: <code>python3 -m venv .venv</code> then <code>.venv/bin/python -m pip install -e .</code> <br>Afterwards <code>start_gui.bat</code> / <code>./start_gui.sh</code> finds the <code>.venv</code> automatically. The Setup page will offer to <strong>download micromamba</strong> – a single-file conda – when it needs to create the FEABAS and deep-learning environments, so you never have to install conda yourself.</td>
+</tr>
+</tbody>
+</table></div>
+<p>Linux only: PySide6 needs a handful of system libraries that minimal server installs lack. On
+Debian/Ubuntu: <code>sudo apt install libegl1 libopengl0 libxkbcommon0 libdbus-1-3 libxcb-cursor0 libfontconfig1</code>.
+Desktop installs already have them.</p>
+<p>To check the install worked, the test suite runs without any project or data:</p>
+<pre><code class="language-bash">python -m pip install pytest
+python -m pytest tests -q
+</code></pre>
+<h3 id="13-the-two-pipeline-environments">1.3 The two pipeline environments</h3>
+<p>On first start the app opens <strong>Setup</strong> (§3). Click <strong>Detect environments on this machine</strong> – if you
+already have FEABAS or PyTorch installed somewhere, it finds them. Otherwise:</p>
+<ul>
+<li><strong>Install fw-feabas</strong> creates the FEABAS environment (feabas 3.0.5 + TensorStore; a few hundred MB).
+  Needed for stitching, alignment and export – i.e. for everything.</li>
+<li><strong>Install fw-dl</strong> creates the deep-learning environment (PyTorch, CAREamics, ultralytics,
+  segmentation-models-pytorch; several GB). Needed only for the optional model-based steps: fold
+  U-Net, N2V denoising, YOLO structure detection. Pick the PyTorch build for your GPU driver in the
+  drop-down, or <em>cpu</em> if you have no NVIDIA card – everything still works, just slower.</li>
+</ul>
+<p>Both need internet and 10–30 minutes. They can also be created by hand; the commands are in the README.</p>
+<h3 id="14-starting">1.4 Starting</h3>
+<p>Double-click <strong><code>start_gui.bat</code></strong> (Windows) or run <strong><code>./start_gui.sh</code></strong> (Linux/macOS) in the unpacked
+folder. The script looks, in this order, for a <code>.venv</code> in that folder, then for a conda environment
+with PySide6 installed (<code>feabas-gui</code>, <code>feabas-workbench</code>, <code>feabas_env</code>, <code>feabas</code>, under the usual
+Miniforge/Miniconda/Anaconda locations and <code>~/.conda/envs</code>), and runs the app.</p>
+<p>Both scripts forward their arguments, so from a terminal you can also do:</p>
+<pre><code class="language-bat">start_gui.bat --project D:\data\my_stack
+</code></pre>
+<p>To force a particular interpreter (e.g. a second environment you keep for testing):</p>
+<pre><code class="language-bat">set FW_PYTHON=C:\Users\me\AppData\Local\miniforge3\envs\other-env\python.exe
+start_gui.bat
+</code></pre>
+<p>(<code>FW_PYTHON=/path/to/env/bin/python ./start_gui.sh</code> on Linux.)</p>
+<p>A console window stays open behind the GUI when started this way. That is deliberate: unhandled errors
+and the raw FEABAS subprocess output are printed there as well as in the log dock.</p>
+<p>Because the installer pip-installs the package, the environment's own launchers work from any folder
+too: <code>feabas-workbench</code> (no console window) and <code>feabas-workbench-cli</code> (with one, for <code>--screenshot</code>
+and tracebacks), or <code>python -m feabas_workbench</code>.</p>
+<h3 id="command-line-flags">Command-line flags</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--project DIR</code></td>
+<td>open that project folder immediately</td>
+</tr>
+<tr>
+<td><code>--page N</code></td>
+<td>jump to window N (0 = Setup … 6 = Export)</td>
+</tr>
+<tr>
+<td><code>--screenshot DIR</code></td>
+<td>render every window to PNG offscreen and exit (for checking layouts)</td>
+</tr>
+<tr>
+<td><code>--offscreen</code></td>
+<td>use the offscreen Qt platform (no window)</td>
+</tr>
+</tbody>
+</table></div>
+<p>On Windows set <code>QT_QPA_FONTDIR=C:/Windows/Fonts</code> when using <code>--screenshot</code>, otherwise the offscreen
+platform has no fonts.</p>
+<h3 id="what-happens-on-the-first-start">What happens on the first start</h3>
+<ul>
+<li>No FEABAS interpreter configured yet → the app opens <strong>Setup</strong> and logs a warning.</li>
+<li>Otherwise it reopens the last project.</li>
+</ul>
+<p>Machine-level settings live in <code>%APPDATA%\FeabasWorkbench\settings.json</code> (Linux/macOS:
+<code>~/.config/FeabasWorkbench/settings.json</code>): the two interpreters, the Fiji and VASTlite paths, the conda
+executable, the PyTorch wheel index, the recent-project list and the last project. Delete that file to
+start clean; no project folder depends on it.</p>
+<hr />
+<h2 id="2-how-the-workbench-thinks">2. How the workbench thinks</h2>
+<p>Four ideas explain almost every button.</p>
+<h3 id="21-the-project-folder-is-the-feabas-working-directory">2.1 The project folder <em>is</em> the FEABAS working directory</h3>
+<p>FEABAS reads <code>configs/general_configs.yaml</code> from its current working directory, and the workbench runs
+every FEABAS step as a subprocess with <code>cwd = &lt;project folder&gt;</code>. A project folder therefore holds the
+plain FEABAS layout plus a little workbench state:</p>
+<pre><code>project/
+  workbench_project.json          everything the GUI remembers about this project
+  configs/                        general_configs.yaml + default_*.yaml + your overrides
+  stitch/stitch_coord/            one TSV per section – what FEABAS starts from
+  stitch/, stitched_sections/     stitching outputs
+  thumbnail_align/, align/        coarse and fine alignment
+  aligned_stack/, aligned_tensorstore/   rendered output
+  masks/{tissue,folds,structures} workbench intermediates
+  models/{n2v,folds,yolo}/        models you train here
+  tests/&lt;name&gt;/                   sandbox working directories for subset test runs
+  snapshots/&lt;stamp&gt;/              rollback copies
+  exports/                        VAST / OME-Zarr exports
+  logs/                           FEABAS log files
+</code></pre>
+<p>Your raw tiles stay where they are; only the coordinate files point at them. The FEABAS installation is
+never modified.</p>
+<h3 id="22-state-is-read-from-disk-every-time">2.2 State is read from disk, every time</h3>
+<p>There is no hidden database. A step is "done" when its output files exist. Each step card shows one of:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Badge</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="chip chip-off"><strong>not started</strong></span></td>
+<td>no outputs</td>
+</tr>
+<tr>
+<td><span class="chip chip-run"><strong>partly done</strong></span></td>
+<td>some sections have outputs (crash, cancel, or a deliberate subset run)</td>
+</tr>
+<tr>
+<td><span class="chip chip-ok"><strong>done</strong></span></td>
+<td>as many outputs as expected</td>
+</tr>
+<tr>
+<td><span class="chip chip-stale"><strong>stale</strong></span></td>
+<td>outputs exist, but the config file or an upstream step is newer than they are</td>
+</tr>
+<tr>
+<td><span class="chip chip-err"><strong>errors</strong></span></td>
+<td>FEABAS left <code>*_err</code> markers – those sections failed</td>
+</tr>
+<tr>
+<td><span class="chip chip-off"><strong>blocked</strong></span></td>
+<td>a required earlier step has no outputs yet</td>
+</tr>
+</tbody>
+</table></div>
+<p>"Stale" is a warning, not a lock: nothing stops you from running a stale step, but the result can mix
+old and new settings. The honest fix is <strong>Clear…</strong> on the earliest stale step and re-run.</p>
+<p>Press <strong>F5</strong> (Pipeline → Re-read pipeline state) after changing files outside the GUI.</p>
+<h3 id="23-every-step-card-works-the-same-way">2.3 Every step card works the same way</h3>
+<ul>
+<li><strong>Run</strong> – run this step for all sections.</li>
+<li><strong>subset</strong> – reveals <code>from</code> / <code>to</code> / <code>every</code>, which become FEABAS's <code>--start / --stop / --step</code>. Use it
+  to process sections 0–99 here and 100–199 on another machine, or to redo one broken section.</li>
+<li><strong>Inspect</strong> – jump to the quality-check tab for that step.</li>
+<li><strong>Remove error files</strong> – appears only when <code>*_err</code> markers exist; deleting them makes the next run
+  retry exactly those sections.</li>
+<li><strong>Clear…</strong> – deletes this step's outputs <strong>and every later step's outputs</strong>, after showing the list.
+  Snapshot first if the old state was expensive.</li>
+<li><strong>Run all steps below in order</strong> – queues the steps of that panel that are not already <em>done</em>.</li>
+</ul>
+<p>Only one job runs at a time; further submissions queue. The status bar shows progress and a <strong>Cancel
+job</strong> button; the log dock (Ctrl+L) carries FEABAS's own messages.</p>
+<h3 id="24-settings-come-in-three-flavours">2.4 Settings come in three flavours</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Stored in</th>
+<th>Examples</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Machine settings</td>
+<td><code>%APPDATA%\FeabasWorkbench\settings.json</code></td>
+<td>interpreters, Fiji/VAST paths, conda</td>
+</tr>
+<tr>
+<td>Project settings</td>
+<td><code>&lt;project&gt;/workbench_project.json</code></td>
+<td>tile folder, naming rule, voxel size, mask and structure settings</td>
+</tr>
+<tr>
+<td>FEABAS settings</td>
+<td><code>&lt;project&gt;/configs/*.yaml</code></td>
+<td>everything the FEABAS scripts read</td>
+</tr>
+</tbody>
+</table></div>
+<p>FEABAS merges <code>configs/default_&lt;name&gt;.yaml</code> with your <code>configs/&lt;name&gt;.yaml</code>. The workbench shows the
+merged view and <strong>saves only the differences</strong>, so your override file stays short and every overridden
+key is visible as such in the <em>All settings</em> tree. Resetting a key deletes the override.</p>
+<p>Buttons labelled <strong>Apply</strong> write the config file. Nothing is written while you are only typing.</p>
+<hr />
+<h2 id="3-window-0-setup">3. Window 0 – Setup</h2>
+<p>Machine-level configuration, done once per workstation. Only <em>Compute settings</em> is per project.</p>
+<h3 id="environments">Environments</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Control</th>
+<th>What it does</th>
+<th>When to touch it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>FEABAS Python</strong></td>
+<td><code>python.exe</code> of an environment where <code>import feabas</code> works (plus tensorstore, numpy &lt; 2). Runs every stitching/alignment/rendering step.</td>
+<td>Once, or after rebuilding the environment.</td>
+</tr>
+<tr>
+<td><strong>Deep-learning Python</strong></td>
+<td><code>python.exe</code> with torch + careamics + ultralytics + segmentation-models-pytorch. Runs fold detection, YOLO-seg and N2V denoising.</td>
+<td>Only needed for the optional deep-learning features.</td>
+</tr>
+<tr>
+<td><strong>Detect environments on this machine</strong></td>
+<td>Probes every conda environment it can find and reports what each imports. Fills empty fields automatically, preferring a CUDA-capable DL environment.</td>
+<td>First run, or after creating environments by hand.</td>
+</tr>
+<tr>
+<td><strong>Check selected</strong></td>
+<td>Re-probes the two chosen interpreters; warns if <code>feabas</code> or <code>torch</code> is missing.</td>
+<td>After editing a path by hand.</td>
+</tr>
+<tr>
+<td><strong>Use detected → as FEABAS / as deep-learning</strong></td>
+<td>Copies the environment picked in the drop-down into the field above.</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>Save</strong></td>
+<td>Writes the paths (plus Fiji/VAST/conda) to the global settings file.</td>
+<td><strong>Always press this</strong> – the fields are not saved automatically.</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="install-environments">Install environments</h3>
+<p>Only needed if you do not have the environments yet.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Control</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>conda</strong></td>
+<td>Path to <code>conda</code>, <code>mamba</code> or <code>micromamba</code>; auto-detected if Miniforge/Miniconda is installed.</td>
+</tr>
+<tr>
+<td><strong>Download micromamba</strong></td>
+<td>Fetches a standalone micromamba if you have no conda at all.</td>
+</tr>
+<tr>
+<td><strong>PyTorch build</strong></td>
+<td><code>auto from driver</code> picks the wheel index from your NVIDIA driver version; pin CUDA 12.6 / 11.8 / CPU-only if you know better. CUDA 12.6 wheels need driver ≥ 528.</td>
+</tr>
+<tr>
+<td><strong>Install fw-feabas</strong></td>
+<td>Creates <code>fw-feabas</code> (Python 3.12) with feabas 3.0.5 + tensorstore.</td>
+</tr>
+<tr>
+<td><strong>Install fw-dl</strong></td>
+<td>Creates <code>fw-dl</code> (Python 3.11) with torch, segmentation-models-pytorch, ultralytics, careamics 0.3.2. Several GB, 10–30 minutes.</td>
+</tr>
+</tbody>
+</table></div>
+<p>When an install finishes, the corresponding interpreter field is filled in and saved for you.</p>
+<h3 id="hardware">Hardware</h3>
+<p>Read-only: physical cores, threads, RAM, and the GPU with its driver version and the recommended PyTorch
+build. Treat the core count as the ceiling for the per-step <code>workers</code> settings — FEABAS runs one process
+per worker and each caches images, so RAM is usually the real limit. FEABAS itself never uses the GPU;
+only the deep-learning workers do.</p>
+<h3 id="external-viewers">External viewers</h3>
+<p><code>Fiji</code> (<code>ImageJ-win64.exe</code>) and <code>VASTlite</code> (<code>VAST_Lite.exe</code>). Needed for <em>Edit mask in Fiji</em>, <em>Open
+section in Fiji</em> and <em>Open in VASTlite</em>. Auto-detected in the usual install locations.</p>
+<h3 id="compute-settings-this-project">Compute settings (this project)</h3>
+<p><strong>Apply to project</strong> writes these into <code>configs/general_configs.yaml</code>, so a project must be open.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Meaning</th>
+<th>Recommendation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>CPU budget</strong></td>
+<td>FEABAS's global hint for how many cores it may use; <code>0</code> = all physical cores.</td>
+<td>Leave at 0 unless you share the machine. The per-step <code>num_workers</code> values are what actually control load.</td>
+</tr>
+<tr>
+<td><strong>Parallel framework</strong></td>
+<td><code>process</code> (default), <code>thread</code>, <code>dask</code>.</td>
+<td>Keep <code>process</code>. <code>thread</code> is for debugging; <code>dask</code> is for cluster setups.</td>
+</tr>
+<tr>
+<td><strong>Log file level</strong></td>
+<td><code>INFO</code> (default), <code>DEBUG</code>, <code>WARNING</code>.</td>
+<td>Switch to <code>DEBUG</code> when a step fails for reasons the log does not explain, then switch back – DEBUG logs get large.</td>
+</tr>
+</tbody>
+</table></div>
+<hr />
+<h2 id="4-window-1-project-data">4. Window 1 – Project &amp; data</h2>
+<p>This window turns a folder of tiles into FEABAS's <code>stitch/stitch_coord/*.txt</code>. Everything downstream
+depends on it, and it is cheap to redo — as long as you have not stitched yet.</p>
+<h3 id="project">Project</h3>
+<ul>
+<li><strong>New project…</strong> / <strong>Open…</strong> – both pick a folder; an empty folder becomes a new project (configs are
+  copied in), an existing one is reopened. Use a fast disk with room for the rendered stack (roughly the
+  size of the raw data; twice that if you render both PNG tiles and a precomputed volume).</li>
+<li><strong>Project name</strong> – free text; shown in the title bar and used as the Neuroglancer layer name.</li>
+</ul>
+<h3 id="raw-tiles">Raw tiles</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Control</th>
+<th>What it does</th>
+<th>When to change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Tile folder</strong></td>
+<td>Root of the raw data; subfolders are fine.</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>Extension</strong></td>
+<td><code>tif</code> by default.</td>
+<td>For <code>png</code>, <code>bmp</code>, …</td>
+</tr>
+<tr>
+<td><strong>include subfolders</strong></td>
+<td>Recurse into subdirectories.</td>
+<td>Off only if a subfolder holds images you must ignore.</td>
+</tr>
+<tr>
+<td><strong>Naming rule</strong></td>
+<td>How row/column/section are encoded: <em>Thermo (Maps)</em> <code>Tile_row-col-id_0-000.sZZZZ_e00</code>, <em>Zeiss (Atlas)</em> <code>Tile_rY-cX_S_ZZZZ</code>, <em>Sequential numbers</em>, <em>Custom pattern</em>.</td>
+<td>Start with <strong>Guess rule from filenames</strong>.</td>
+</tr>
+<tr>
+<td><strong>Number order</strong> (sequential only)</td>
+<td>One letter per number in the name, in order: <code>y</code> row, <code>x</code> column, <code>z</code> section, <code>r</code> = ignore. E.g. <code>yxz</code>.</td>
+<td>When filenames are just numbers.</td>
+</tr>
+<tr>
+<td><strong>Pattern</strong> (custom only)</td>
+<td>The filename with <code>#x#</code>, <code>#y#</code>, <code>#z#</code>, <code>#r#</code> placeholders, e.g. <code>Tile_#y#-#x#-#r#_0-000.s#z#_e00</code>.</td>
+<td>Anything the presets do not cover.</td>
+</tr>
+<tr>
+<td><strong>Guess rule from filenames</strong></td>
+<td>Reads up to 400 filenames and offers ranked candidates; <strong>Use</strong> applies the selected one.</td>
+<td>Always try this first.</td>
+</tr>
+</tbody>
+</table></div>
+<p>If every section is a folder of identically named tiles, run <strong>Tools → Prefix filenames with folder
+name…</strong> first so the section number lands in the filename.</p>
+<h3 id="voxel-size-tile-layout">Voxel size &amp; tile layout</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Control</th>
+<th>What it does</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Pixel size</strong></td>
+<td>xy pixel size at mip0, in nm.</td>
+<td>Drives the mip suggestions and the exported voxel size. A wrong value gives wrong scale bars everywhere downstream.</td>
+</tr>
+<tr>
+<td><strong>Section thickness</strong></td>
+<td>z step in nm.</td>
+<td>Used to pick the fine-alignment working mip: the mip whose xy resolution is closest below the thickness.</td>
+</tr>
+<tr>
+<td><strong>Read from image metadata</strong></td>
+<td>Reads the first tile: width, height, dtype, pixel size, presence of stage coordinates.</td>
+<td>Press it before scanning; it fills tile width/height for you.</td>
+</tr>
+<tr>
+<td><strong>Tile width / height</strong></td>
+<td>Tile size in pixels.</td>
+<td>Set by hand only if the metadata is unreadable.</td>
+</tr>
+<tr>
+<td><strong>Placement</strong></td>
+<td><em>Regular grid from indices</em>: tile (col,row) goes to <code>(col·(width−overlap), row·(height−overlap))</code>. <em>Microscope stage positions</em>: reads stage coordinates from the TIFF metadata (Thermo FEI tags, or the Zeiss Atlas Fibics XML block where the pixel size is field of view ÷ image size and tile offsets come from the mosaic entry when the stage position is per mosaic) and rotates them into image space.</td>
+<td>Grid is fine for almost everything — FEABAS refines positions during matching, so ±10 % is harmless. Use stage placement for irregular or drifting acquisitions.</td>
+</tr>
+<tr>
+<td><strong>Overlap x / y</strong> + <strong>unit</strong></td>
+<td>Nominal overlap between neighbours, in % of tile or in pixels.</td>
+<td>~10 % is typical. Too small an overlap combined with a small search margin is the classic cause of failed matches.</td>
+</tr>
+<tr>
+<td><strong>Estimate overlap from stage</strong></td>
+<td>Derives the real overlap from one section's stage coordinates and switches the unit to pixels.</td>
+<td>Use whenever stage positions exist.</td>
+</tr>
+<tr>
+<td><strong>flip columns / flip rows</strong></td>
+<td>Mirrors the index → position mapping.</td>
+<td>When the preview grid is mirrored relative to reality.</td>
+</tr>
+<tr>
+<td><strong>Section number offset</strong></td>
+<td>Added to the z parsed from the filename.</td>
+<td>To start numbering at 0/1, or to concatenate two acquisitions.</td>
+</tr>
+<tr>
+<td><strong>Paths in coord files</strong></td>
+<td><code>relative to tile folder</code> (default) or <code>absolute</code>.</td>
+<td>Relative keeps the project movable; absolute is safer when tiles live on a share mounted differently elsewhere.</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="scan-preview">Scan &amp; preview</h3>
+<ul>
+<li><strong>Scan tiles</strong> – parses every filename, groups by section, computes positions, and reports
+  <code>N tiles in M sections, grid R×C, tile size, nm/px, placement</code>. Warnings (missing tiles, duplicate
+  indices, inconsistent grids) show up underneath and in the log. <strong>Read them</strong> — a missing tile is far
+  cheaper to fix now than after stitching.</li>
+<li><strong>Preview section</strong> + grid – tile outlines with row/column labels for one section.</li>
+<li><strong>Show overlap of two neighbouring tiles</strong> – opens the actual overlapping strips of two adjacent
+  tiles side by side. The fastest way to confirm overlap and orientation before committing to a
+  multi-hour stitch.</li>
+</ul>
+<h3 id="write-feabas-coordinate-files">Write FEABAS coordinate files</h3>
+<p><strong>Write stitch_coord files &amp; save volume info</strong> does five things:</p>
+<ol>
+<li>deletes and rewrites <code>stitch/stitch_coord/*.txt</code> (one per section);</li>
+<li>saves source folder, rule, layout and volume info into <code>workbench_project.json</code>;</li>
+<li>writes <code>configs/general_configs.yaml</code> (working directory, full resolution, section thickness);</li>
+<li>points the coordinate files at the preprocessed tiles if you activated one (Window 2);</li>
+<li>seeds sensible defaults: <code>alignment.matching.working_mip_level</code>, <code>thumbnail.thumbnail_mip_level</code>,
+   <code>alignment.meshing.mask_mip_level</code>, <code>stitching.section_thickness</code>.</li>
+</ol>
+<p>The line underneath shows the suggested working mip and thumbnail mip for your voxel size — those are
+the numbers Windows 3–5 refer to.</p>
+<p>If stitching outputs already exist, it asks first: rewriting coordinates makes everything downstream
+stale.</p>
+<h3 id="tools">Tools</h3>
+<p><strong>Prefix filenames with folder name…</strong> renames tiles in place to <code>&lt;folder&gt;_&lt;original&gt;</code> using the parent,
+grandparent or great-grandparent folder name, for acquisitions where every section is a folder of
+identically named tiles. It shows a preview and renames only after you confirm. This edits your raw
+data — read the preview.</p>
+<hr />
+<h2 id="5-window-2-preprocessing-optional">5. Window 2 – Preprocessing (optional)</h2>
+<p>Both tools write a <strong>mirror</strong> of the raw folder structure under <code>preprocessed/</code>, so you can switch the
+pipeline between raw, histogram-matched and denoised tiles at any time. Skip this window entirely if
+your tiles are already consistent and clean.</p>
+<h3 id="tiles-used-by-the-pipeline">Tiles used by the pipeline</h3>
+<p>Radio buttons <strong>raw tiles / histogram-matched tiles / denoised tiles</strong> plus <strong>Apply to coordinate
+files</strong>. Applying rewrites the <code>stitch_coord</code> files to point at the chosen folder — that is the whole
+switch. The info line counts the files available in each variant.</p>
+<p>If stitching outputs already exist when you switch, the log warns you: clear <em>Match tiles</em> on the
+Stitching page, otherwise you mix montages made from different pixel data.</p>
+<h3 id="histogram-matching">Histogram matching</h3>
+<p>Maps every tile's grey-level histogram onto a template's (monotonic CDF matching). Use it when
+brightness or contrast drifts between tiles, mFoVs or sections — that drift shows up as visible tile
+boundaries after rendering and can weaken matching.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Control</th>
+<th>Meaning</th>
+<th>Guidance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Template</strong></td>
+<td>One representative tile whose histogram everything else is mapped onto.</td>
+<td>Pick a tile with the full range of structures you care about, from the middle of the run.</td>
+</tr>
+<tr>
+<td><strong>ignore black (0)</strong></td>
+<td>Leave pixels with value 0 untouched and exclude them from the CDF.</td>
+<td>On by default — keeps padding/beam-off regions from skewing the mapping.</td>
+</tr>
+<tr>
+<td><strong>ignore white (max)</strong></td>
+<td>Same for saturated pixels.</td>
+<td>On for data with saturated resin or charge artefacts.</td>
+</tr>
+<tr>
+<td><strong>workers</strong></td>
+<td>Parallel processes.</td>
+<td>About your physical core count; this is pure CPU work.</td>
+</tr>
+<tr>
+<td><strong>Preview on a tile</strong></td>
+<td>Shows raw (left) vs matched (right) for the selected tile.</td>
+<td>Always preview before running on thousands of tiles.</td>
+</tr>
+<tr>
+<td><strong>Match all tiles</strong></td>
+<td>Runs over the whole raw folder into <code>preprocessed/histmatch/</code>.</td>
+<td>Needs disk space equal to your raw data.</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="denoising-with-careamics-n2v-n2v2-structn2v">Denoising with CAREamics (N2V / N2V2 / StructN2V)</h3>
+<p>Self-supervised denoising: no clean ground truth needed. Runs in the deep-learning environment, on the
+GPU if there is one. Useful for low-dose/fast acquisitions; unnecessary for already clean data, and it
+does cost disk space and hours.</p>
+<p><strong>Choosing training tiles</strong> – pick tiles in the grid on the left, <strong>Add selected tiles →</strong>, or press
+<strong>Random 24</strong>. 10–40 representative tiles is plenty; at least 4 are required. Include the different
+looks in your data (dense tissue, resin, edges).</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Meaning</th>
+<th>Guidance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Method</strong></td>
+<td><code>N2V</code> (default), <code>N2V2</code> (fewer checkerboard artefacts), <code>StructN2V</code> (removes line-structured scan noise).</td>
+<td>Use StructN2V when the noise is clearly striped along the scan direction.</td>
+</tr>
+<tr>
+<td><strong>Struct axes / span</strong></td>
+<td>Only for StructN2V: orientation (<code>horizontal</code>, <code>vertical</code>, <code>cross</code>) and width of the masked stripe.</td>
+<td>Match the axis to the visible stripes; span 5 is a sensible start.</td>
+</tr>
+<tr>
+<td><strong>patch</strong></td>
+<td>Training patch size (default 128).</td>
+<td>64–256. Larger patches see more context but need more VRAM.</td>
+</tr>
+<tr>
+<td><strong>batch</strong></td>
+<td>Patches per step (default 12).</td>
+<td>Lower it if you hit CUDA out-of-memory.</td>
+</tr>
+<tr>
+<td><strong>epochs / steps per epoch</strong></td>
+<td>Training length (default 100 / 100).</td>
+<td>100×100 is a reasonable first run; watch the loss in the log.</td>
+</tr>
+<tr>
+<td><strong>ROI / masked %</strong></td>
+<td>N2V blind-spot parameters: neighbourhood size (11) and percentage of pixels masked per patch (0.2).</td>
+<td>Defaults are fine; raising masked % speeds up learning but adds noise to the gradient.</td>
+</tr>
+<tr>
+<td><strong>Run name</strong></td>
+<td>Folder under <code>models/n2v/</code>.</td>
+<td>One name per experiment so you can compare.</td>
+</tr>
+<tr>
+<td><strong>Train model</strong></td>
+<td>Starts training in the DL environment.</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>Model</strong></td>
+<td>Trained checkpoints found under <code>models/n2v/</code>.</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>Preview on a tile</strong></td>
+<td>Denoises one tile and shows raw vs denoised.</td>
+<td>Do this before the full run.</td>
+</tr>
+<tr>
+<td><strong>Denoise all tiles</strong></td>
+<td>Writes <code>preprocessed/denoised/</code>, skipping files that already exist (so it is resumable).</td>
+<td>If the <em>histogram-matched tiles</em> radio button is selected, it denoises those instead of the raw tiles.</td>
+</tr>
+<tr>
+<td><strong>prediction tile / overlap / batch</strong></td>
+<td>Tiled inference: tile size 512, overlap 64, batch 4.</td>
+<td>Reduce the tile size if you run out of VRAM; increase the overlap if you see seams in the denoised output.</td>
+</tr>
+</tbody>
+</table></div>
+<hr />
+<h2 id="6-window-3-stitching">6. Window 3 – Stitching</h2>
+<p>Three FEABAS steps in order: <strong>Match tiles → Optimize montage → Render montages</strong>. The tabs are <em>Run</em>,
+<em>Test on subset</em>, <em>Quality check</em> and <em>All settings</em>.</p>
+<h3 id="run-tab-the-settings-that-matter">Run tab – the settings that matter</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Config key</th>
+<th>What it does</th>
+<th>When to change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>workers: matching</strong></td>
+<td><code>matching.num_workers</code> (15)</td>
+<td>Processes used to match tile overlaps.</td>
+<td>Set near your physical core count; lower it if matching runs out of RAM.</td>
+</tr>
+<tr>
+<td><strong>workers: optimization</strong></td>
+<td><code>optimization.num_workers</code> (3)</td>
+<td>Processes relaxing each section's montage.</td>
+<td>Rarely the bottleneck; 3–8.</td>
+</tr>
+<tr>
+<td><strong>workers: rendering</strong></td>
+<td><code>rendering.num_workers</code> (15)</td>
+<td>Processes writing the stitched images.</td>
+<td>I/O bound — more workers help only on fast storage.</td>
+</tr>
+<tr>
+<td><strong>render as</strong></td>
+<td><code>rendering.driver</code></td>
+<td><code>PNG tiles</code> (simple, VAST-friendly, and what fold detection at a finer mip needs) or <code>Neuroglancer precomputed volume</code> (chunked, faster downstream, best for ~TB data).</td>
+<td>Pick PNG tiles for small/medium data or if you want to run fold detection on a finer mip; precomputed for big volumes.</td>
+</tr>
+<tr>
+<td><strong>CLAHE</strong></td>
+<td><code>rendering.loader_settings.apply_CLAHE</code> (on)</td>
+<td>Contrast-limited histogram equalisation while rendering.</td>
+<td>Leave on. Turn off if you did your own histogram matching and want the raw look.</td>
+</tr>
+<tr>
+<td><strong>invert grey</strong></td>
+<td><code>rendering.loader_settings.inverse</code> (on)</td>
+<td>Inverts grey values (BSE images are often acquired inverted).</td>
+<td>Turn off if your rendered sections come out as negatives.</td>
+</tr>
+<tr>
+<td><strong>overlap blending</strong></td>
+<td><code>rendering.render_settings.blend</code> (PYRAMID)</td>
+<td>How pixels covered by more than one tile are combined — see <a href="#blending-the-overlaps">Blending the overlaps</a> below.</td>
+<td>PYRAMID unless double exposure changes the grey level in the overlap; then NEAREST.</td>
+</tr>
+<tr>
+<td><strong>match confidence threshold</strong></td>
+<td><code>matching.matcher_config.conf_thresh</code> (0.1)</td>
+<td>Cross-correlations below this confidence are rejected.</td>
+<td>Raise (0.2–0.3) when you see wrong matches / warped montages; lower only if too many overlaps are rejected in low-contrast data.</td>
+</tr>
+<tr>
+<td><strong>search margin (px)</strong></td>
+<td><code>matching.margin</code> (1000)</td>
+<td>Extra width searched around the nominal overlap, to absorb stage-position error.</td>
+<td>Increase when stage positions are unreliable (costs time); decrease for very accurate stages to speed up matching.</td>
+</tr>
+<tr>
+<td><strong>image cache (tiles)</strong></td>
+<td><code>matching.loader_config.cache_size</code> (150)</td>
+<td>Tiles held in RAM per worker.</td>
+<td>Lower it first when matching runs out of memory; then reduce workers.</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Apply settings</strong> writes them into <code>configs/stitching_configs.yaml</code>. Steps whose outputs are older than
+that file immediately show as <em>stale</em>.</p>
+<h3 id="blending-the-overlaps">Blending the overlaps</h3>
+<p>Neighbouring tiles overlap by design, so every pixel in an overlap band exists in two (at a corner, four)
+source tiles. The blend mode decides what the rendered montage gets.</p>
+<p>All modes start from the same quantity: each source tile covering a pixel carries a <strong>weight</strong> equal to its
+distance, in source pixels, from the nearest edge of <em>that tile</em> (reduced further by <code>clip_lrtb</code>). The
+weight is 0 along a tile's own border and largest in its middle, so "largest weight" means "deepest inside
+a tile, furthest from its edge".</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>What it computes</th>
+<th>Consequence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>PYRAMID</strong> (default)</td>
+<td>Each tile is split by a Gaussian (σ = 2.5 px) into a low- and a high-frequency image. Low frequencies are averaged with the weights; the high-frequency detail is taken from the single tile with the largest weight.</td>
+<td>Detail is never averaged, so residual misalignment cannot ghost, while a brightness difference between tiles is smoothed out instead of showing as a step. The best default.</td>
+</tr>
+<tr>
+<td><strong>NEAREST</strong></td>
+<td>The whole pixel comes from the tile with the largest weight. The seam runs along the line where two tiles are equally deep — the middle of the overlap.</td>
+<td>Nothing is mixed: no ghosting, and no averaging of two different exposures. A brightness difference between the tiles shows as a hard edge along that seam.</td>
+</tr>
+<tr>
+<td><strong>LINEAR</strong></td>
+<td>Weighted average of every covering tile: <code>Σ(value × weight) / Σ weight</code>. A tile's influence fades to nothing at its own edge.</td>
+<td>Smooth crossfade. Brightness differences become a gradient; imperfectly aligned detail blurs or ghosts in the overlap.</td>
+</tr>
+<tr>
+<td><strong>MAX</strong></td>
+<td>The brightest value among the covering tiles (weights only decide <em>whether</em> a tile covers the pixel).</td>
+<td>Rejects dark artefacts (a shadow or charging spot present in one tile only); brightens the overlap bands relative to the rest.</td>
+</tr>
+<tr>
+<td><strong>MIN</strong></td>
+<td>The darkest value among the covering tiles.</td>
+<td>The mirror image: rejects bright artefacts, darkens the overlap bands.</td>
+</tr>
+<tr>
+<td><strong>NONE</strong></td>
+<td>No arbitration at all: every covering tile is written into the output chunk in turn, so the last one processed wins.</td>
+<td>Which tile that is depends on the order the spatial index happens to return, so the "winner" can change from one output tile to the next. Not the way to pick a particular tile.</td>
+</tr>
+</tbody>
+</table></div>
+<p>Pixels no tile covers are filled with <code>rendering.loader_settings.fillval</code> (0 = black).</p>
+<p><strong>Choosing:</strong> keep PYRAMID unless you have a reason. If the overlap band is imaged twice and the second
+exposure changes the grey level (dose, contamination, charging), the mode you want is <strong>NEAREST</strong> — it
+keeps every pixel from exactly one tile without averaging two exposures. Better still, remove the cause
+first with histogram matching (Window 2), then NEAREST looks seamless. Use MAX or MIN only to reject a
+specific artefact. There is no mode that always keeps a chosen tile of the pair.</p>
+<blockquote>
+<p><strong><code>blend: null</code> renders black bands.</strong> In the settings tree, a string key set to the text <code>NONE</code> used to
+be saved as YAML <code>null</code>. FEABAS reads a null blend as "only one tile per output chunk": it fills each
+output tile from the first source tile it finds and leaves everything else at the fill value — black
+bands exactly where the overlaps are, with the tiles that did render in the right place. Newer versions
+keep the word (only <code>null</code> and <code>~</code> clear a key), and the drop-down never produces a null. If an older
+project still has <code>blend: null</code> in <code>configs/stitching_configs.yaml</code>, pick a mode from the drop-down and
+re-render.</p>
+</blockquote>
+<h3 id="steps">Steps</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Step</th>
+<th>Produces</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Match tiles</strong></td>
+<td><code>stitch/match_h5/*.h5</code></td>
+<td>Per section. Failures leave <code>*.h5_err</code> — use <em>Remove error files</em> and re-run after fixing settings.</td>
+</tr>
+<tr>
+<td><strong>Optimize montage</strong></td>
+<td><code>stitch/tform/*</code></td>
+<td>Elastic relaxation per section; residues are reported in the log.</td>
+</tr>
+<tr>
+<td><strong>Render montages</strong></td>
+<td><code>stitched_sections/…</code></td>
+<td>PNG tile folders per section, or a TensorStore volume, depending on the driver. Progress counts <em>finished</em> sections: the PNG driver writes <code>mip0/&lt;section&gt;/metadata.txt</code> after the last tile of a section, the precomputed driver writes <code>&lt;section&gt;/info</code>.</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="test-on-subset-tab">Test on subset tab</h3>
+<p>Creates a sandbox under <code>tests/&lt;name&gt;/</code> with its own <code>configs/</code> and coordinate files for the sections
+(and optionally the tile rectangle) you selected. Running steps there never touches the real outputs.</p>
+<ol>
+<li>Check one or a few sections on the left; optionally drag-select a tile region in the grid on the right.</li>
+<li>Name the run and press <strong>Create test run</strong> (the current quick settings are copied in).</li>
+<li>Run the steps in the test panel, then look at the result in <em>Quality check</em> (choose the test run as
+   source). The fourth card, <strong>Mipmaps of the montage</strong>, is the same FEABAS step as <em>Make thumbnails</em>:
+   rendering writes mip0 only, and without the downsampled levels the viewer cannot show a whole section
+   at once. It builds mip1 up to <code>thumbnail_mip_level − 1</code> (at least the fine-alignment working mip).</li>
+<li><strong>Edit this test's settings…</strong> lets you iterate; <strong>Save and copy to project</strong> promotes the settings you
+   like to the real project.</li>
+</ol>
+<p>Do this once for every new dataset. A test run over one section and a 3×3 tile block takes minutes; a
+full stitch takes hours.</p>
+<h3 id="quality-check-tab">Quality check tab</h3>
+<p>Full-resolution viewer over the rendered sections (PNG tiles or precomputed volume), with a section
+picker, ◀/▶ navigation, <strong>tile outlines (nominal)</strong> and <strong>Open section in Fiji</strong>. You can look while a
+render is still running: <strong>Inspect</strong> always switches to the run whose step card you pressed it on, and a
+section that has no readable tiles yet says so instead of showing an empty canvas.</p>
+<p>What to look for: zoom into tile borders. Seams should be invisible. Visible duplication or blur along a
+seam means the match there was rejected or wrong — check the log for that section, then try a larger
+search margin or a lower confidence threshold, or check your overlap value in Window 1.</p>
+<p>The info line reports how many mip levels the section has. With mip0 only, zooming out past a certain
+point shows nothing — there is no coarse level to draw and reading the full-resolution section would be
+hopeless — and the viewer says so. Build the levels first: the <strong>Mipmaps of the montage</strong> step in a test
+run, or <strong>Make thumbnails</strong> on the Masks page for the project.</p>
+<h3 id="all-settings-tab">All settings tab</h3>
+<p>The whole merged <code>stitching_configs.yaml</code> as a tree, with FEABAS's own comments as hints and overridden
+keys marked. Useful branches:</p>
+<ul>
+<li><code>matching.matcher_config</code> – <code>sigma</code> (DoG filter before matching), <code>coarse_downsample</code>/<code>fine_downsample</code>
+  (speed vs accuracy), <code>residue_mode</code>/<code>residue_len</code> (how outliers are damped).</li>
+<li><code>optimization.mesh_settings.mesh_sizes</code> <code>[100, 300]</code> – finer meshes absorb more tile distortion.</li>
+<li><code>optimization.translation.residue_threshold</code> (0.8) – matches with residue above this are dropped as spurious.</li>
+<li><code>optimization.disconnected_assemble.explode_factor</code> – how far apart tile groups that never matched are placed.</li>
+<li><code>rendering.loader_settings.CLAHE_cliplimit</code> (2.0) – raise for 16-bit data.</li>
+<li><code>rendering.render_settings.blend</code> (<code>PYRAMID</code>) – blending across seams; <code>NONE</code> shows you exactly where
+  the seams are, which is occasionally useful for debugging.</li>
+<li><code>rendering.tile_size</code> (<code>[4096, 4096]</code>) – output tile size for the PNG driver.</li>
+</ul>
+<hr />
+<h2 id="7-window-4-masks">7. Window 4 – Masks</h2>
+<p>FEABAS needs to know where the section is (tissue vs. background) and where it is folded. Masks are
+grey-value images in thumbnail space:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Grey value</th>
+<th>Material</th>
+<th>Behaviour</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="swatch" style="--sw: rgb(0,0,0)" aria-hidden="true"></span><code>0</code></td>
+<td>default tissue</td>
+<td>meshed, matched, rendered</td>
+</tr>
+<tr>
+<td><span class="swatch" style="--sw: rgb(255,255,255)" aria-hidden="true"></span><code>255</code></td>
+<td>exclude</td>
+<td>not meshed (outside the section, holes)</td>
+</tr>
+<tr>
+<td><span class="swatch" style="--sw: rgb(50,50,50)" aria-hidden="true"></span><code>50</code></td>
+<td>wrinkle/fold</td>
+<td>free to expand, resists compression</td>
+</tr>
+<tr>
+<td><span class="swatch" style="--sw: rgb(100,100,100)" aria-hidden="true"></span><code>100</code></td>
+<td>soft</td>
+<td>very soft material</td>
+</tr>
+<tr>
+<td><span class="swatch" style="--sw: rgb(200,200,200)" aria-hidden="true"></span><code>200</code></td>
+<td>split</td>
+<td>meshed but broken by a thin gap</td>
+</tr>
+<tr>
+<td><span class="swatch" style="--sw: rgb(150,150,150)" aria-hidden="true"></span><code>150</code></td>
+<td>background_lowweight</td>
+<td>added only for structure-guided alignment (see Window 5)</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="thumbnails-tab">Thumbnails tab</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Config key</th>
+<th>Guidance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>thumbnail mip level</strong></td>
+<td><code>thumbnail.thumbnail_mip_level</code> (2)</td>
+<td>Aim for thumbnails of roughly 500–2000 px on the long side; the hint line computes the size for you. Bigger thumbnails make coarse matching very slow, smaller ones lose the structures the matcher needs.</td>
+</tr>
+<tr>
+<td><strong>high-pass filter (SE images)</strong></td>
+<td><code>downsample.thumbnail_highpass</code> (on)</td>
+<td>On for secondary-electron images (enhances somata); off for BSE images and very small mip levels. It also changes what the texture-based tissue detection sees.</td>
+</tr>
+<tr>
+<td><strong>workers</strong></td>
+<td><code>downsample.num_workers</code> (10)</td>
+<td>Near your core count.</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Make thumbnails</strong> also builds the intermediate mip levels of the stitched sections that fine alignment
+reads, and writes FEABAS's default masks (everything imaged = tissue), which the next tab replaces.
+Pressing <strong>Apply</strong> here also sets <code>alignment.meshing.mask_mip_level</code> to the same mip.</p>
+<h3 id="masks-tab">Masks tab</h3>
+<p>The section list on the left shows what exists per section (<code>thumb</code>, <code>tissue</code>, <code>folds</code>, <code>mask</code>; a <code>*</code>
+marks a hand-edited mask). The viewer shows the thumbnail with any combination of overlays — <em>tissue</em>,
+<em>folds</em>, <em>fold probability</em>, <em>material mask</em>, <em>structures</em> — and an opacity slider.</p>
+<p><strong>Selecting sections.</strong> The header counts what is checked (<code>12 of 111 sections</code>). Every operation on this
+page works on the checked sections, except <em>Preview</em>, which works on the section you are looking at. To
+check a run of sections, highlight them in the list the usual way — click, shift-click for a range,
+ctrl-click to add — and press <strong>✓ highlighted</strong> (or the space bar); <strong>✗ highlighted</strong> unchecks them.
+<strong>all</strong> / <strong>none</strong> and <strong>every N</strong> are there for the whole stack. Computations refresh the list to show
+what they produced; your checks survive that, and sections that appear for the first time start checked.</p>
+<h4 id="tissue-vs-background">Tissue vs. background</h4>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Meaning</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>method: the stitched tile footprint is tissue</strong></td>
+<td>The FEABAS default. The tissue region is the area the tiles cover, and only what lies outside it is excluded. Three sources, best first: FEABAS's own mask (kept under <code>masks/roi/</code> the first time the workbench replaces one); the tile boxes read straight out of <code>stitch/tform/&lt;sec&gt;.h5</code> — the same geometry FEABAS rasterises, so this needs neither its environment nor the thumbnail step, and the result is cached in <code>masks/roi/</code>; and, if there is no montage geometry at all, the convex hull of the image data. All three are geometric or hull-based rather than a flood fill from the border, because a black fold can run from one section edge to the other: it touches the outside but is still inside the imaged area.</td>
+<td><strong>Start here.</strong> Black areas inside the footprint stay tissue; label them as folds (below) rather than excluding them.</td>
+</tr>
+<tr>
+<td><strong>method: auto</strong></td>
+<td>Splits by local texture only if a clear background/tissue split exists (Otsu separability above a threshold), otherwise falls back to "everything imaged".</td>
+<td>Mixed datasets where some sections have resin background.</td>
+</tr>
+<tr>
+<td><strong>method: local texture</strong></td>
+<td>Always splits by local grey-level standard deviation.</td>
+<td>Sections with genuine resin/support background. Careful on high-pass filtered thumbnails: it can split tissue by texture.</td>
+</tr>
+<tr>
+<td><strong>method: intensity threshold</strong></td>
+<td>Plain grey-level threshold.</td>
+<td>Simple, high-contrast background.</td>
+</tr>
+<tr>
+<td><strong>window</strong> (31)</td>
+<td>Texture window in thumbnail pixels.</td>
+<td>Larger for coarse textures, smaller for fine ones.</td>
+</tr>
+<tr>
+<td><strong>min component px</strong> (2000)</td>
+<td>Connected tissue components smaller than this are dropped.</td>
+<td>Raise to remove specks of debris counted as tissue.</td>
+</tr>
+<tr>
+<td><strong>fill holes px</strong> (5000)</td>
+<td>Background holes inside tissue smaller than this are filled.</td>
+<td>Raise if empty-looking areas inside the section get excluded.</td>
+</tr>
+<tr>
+<td><strong>border margin</strong> (0 px)</td>
+<td>A ring of this width just inside the section outline — it follows the outline, it is not a rectangle. The field next to it converts the width into µm, measured against the montage rather than assumed from the mip level. Applied when the material mask is composed, so it appears after <em>Compose</em>, not in the tissue preview.</td>
+<td>The montage edge is where the mask is least certain and matching least reliable. Pick a width that covers the ragged rim: on a 128 nm/px thumbnail, 20 px ≈ 2.6 µm.</td>
+</tr>
+<tr>
+<td><strong>what the margin becomes</strong></td>
+<td><em>soft (100)</em> — meshed and rendered, but its stiffness is below FEABAS's matching threshold, so no match point is ever placed there. <em>exclude (255)</em> — not meshed and <strong>not rendered</strong>: that strip is missing from the aligned volume.</td>
+<td>soft for a safety margin: you keep the pixels and only stop the alignment from being driven by the uncertain edge. exclude only where there is nothing worth keeping.</td>
+</tr>
+<tr>
+<td><strong>threshold</strong></td>
+<td>Manual override for the texture score or intensity; empty = automatic (Otsu).</td>
+<td>Only when the automatic threshold is visibly wrong.</td>
+</tr>
+<tr>
+<td><strong>dark tissue</strong></td>
+<td>Invert the intensity test.</td>
+<td>For inverted images where tissue is darker than background.</td>
+</tr>
+<tr>
+<td><strong>exclude black regions</strong> (off)</td>
+<td>Also drops every connected region at or below <strong>grey ≤</strong> that is at least <strong>at least px</strong> large, wherever it is — including inside the section.</td>
+<td>Leave off unless those black areas really carry no data. A fold is black <em>and</em> is tissue: excluding it removes it from the mesh and swallows its fold label, because fold labels are only painted inside the tissue mask.</td>
+</tr>
+<tr>
+<td><strong>Preview on current section</strong></td>
+<td>Computes for the visible section only.</td>
+<td>Iterate here, not on the whole stack.</td>
+</tr>
+<tr>
+<td><strong>Compute for checked sections</strong></td>
+<td>Runs over every checked section.</td>
+<td></td>
+</tr>
+</tbody>
+</table></div>
+<h4 id="folds-wrinkles">Folds &amp; wrinkles</h4>
+<p>Two ways to find folds, and one decision to make before either.</p>
+<p><strong>Exclude them, or mesh them?</strong> A black region can be treated two ways, and they are mutually exclusive:</p>
+<ul>
+<li>as a <strong>fold material</strong> (the default) — detect the folds here and <em>Compose</em> gives them label 50 (wrinkle)
+  or 100 (soft), so FEABAS meshes them and lets them expand while the alignment is driven by the tissue
+  around them. Right for wrinkles and tears in a section that is otherwise intact;</li>
+<li>as <strong>no data</strong> — turn <em>exclude black regions</em> on in the tissue card and those areas become <code>255</code>,
+  outside the mesh entirely. Right only where the microscope recorded nothing at all.</li>
+</ul>
+<p>Fold labels are only painted inside the tissue mask, so if both are on, exclusion wins. Compose warns in
+the log when most of a section's detected folds were swallowed that way.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Meaning</th>
+<th>Guidance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>method</strong></td>
+<td><em>dark regions</em> thresholds the thumbnail — no model, no GPU, seconds per section. <em>U-Net checkpoint</em> runs the bundled (or your own) network in the deep-learning environment.</td>
+<td>Start with dark regions: folds and tears are usually black in the rendered montage. Use the U-Net when folds are grey rather than black, or textured.</td>
+</tr>
+<tr>
+<td><strong>grey ≤</strong> (0)</td>
+<td>Dark-region method: a pixel counts as fold at or below this grey level.</td>
+<td>Raise to 3–10 if the fold edges are not exactly black after downsampling.</td>
+</tr>
+<tr>
+<td><strong>Preview on current section</strong></td>
+<td>Runs the chosen method on the section you are looking at.</td>
+<td>Check the overlay before running the stack.</td>
+</tr>
+<tr>
+<td><strong>Checkpoint</strong></td>
+<td>The fold U-Net weights. Defaults to the bundled checkpoint if present.</td>
+<td>Replace with one you trained in the next tab.</td>
+</tr>
+<tr>
+<td><strong>run on</strong></td>
+<td><code>thumbnails</code>, or a <code>stitched sections mipN</code> folder if PNG tiles were rendered.</td>
+<td>Use a finer mip when folds are only a few pixels wide in the thumbnail; the workbench then also writes higher-resolution masks to <code>align/material_masks</code>.</td>
+</tr>
+<tr>
+<td><strong>threshold</strong> (0.5)</td>
+<td>Probability above which a pixel counts as fold.</td>
+<td>Lower to catch faint folds (more false positives), raise if normal tissue is flagged. Check with the <em>fold probability</em> overlay.</td>
+</tr>
+<tr>
+<td><strong>tile / overlap</strong> (1024 / 128)</td>
+<td>Tiled inference geometry.</td>
+<td>Lower the tile size on small GPUs; raise the overlap if you see tile-edge artefacts in the fold mask.</td>
+</tr>
+<tr>
+<td><strong>min area px</strong> (50)</td>
+<td>Drop fold blobs smaller than this.</td>
+<td>Raise to remove speckle.</td>
+</tr>
+<tr>
+<td><strong>dilate px</strong> (2)</td>
+<td>Grow fold regions.</td>
+<td>A little dilation helps the mesh absorb the compression around a fold.</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Detect folds on checked sections</strong> runs in the deep-learning environment and writes masks plus
+probability maps to <code>masks/folds/</code>.</p>
+<h4 id="import-masks-made-elsewhere">Import masks made elsewhere</h4>
+<p>Point at a folder with one mask image per section (named like the sections, carrying the section number,
+or simply in section order), say which <strong>mip</strong> of the stitched sections they were made at, and choose the
+kind:</p>
+<ul>
+<li><strong>tissue mask</strong> – non-zero = tissue;</li>
+<li><strong>fold mask</strong> – non-zero = fold;</li>
+<li><strong>complete FEABAS material mask</strong> – grey labels taken as they are (0/50/100/200/255).</li>
+</ul>
+<p>Imports are resampled to the thumbnail mip, and the full-resolution copy is kept for the higher-resolution
+material masks. After importing tissue or fold masks, press <strong>Compose</strong>. Importing a complete material
+mask at a finer mip also sets <code>alignment.meshing.mask_mip_level</code> accordingly.</p>
+<h4 id="write-material-masks-for-feabas">Write material masks for FEABAS</h4>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Control</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>include folds as</strong></td>
+<td>Whether detected folds enter the material mask, and as which material: <em>wrinkle (50)</em> – expands freely, resists compression (the usual choice); <em>exclude (255)</em> – cut out of the mesh entirely (for genuinely destroyed regions); <em>soft (100)</em> – very soft material.</td>
+</tr>
+<tr>
+<td><strong>also write higher-resolution masks</strong></td>
+<td>Additionally writes <code>align/material_masks</code> at the finest mip for which a mask source exists, and sets <code>alignment.meshing.mask_mip_level</code> to match.</td>
+</tr>
+<tr>
+<td><strong>where folds and the outside overlap</strong></td>
+<td>Fold detection fires on the black border around the section as readily as on a fold, so the two masks overlap there. <em>Outside wins</em> (default) clips folds to the imaged area, which keeps the border excluded (<code>255</code>). <em>The fold label wins</em> paints the fold material outside the footprint too — the 1-pixel excluded rim FEABAS needs is kept either way.</td>
+</tr>
+<tr>
+<td><strong>keep hand-edited masks</strong></td>
+<td>Composing skips sections you edited by hand (marked <code>*</code>). Leave on so you do not silently overwrite manual work.</td>
+</tr>
+<tr>
+<td><strong>Compose for checked sections</strong></td>
+<td>Writes the single material mask per section into <code>thumbnail_align/material_masks/</code>.</td>
+</tr>
+</tbody>
+</table></div>
+<p>The composed mask always keeps a one-pixel excluded rim, which FEABAS's matcher requires.</p>
+<h4 id="hand-editing">Hand editing</h4>
+<ul>
+<li><strong>Split section: click 2 points</strong> – paints a split line (label 200) through a broken section so the two
+  pieces can move independently. Click the two end points of the line through the gap.</li>
+<li><strong>Edit mask in Fiji</strong> – opens the material mask; paint with grey values 0 (tissue), 255 (outside),
+  50 (wrinkle), save, then press <strong>Reload mask (mark hand-edited)</strong>.</li>
+<li><strong>Reset checked sections to FEABAS default</strong> – a real revert: the material mask goes back to FEABAS's
+  own tile-footprint mask (from <code>masks/roi/</code>), and the tissue mask, fold mask and fold probability
+  computed for those sections are deleted along with the higher-resolution copy, so the next <em>Compose</em>
+  starts from scratch instead of reusing them. The hand-edited flag is cleared too. It asks first and
+  reports how many sections it reset.</li>
+<li><strong>Rebuild FEABAS masks…</strong> – for sections whose FEABAS mask was already overwritten before the workbench
+  kept a copy. It deletes their material masks <em>and thumbnails</em> and re-runs the thumbnail step; FEABAS
+  only writes a mask for a section whose thumbnail it regenerates, which is why both have to go. The mip
+  levels of the stitched sections are kept, so it takes seconds per section.</li>
+</ul>
+<h3 id="train-fold-model-tab">Train fold model tab</h3>
+<p>Fine-tune the U-Net on your own data. Dataset = a folder with <code>images/</code> and <code>masks/</code> using the same
+filenames, where mask &gt; 0 means fold. Crops of the chosen patch size are sampled from full images, so any
+image size works.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Guidance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>run name</strong></td>
+<td>Folder under <code>models/folds/</code>.</td>
+</tr>
+<tr>
+<td><strong>epochs</strong> (50)</td>
+<td>Fine-tuning from the bundled checkpoint converges much faster than training from scratch.</td>
+</tr>
+<tr>
+<td><strong>patch</strong> (256) / <strong>batch</strong> (16)</td>
+<td>Lower the batch on small GPUs.</td>
+</tr>
+<tr>
+<td><strong>start from checkpoint above</strong></td>
+<td>On = fine-tune the checkpoint in the Masks tab; off = train from scratch (needs much more data).</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Use selected model</strong> puts the trained <code>best.pt</code> into the checkpoint field.</p>
+<hr />
+<h2 id="8-window-5-alignment">8. Window 5 – Alignment</h2>
+<p>Coarse alignment works on thumbnails, fine alignment on finite-element meshes at the working mip. Tabs:
+<em>Coarse alignment</em>, <em>Structure-guided (optional)</em>, <em>Fine alignment</em>, <em>Test on subset</em>, <em>Quality check</em>,
+and the two full settings trees.</p>
+<h3 id="coarse-alignment-tab">Coarse alignment tab</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Config key</th>
+<th>What it does</th>
+<th>When to change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>compare distance</strong></td>
+<td><code>thumbnail.alignment.compare_distance</code> (2)</td>
+<td>How many neighbours each section is matched to. 1 = immediate neighbours only.</td>
+<td>2 makes the stack robust against a single bad section. Each extra step adds another ~N pairs to match, so raise it further only for very thin sections.</td>
+</tr>
+<tr>
+<td><strong>match mode</strong></td>
+<td><code>alignment.match_mode</code></td>
+<td><code>feature</code> (general) or <code>template</code> (block-face style).</td>
+<td>Keep <code>feature</code> for serial sections; <code>template</code> for block-face data with almost no lateral shift.</td>
+</tr>
+<tr>
+<td><strong>max keypoints</strong></td>
+<td><code>alignment.feature_matching.detect_settings.num_features</code> (5000)</td>
+<td>Keypoint budget per thumbnail.</td>
+<td>Raise for large or feature-poor thumbnails; lower to speed up.</td>
+</tr>
+<tr>
+<td><strong>workers</strong></td>
+<td><code>alignment.num_workers</code> (15)</td>
+<td>Parallel processes.</td>
+<td>Near core count.</td>
+</tr>
+</tbody>
+</table></div>
+<p>Steps: <strong>Match thumbnails</strong> → <strong>Optimize coarse stack</strong> → <strong>Render coarse stack</strong> (optional but strongly
+recommended, since it produces the aligned thumbnails the quality check needs).</p>
+<p><em>Match thumbnails</em> is the most failure-prone step in the whole pipeline; read its log. When a pair fails
+you can add manual BigWarp matches in Fiji, or use structure-guided matching (next tab).</p>
+<h3 id="structure-guided-tab-optional">Structure-guided tab (optional)</h3>
+<p>Off by default and it does not change the normal workflow when unused. The idea: align on structures you
+care about (nuclei, mitochondria, vessels) instead of anonymous texture features.</p>
+<p><strong>1. Detect structures</strong></p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Meaning</th>
+<th>Guidance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Model</strong></td>
+<td>YOLO-seg weights (<code>.pt</code>).</td>
+<td>Bring your own, or train one below.</td>
+</tr>
+<tr>
+<td><strong>classes</strong></td>
+<td>Class names or ids to keep, comma separated; empty = all.</td>
+<td>Use it to keep only nuclei from a multi-class model.</td>
+</tr>
+<tr>
+<td><strong>confidence</strong> (0.25)</td>
+<td>Detection threshold.</td>
+<td>Raise if you get spurious detections; check the overlay in <em>Inspect</em>.</td>
+</tr>
+<tr>
+<td><strong>tile</strong> (1024)</td>
+<td>Tiled inference size (overlap is tile/8, at least 64).</td>
+<td>Lower on small GPUs.</td>
+</tr>
+<tr>
+<td><strong>run on</strong></td>
+<td><code>thumbnails</code> or a <code>stitched sections mipN</code> folder.</td>
+<td>Detect at the resolution where the structure is actually visible.</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>2. Coarse matches from structures</strong></p>
+<p>Centroids of the same structures in neighbouring sections are matched (descriptor + RANSAC affine) and
+written as FEABAS thumbnail matches. A BigWarp CSV copy goes to <code>thumbnail_align/manual_matches</code>.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Meaning</th>
+<th>Guidance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>augment</strong></td>
+<td>Adds structure matches to FEABAS's own. <strong>Run it after <em>Match thumbnails</em>.</strong></td>
+<td>The safe default.</td>
+</tr>
+<tr>
+<td><strong>replace</strong></td>
+<td>Structure matches only, for the pairs where they succeed; the rest are matched normally. <strong>Run it before <em>Match thumbnails</em>.</strong></td>
+<td>For data where feature matching keeps failing.</td>
+</tr>
+<tr>
+<td><strong>weight</strong> (3.0)</td>
+<td>Weight given to structure matches relative to FEABAS's.</td>
+<td>Higher = the optimiser trusts your structures more.</td>
+</tr>
+<tr>
+<td><strong>RANSAC tol px</strong> (6)</td>
+<td>Inlier tolerance for the affine fit between the two point sets.</td>
+<td>Raise for larger section-to-section deformation.</td>
+</tr>
+<tr>
+<td><strong>min inliers</strong> (8)</td>
+<td>Minimum inliers before a pair's structure match is accepted.</td>
+<td>Raise to reject weak pairs.</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>3. Fine alignment driven by structures</strong></p>
+<ul>
+<li><strong>restrict</strong> – tissue outside the structures becomes a <code>background_lowweight</code> material (label 150) that
+  is meshed and rendered but has a stiffness multiplier below FEABAS's matching threshold, so <em>no fine
+  matching points are placed there</em>. Selecting it adds the material to <code>configs/material_table.yaml</code>;
+  <strong>you must re-compose the masks</strong> (Window 4) afterwards. <strong>grow structures by px</strong> dilates the
+  structures before they become the matching region.</li>
+<li><strong>Re-weight fine matches by structures</strong> – the softer alternative, applied <em>after</em> <strong>Fine matching</strong>:
+  matches inside structures keep weight <code>weight inside</code> (1.0), the others are damped to <code>weight outside</code>
+  (0.1). Run <strong>Optimize stack</strong> afterwards. <strong>Undo re-weighting</strong> restores the original weights.</li>
+</ul>
+<p><strong>Train a YOLO-seg model</strong> – dataset is a <code>data.yaml</code> of a YOLO-format dataset (or a folder with
+<code>images/</code> and <code>labels/</code> plus the class names typed in). Choose a base model (<code>yolo11n-seg</code> is fast,
+<code>yolo11m-seg</code> more accurate), epochs (100), image size (640). Results land in <code>models/yolo/&lt;run&gt;/</code>.</p>
+<p><strong>Inspect</strong> – shows structures on the thumbnail (green overlay + centroids), or the coarse matches to the
+next section as a red/green overlay with displacement lines.</p>
+<h3 id="fine-alignment-tab">Fine alignment tab</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Config key</th>
+<th>What it does</th>
+<th>When to change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>working mip</strong></td>
+<td><code>alignment.matching.working_mip_level</code> (2)</td>
+<td>Resolution at which block matching runs.</td>
+<td>Use the suggested value: the mip whose xy pixel size is closest below the section thickness. Finer = slower and noisier, coarser = misses detail.</td>
+</tr>
+<tr>
+<td><strong>mesh size (mip0 px)</strong></td>
+<td><code>alignment.meshing.mesh_size</code> (600)</td>
+<td>Spacing of the finite-element mesh.</td>
+<td>600 is a good start. Finer meshes follow local distortion but can "fix" real biological change between sections; coarser meshes are stiffer and safer.</td>
+</tr>
+<tr>
+<td><strong>match confidence</strong></td>
+<td><code>alignment.matching.matcher_config.conf_thresh</code> (0.35)</td>
+<td>Rejects low-confidence block matches.</td>
+<td>Raise if bad matches distort the stack; lower if coverage is poor (check the coverage figures).</td>
+</tr>
+<tr>
+<td><strong>workers: matching</strong></td>
+<td><code>matching.matcher_config.num_workers</code> (15)</td>
+<td></td>
+<td>Near core count; watch RAM.</td>
+</tr>
+<tr>
+<td><strong>workers: optimization</strong></td>
+<td><code>optimization.num_workers</code> (5)</td>
+<td></td>
+<td>4–8 is plenty.</td>
+</tr>
+<tr>
+<td><strong>chunked depth</strong></td>
+<td><code>optimization.chunk_settings.chunked_to_depth</code> (0)</td>
+<td><code>0</code> = sliding window over the whole stack; <code>&gt;0</code> = align sections in chunks first, then chunks against each other.</td>
+<td>Use chunking for very long stacks (thousands of sections) where the sliding window becomes slow.</td>
+</tr>
+<tr>
+<td><strong>chunk size</strong></td>
+<td><code>chunk_settings.default_chunk_size</code> (16)</td>
+<td>Sections per chunk when chunking.</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>window</strong></td>
+<td><code>optimization.slide_window.window_size</code> (64)</td>
+<td>Sections optimised together in the sliding window.</td>
+<td>Larger windows propagate constraints further at higher memory cost.</td>
+</tr>
+<tr>
+<td><strong>buffer</strong></td>
+<td><code>slide_window.buffer_size</code> (16)</td>
+<td>Overlap re-optimised when the window moves, to avoid fringe effects.</td>
+<td>Roughly a quarter of the window.</td>
+</tr>
+</tbody>
+</table></div>
+<p>Steps: <strong>Generate meshes</strong> (needs the material masks) → <strong>Fine matching</strong> → <strong>Optimize stack</strong>.</p>
+<p><strong>Make match-coverage figures (FEABAS tool)</strong> overlays match positions on each thumbnail: red = matches
+to the previous section, green = to the next. Areas without yellow have no matches and will only follow
+the mesh — that is where distortion goes unnoticed.</p>
+<h3 id="test-on-subset-tab_1">Test on subset tab</h3>
+<p>Creates a sandbox that links the stitched sections and copies thumbnails and masks of the chosen sections
+(at least two), so coarse and fine alignment can be tried with different settings without touching the
+project. <strong>Edit this test's settings…</strong> → <strong>Save and copy to project</strong> promotes what worked.</p>
+<h3 id="quality-check-tab_1">Quality check tab</h3>
+<p>Choose the source (project or a test run), the section, and what to show:</p>
+<ul>
+<li><strong>aligned thumbnails: this section</strong> – plain view;</li>
+<li><strong>this (red) vs next (green)</strong> – grey means the sections agree, coloured fringes are residual
+  misalignment. Some colour is normal — biology changes between sections. Systematic shifts or a
+  distorted region point at missing matches or a mask problem;</li>
+<li><strong>checkerboard with next</strong> – alternating blocks; good for spotting shear;</li>
+<li><strong>match coverage figure</strong> – the figures made on the Fine alignment tab.</li>
+</ul>
+<hr />
+<h2 id="9-window-6-export-view">9. Window 6 – Export &amp; view</h2>
+<h3 id="render-tab">Render tab</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Config key</th>
+<th>Meaning</th>
+<th>Guidance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>PNG tile size</strong></td>
+<td><code>alignment.rendering.tile_size</code> (4096)</td>
+<td>Output tile size for the PNG driver.</td>
+<td>4096 is fine for VAST.</td>
+</tr>
+<tr>
+<td><strong>mip</strong></td>
+<td><code>rendering.mip_level</code> (0)</td>
+<td>Resolution to render at.</td>
+<td>0 = full resolution. Render a coarser mip first if you just want to look at the stack.</td>
+</tr>
+<tr>
+<td><strong>mipmaps up to</strong></td>
+<td><code>downsample.max_mip</code> (7)</td>
+<td>How many pyramid levels to build for the PNG stack.</td>
+<td>7 gives smooth zooming for large volumes.</td>
+</tr>
+<tr>
+<td><strong>interpolation</strong></td>
+<td><code>rendering.remap_interp</code> (LANCZOS)</td>
+<td>Resampling filter.</td>
+<td>LANCZOS for quality, LINEAR/NEAREST when speed matters or for label-like data.</td>
+</tr>
+<tr>
+<td><strong>workers</strong></td>
+<td><code>rendering.num_workers</code> and <code>tensorstore_rendering.num_workers</code> (15)</td>
+<td></td>
+<td>I/O bound; more workers help only on fast storage.</td>
+</tr>
+<tr>
+<td><strong>output folder</strong></td>
+<td><code>rendering.out_dir</code> / <code>tensorstore_rendering.out_dir</code></td>
+<td>Empty = inside the project (<code>aligned_stack</code>, <code>aligned_tensorstore</code>).</td>
+<td>Point it at a different disk when the project disk is too small.</td>
+</tr>
+</tbody>
+</table></div>
+<p>Two independent output paths, each with its own steps:</p>
+<ul>
+<li><strong>PNG tile stack (VASTlite)</strong> – <em>Render aligned stack (PNG tiles)</em> → <em>Mipmaps for PNG stack</em>.</li>
+<li><strong>Precomputed volume (Neuroglancer/TensorStore)</strong> – <em>Render aligned volume (precomputed)</em> →
+  <em>Mipmaps for volume</em>. This is the efficient path for ~TB data.</li>
+</ul>
+<p>Both read the same transforms, so you can produce either or both. Rendering is the step to distribute:
+use the <strong>subset</strong> controls on the step card to render sections 0–499 here and 500–999 on another machine
+into the same output folder.</p>
+<h3 id="export-viewers-tab">Export &amp; viewers tab</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Control</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>name</strong></td>
+<td>Base name of the export.</td>
+</tr>
+<tr>
+<td><strong>what</strong></td>
+<td><em>VASTlite</em> (<code>.vsvi</code> + tile pyramid, hard-linked — instant and no extra disk space on the same drive), <em>OME-Zarr 0.4</em> (uncompressed chunks, for moderate volumes), or <em>both</em>.</td>
+</tr>
+<tr>
+<td><strong>zarr chunk</strong> (256)</td>
+<td>Chunk size for the OME-Zarr output.</td>
+</tr>
+<tr>
+<td><strong>to</strong></td>
+<td>Export folder; default <code>&lt;project&gt;/exports</code>.</td>
+</tr>
+<tr>
+<td><strong>Export</strong></td>
+<td>Runs the export worker. Requires the PNG tile stack to exist.</td>
+</tr>
+<tr>
+<td><strong>Open in VASTlite</strong></td>
+<td>Opens the selected <code>.vsvi</code> (set the VASTlite path in Setup).</td>
+</tr>
+<tr>
+<td><strong>Serve precomputed volume &amp; open in Neuroglancer</strong></td>
+<td>Starts a local HTTP server for the precomputed volume while the workbench is open and opens Neuroglancer in your browser.</td>
+</tr>
+<tr>
+<td><strong>Open aligned section folder in Fiji</strong></td>
+<td>Opens the current section's PNG tile folder.</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="view-aligned-sections-tab">View aligned sections tab</h3>
+<p>Tile-based viewer over the rendered PNG stack with section navigation and an <strong>overlay next section
+(red/green)</strong> checkbox — the final check that the stack is smooth in z.</p>
+<hr />
+<h2 id="10-a-first-dataset-end-to-end">10. A first dataset, end to end</h2>
+<ol>
+<li><strong>Setup</strong> – <em>Detect environments</em>, check the GPU line, set Fiji/VAST, <strong>Save</strong>.</li>
+<li><strong>Project &amp; data</strong> – <em>New project</em> (empty folder, big disk) → tile folder → <strong>Guess rule</strong> → <strong>Read
+   from image metadata</strong> → set section thickness → <strong>Scan tiles</strong> → check the preview and the warnings →
+   <strong>Show overlap of two neighbouring tiles</strong> → <strong>Write stitch_coord files</strong>.</li>
+<li><em>(optional)</em> <strong>Preprocessing</strong> – histogram matching and/or N2V, then <strong>Apply to coordinate files</strong>.</li>
+<li><strong>Stitching</strong> – <em>Test on subset</em> with one section and a small tile block; look at the seams in
+   <em>Quality check</em>; when happy, copy the settings to the project and <strong>Run all</strong> on the <em>Run</em> tab.</li>
+<li><strong>Masks</strong> – <strong>Make thumbnails</strong> (aim for 500–2000 px) → tissue method (start with "everything imaged
+   is tissue") → <strong>Detect folds</strong> → <strong>Compose</strong>. Check a few sections with the overlays; paint split
+   lines through broken sections.</li>
+<li><strong>Alignment</strong> – <strong>Match thumbnails</strong> → <strong>Optimize coarse stack</strong> → <strong>Render coarse stack</strong> → check
+   red/green → <strong>Generate meshes</strong> → <strong>Fine matching</strong> → <strong>Optimize stack</strong>. Make coverage figures if
+   something looks off.</li>
+<li><strong>Export &amp; view</strong> – render PNG tiles + mipmaps → <strong>Export</strong> (VAST) → <strong>Open in VASTlite</strong>; or render
+   the precomputed volume and open it in Neuroglancer.</li>
+</ol>
+<p>At every stage: run the test-subset variant first on a new dataset. It costs minutes and saves hours.</p>
+<hr />
+<h2 id="11-changing-your-mind-stale-clear-snapshots">11. Changing your mind: stale, clear, snapshots</h2>
+<p><strong>Snapshots</strong> (Pipeline → <em>Create snapshot of current state…</em>) copy the small, expensive things —
+matches, meshes, transforms, configs — into <code>snapshots/&lt;timestamp&gt;/</code>. Rendered images are <em>not</em> included
+(they are large and reproducible). The dialog tells you how much will be copied. <em>Restore snapshot…</em>
+puts them back and reloads the configs.</p>
+<p><strong>Clear</strong> (Pipeline → <em>Clear a step and everything after it…</em>, or <strong>Clear…</strong> on any step card) deletes a
+step's outputs and everything downstream, after listing exactly what will go. This is the supported way
+to re-run a FEABAS step: FEABAS skips work whose output already exists, so stale outputs would otherwise
+survive the re-run.</p>
+<p>Typical sequences:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>You changed</th>
+<th>Clear from</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>coordinate files, tile source, overlap</td>
+<td><em>Match tiles</em></td>
+</tr>
+<tr>
+<td>stitching settings</td>
+<td><em>Match tiles</em> (matching-related) or <em>Render montages</em> (rendering-only)</td>
+</tr>
+<tr>
+<td>thumbnail mip / high-pass</td>
+<td><em>Make thumbnails</em></td>
+</tr>
+<tr>
+<td>masks (tissue, folds, split lines)</td>
+<td><em>Generate meshes</em> — coarse matching may also be worth redoing</td>
+</tr>
+<tr>
+<td>coarse matching settings</td>
+<td><em>Match thumbnails</em></td>
+</tr>
+<tr>
+<td>working mip, mesh size, fine matching settings</td>
+<td><em>Fine matching</em></td>
+</tr>
+<tr>
+<td>render settings only</td>
+<td><em>Render aligned stack</em></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Remove error files</strong> is the lighter alternative when only a handful of sections failed: it deletes the
+<code>*_err</code> markers so the next run retries exactly those sections and leaves the good ones alone.</p>
+<hr />
+<h2 id="12-troubleshooting">12. Troubleshooting</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely cause and fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>start_gui.bat</code> says it found no environment</td>
+<td>No conda env with PySide6 under the standard names. Run <code>tools\install.bat</code>, or set <code>FW_PYTHON</code> to the interpreter you want.</td>
+</tr>
+<tr>
+<td>Step card says <strong>blocked</strong></td>
+<td>An upstream step has no outputs. The reason line names it.</td>
+</tr>
+<tr>
+<td>Step card says <strong>stale</strong></td>
+<td>A config or an upstream step is newer than these outputs. Clear this step and re-run.</td>
+</tr>
+<tr>
+<td>Many <code>*_err</code> files after matching</td>
+<td>Overlap or search margin wrong, or genuinely broken tiles. Check the log for the failing sections, fix the setting, <em>Remove error files</em>, re-run.</td>
+</tr>
+<tr>
+<td>Visible seams in the montage</td>
+<td>Matches rejected or wrong: enlarge the search margin, lower the confidence threshold, verify overlap with <em>Show overlap of two neighbouring tiles</em>.</td>
+</tr>
+<tr>
+<td>Rendered sections look inverted</td>
+<td>Turn off <code>rendering.loader_settings.inverse</code>.</td>
+</tr>
+<tr>
+<td>Black bands exactly where the tiles overlap</td>
+<td>The blend mode is null (see <a href="#blending-the-overlaps">Blending the overlaps</a>). Pick a mode from the <em>overlap blending</em> drop-down and re-render.</td>
+</tr>
+<tr>
+<td>Rendering dies with "unable to allocate …"</td>
+<td>Each rendering worker holds its own image cache: <code>rendering.loader_settings.cache_size</code> × tile size × workers. Lower the cache size before lowering the worker count.</td>
+</tr>
+<tr>
+<td>Coarse matching fails for some pairs</td>
+<td>Thumbnail mip too fine or too coarse; high-pass filter setting wrong for your detector; try <code>compare_distance</code> 2, manual BigWarp matches, or structure-guided matching.</td>
+</tr>
+<tr>
+<td>Red/green overlay shows a systematically distorted region</td>
+<td>Missing matches there (check the coverage figure) or a mask problem (tissue mask cutting into real tissue).</td>
+</tr>
+<tr>
+<td>Out of memory during matching</td>
+<td>Lower <code>image cache (tiles)</code> first, then the number of workers.</td>
+</tr>
+<tr>
+<td>CUDA out of memory in a deep-learning step</td>
+<td>Lower the batch size and the prediction/inference tile size.</td>
+</tr>
+<tr>
+<td>"FEABAS steps cannot run in …: cannot import feabas"</td>
+<td>The interpreter is wrong: it is the GUI's own environment or one without FEABAS. The message names where the path came from (Setup page setting, or this project's override). Fix it on the Setup page, press <em>Check selected</em>, then <em>Save</em>. The check runs before the step starts, so nothing is written.</td>
+</tr>
+<tr>
+<td>"does not import feabas" / "does not import torch" on <em>Check selected</em></td>
+<td>The interpreter you picked lacks the packages that step needs.</td>
+</tr>
+<tr>
+<td>Quality check shows nothing when zoomed out</td>
+<td>Only mip0 exists. Run the mipmap step (test run) or <em>Make thumbnails</em> (Masks page).</td>
+</tr>
+<tr>
+<td>Folds end up as 255 instead of a fold label</td>
+<td>The tissue mask excluded them, and fold labels are only painted inside tissue. Turn <em>exclude black regions</em> off and re-compute; Compose warns in the log when this happens.</td>
+</tr>
+<tr>
+<td>A fold that reaches the section edge is cut out of the mask</td>
+<td>Use the default tissue method (tile footprint). Anything that flood-fills from the border would follow that fold into the section.</td>
+</tr>
+<tr>
+<td>The black border around the section carries a fold label</td>
+<td>The fold detector fires there too. Set <em>where folds and the outside overlap</em> to "outside wins" and re-compose. A wrinkle-labelled border is meshed, rendered, and — unlike <code>soft</code> — matched, so the coarse matcher starts aligning montage outlines.</td>
+</tr>
+<tr>
+<td>Composing brings back a mask you thought you deleted</td>
+<td>Compose reuses the stored tissue and fold masks. <em>Reset checked sections to FEABAS default</em> deletes them.</td>
+</tr>
+<tr>
+<td>The GUI is fine but nothing runs</td>
+<td>Look at the log dock (Ctrl+L) and the console window behind the GUI; a failed job shows its last output in a dialog too.</td>
+</tr>
+</tbody>
+</table></div>
+<hr />
+<h2 id="13-where-every-setting-is-stored">13. Where every setting is stored</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Window</th>
+<th>Setting group</th>
+<th>Written to</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0 Setup</td>
+<td>interpreters, Fiji, VAST, conda, PyTorch index</td>
+<td><code>%APPDATA%\FeabasWorkbench\settings.json</code></td>
+</tr>
+<tr>
+<td>0 Setup</td>
+<td>CPU budget, parallel framework, log level</td>
+<td><code>configs/general_configs.yaml</code></td>
+</tr>
+<tr>
+<td>1 Project</td>
+<td>tile folder, naming rule, layout, voxel size, path mode</td>
+<td><code>workbench_project.json</code></td>
+</tr>
+<tr>
+<td>1 Project</td>
+<td>working directory, full resolution, section thickness</td>
+<td><code>configs/general_configs.yaml</code></td>
+</tr>
+<tr>
+<td>1 Project</td>
+<td>suggested mips on write</td>
+<td><code>configs/alignment_configs.yaml</code>, <code>configs/thumbnail_configs.yaml</code>, <code>configs/stitching_configs.yaml</code></td>
+</tr>
+<tr>
+<td>2 Preprocessing</td>
+<td>template, ignore black/white, workers, N2V settings, active source</td>
+<td><code>workbench_project.json</code></td>
+</tr>
+<tr>
+<td>3 Stitching</td>
+<td>everything</td>
+<td><code>configs/stitching_configs.yaml</code></td>
+</tr>
+<tr>
+<td>4 Masks</td>
+<td>thumbnail mip, high-pass, workers</td>
+<td><code>configs/thumbnail_configs.yaml</code></td>
+</tr>
+<tr>
+<td>4 Masks</td>
+<td>tissue/fold parameters, checkpoint, compose options</td>
+<td><code>workbench_project.json</code></td>
+</tr>
+<tr>
+<td>4 Masks</td>
+<td>composed masks</td>
+<td><code>thumbnail_align/material_masks/</code>, optionally <code>align/material_masks/</code></td>
+</tr>
+<tr>
+<td>5 Alignment</td>
+<td>coarse settings</td>
+<td><code>configs/thumbnail_configs.yaml</code></td>
+</tr>
+<tr>
+<td>5 Alignment</td>
+<td>fine settings, render settings</td>
+<td><code>configs/alignment_configs.yaml</code></td>
+</tr>
+<tr>
+<td>5 Alignment</td>
+<td>YOLO model, classes, modes, weights</td>
+<td><code>workbench_project.json</code></td>
+</tr>
+<tr>
+<td>5 Alignment</td>
+<td><code>background_lowweight</code> material</td>
+<td><code>configs/material_table.yaml</code></td>
+</tr>
+<tr>
+<td>6 Export</td>
+<td>render settings</td>
+<td><code>configs/alignment_configs.yaml</code></td>
+</tr>
+<tr>
+<td>6 Export</td>
+<td>export folder</td>
+<td><code>workbench_project.json</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>Test runs keep their own copy of <code>configs/</code> under <code>tests/&lt;name&gt;/</code>; <strong>Save and copy to project</strong> is the
+only thing that promotes them to the project.</p>
+    </div>
+  </main>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var doc = document.getElementById("doc");
+  var tocEl = document.getElementById("toc");
+  var headings = Array.prototype.slice.call(doc.querySelectorAll("h2, h3"));
+
+  // ---- contents rail ------------------------------------------------
+  var entries = headings.map(function (h) {
+    var text = h.textContent.trim();
+    var m = text.match(/^(\d+)\.\s+(.*)$/);
+    var a = document.createElement("a");
+    a.href = "#" + h.id;
+    var num = document.createElement("span");
+    num.className = "num";
+    num.textContent = m ? m[1] : "";
+    var label = document.createElement("span");
+    label.textContent = m ? m[2] : text;
+    a.appendChild(num);
+    a.appendChild(label);
+    if (h.tagName === "H3") { a.className = "sub"; }
+    tocEl.appendChild(a);
+    return { heading: h, link: a, level: h.tagName === "H2" ? 2 : 3, text: text.toLowerCase() };
+  });
+
+  // section body text, for search
+  entries.forEach(function (e) {
+    var words = [e.text];
+    var n = e.heading.nextElementSibling;
+    while (n && !/^H[23]$/.test(n.tagName)) {
+      words.push(n.textContent.toLowerCase());
+      n = n.nextElementSibling;
+    }
+    e.body = words.join(" ");
+  });
+
+  // ---- pipeline chips ------------------------------------------------
+  var rail = document.getElementById("pipeline");
+  var windows = entries.filter(function (e) { return e.level === 2 && /window\s+\d/i.test(e.text); });
+  windows.forEach(function (e, i) {
+    var li = document.createElement("li");
+    var m = e.heading.textContent.match(/Window\s+(\d)\s*[–-]\s*(.+)$/i);
+    var a = document.createElement("a");
+    a.href = "#" + e.heading.id;
+    var n = document.createElement("span");
+    n.className = "n";
+    n.textContent = m ? m[1] : String(i);
+    var t = document.createElement("span");
+    t.textContent = m ? m[2].trim() : e.heading.textContent;
+    a.appendChild(n);
+    a.appendChild(t);
+    li.appendChild(a);
+    if (i < windows.length - 1) {
+      var arrow = document.createElement("span");
+      arrow.className = "arrow";
+      arrow.setAttribute("aria-hidden", "true");
+      arrow.textContent = "→";
+      li.appendChild(arrow);
+    }
+    rail.appendChild(li);
+  });
+
+  // ---- scroll spy ----------------------------------------------------
+  var current = null;
+  function spy() {
+    var best = null;
+    for (var i = 0; i < entries.length; i++) {
+      var top = entries[i].heading.getBoundingClientRect().top;
+      if (top <= 90) { best = entries[i]; } else { break; }
+    }
+    if (!best) { best = entries[0]; }
+    if (best === current) { return; }
+    if (current) { current.link.classList.remove("active"); }
+    best.link.classList.add("active");
+    current = best;
+  }
+  var ticking = false;
+  window.addEventListener("scroll", function () {
+    if (ticking) { return; }
+    ticking = true;
+    window.requestAnimationFrame(function () { spy(); ticking = false; });
+  }, { passive: true });
+  spy();
+
+  // ---- search --------------------------------------------------------
+  var q = document.getElementById("q");
+  var status = document.getElementById("qs");
+  function runSearch() {
+    var term = q.value.trim().toLowerCase();
+    if (!term) {
+      entries.forEach(function (e) { e.link.hidden = false; });
+      status.hidden = true;
+      return;
+    }
+    var hits = 0;
+    entries.forEach(function (e) {
+      var hit = e.body.indexOf(term) !== -1;
+      e.link.hidden = !hit;
+      if (hit) { hits++; }
+    });
+    status.hidden = false;
+    status.textContent = hits ? hits + " section" + (hits === 1 ? "" : "s") + " mention “" + q.value.trim() + "”"
+                              : "Nothing matches “" + q.value.trim() + "”";
+  }
+  q.addEventListener("input", runSearch);
+  q.addEventListener("keydown", function (ev) {
+    if (ev.key !== "Enter") { return; }
+    for (var i = 0; i < entries.length; i++) {
+      if (!entries[i].link.hidden) { entries[i].heading.scrollIntoView(); return; }
+    }
+  });
+})();
+</script>
+
+</body>
+</html>

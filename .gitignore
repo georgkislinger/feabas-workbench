@@ -1,0 +1,27 @@
+# data and models that live next to the code but are not code
+Example_data_to_stitch_and_align_and_export/
+Empty_for_eventual_yolo-seg/
+Helper_scripts_to_incorporate_or_adjust/
+*.ckpt
+*.pt
+*.pth
+*.tif
+*.tiff
+# ...except the bundled fold U-Net weights the Masks page defaults to (fp16, inference-only, 49 MB -
+# under GitHub's 100 MB limit without LFS). It lives in the package so a wheel ships it; the full
+# Lightning checkpoints under Fold_model_ckpt/lightning_logs/ stay ignored.
+!feabas_workbench/resources/fold_unet_resnet34_inference_only_fp16.ckpt
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.venv/
+
+# app state
+_scratch/
+_test_projects/
+*.log

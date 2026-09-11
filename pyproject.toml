@@ -1,0 +1,74 @@
+[project]
+name = "feabas-workbench"
+version = "0.1.0"
+description = "Desktop workbench around FEABAS: data prep, preprocessing, stitching, masks, structure-guided alignment and export for serial-section EM"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Georg Kislinger", email = "georg.kislinger@dzne.de" }]
+keywords = ["electron-microscopy", "connectomics", "stitching", "alignment", "FEABAS", "serial-section"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: X11 Applications :: Qt",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: Science/Research",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+dependencies = [
+    "PySide6>=6.5",
+    "numpy",
+    "scipy",
+    "PyYAML>=6.0",
+    "Pillow>=10",
+    "tifffile",
+    "imagecodecs",
+    "h5py",
+    "psutil",
+    "opencv-python-headless",
+    "tensorstore",
+]
+
+[project.optional-dependencies]
+# deep-learning workers (fold U-Net, YOLO-seg, CAREamics denoising) run in a separate
+# environment by default; install these there.
+dl = [
+    "torch",
+    "torchvision",
+    "segmentation-models-pytorch",
+    "ultralytics",
+    "careamics==0.3.2",
+    "scikit-image",
+]
+viewer = ["tensorstore"]
+dev = ["pytest", "pyinstaller"]
+
+[project.urls]
+Homepage = "https://github.com/georgkislinger/feabas-workbench"
+"User guide" = "https://github.com/georgkislinger/feabas-workbench/blob/main/docs/USER_GUIDE.md"
+Issues = "https://github.com/georgkislinger/feabas-workbench/issues"
+FEABAS = "https://github.com/YuelongWu/feabas"
+
+# gui-scripts: on Windows the launcher is a windowed exe, so no console window sits behind the GUI.
+# feabas-workbench-cli keeps a console-attached variant for --screenshot and for seeing tracebacks.
+[project.gui-scripts]
+feabas-workbench = "feabas_workbench.app:main"
+
+[project.scripts]
+feabas-workbench-cli = "feabas_workbench.app:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["feabas_workbench*"]
+
+[tool.setuptools.package-data]
+feabas_workbench = ["vendor/**/*", "resources/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,397 @@
+<title>FEABAS Workbench Guide</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@400;500&display=swap">
+<style>
+:root {
+  --ground: #F2F4F7;
+  --surface: #FFFFFF;
+  --raised: #EDF1F6;
+  --rule: #D8DFE8;
+  --rule-soft: #E7ECF2;
+  --ink: #141C26;
+  --ink-soft: #3C4A5A;
+  --muted: #5D6B7C;
+  --accent: #1D4ED8;
+  --accent-soft: #E5EDFF;
+  --ok: #0F9D6E;
+  --warn: #B87503;
+  --err: #C33636;
+  --blocked: #6B7280;
+  --code-bg: #EEF2F7;
+  --code-ink: #1B3A6B;
+  --shadow: 0 1px 2px rgba(20, 28, 38, .06);
+  --rail-w: 274px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #111827;
+    --surface: #1A2332;
+    --raised: #273244;
+    --rule: #374151;
+    --rule-soft: #2B3648;
+    --ink: #E5E7EB;
+    --ink-soft: #C7CEDA;
+    --muted: #9CA3AF;
+    --accent: #60A5FA;
+    --accent-soft: #1E3A5F;
+    --ok: #34D399;
+    --warn: #F59E0B;
+    --err: #F87171;
+    --blocked: #6B7280;
+    --code-bg: #202B3C;
+    --code-ink: #A8C7F0;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .35);
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #111827;
+  --surface: #1A2332;
+  --raised: #273244;
+  --rule: #374151;
+  --rule-soft: #2B3648;
+  --ink: #E5E7EB;
+  --ink-soft: #C7CEDA;
+  --muted: #9CA3AF;
+  --accent: #60A5FA;
+  --accent-soft: #1E3A5F;
+  --ok: #34D399;
+  --warn: #F59E0B;
+  --err: #F87171;
+  --blocked: #6B7280;
+  --code-bg: #202B3C;
+  --code-ink: #A8C7F0;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .35);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.skip {
+  position: absolute; left: -9999px; top: 0; z-index: 20;
+  background: var(--surface); color: var(--ink); padding: 10px 14px; border: 1px solid var(--rule);
+}
+.skip:focus { left: 8px; top: 8px; }
+
+/* ---------- layout ---------- */
+.layout { display: grid; grid-template-columns: var(--rail-w) minmax(0, 1fr); align-items: start; }
+
+.rail {
+  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  background: var(--surface); border-right: 1px solid var(--rule);
+  display: flex; flex-direction: column; gap: 14px; padding: 22px 0 28px;
+}
+.rail-head { padding: 0 20px; display: flex; flex-direction: column; gap: 2px; }
+.rail-title { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+.eyebrow {
+  margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .11em; text-transform: uppercase; color: var(--muted);
+}
+.search { padding: 0 20px; display: flex; flex-direction: column; gap: 6px; }
+#q {
+  width: 100%; font: inherit; font-size: 13.5px; color: var(--ink);
+  background: var(--raised); border: 1px solid var(--rule); border-radius: 6px; padding: 7px 10px;
+}
+#q::placeholder { color: var(--muted); }
+#q:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.search-status { margin: 0; font-size: 12px; color: var(--muted); }
+
+#toc { display: flex; flex-direction: column; padding: 0 12px; }
+#toc a {
+  display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; align-items: baseline;
+  padding: 6px 8px; border-radius: 5px; text-decoration: none; color: var(--ink-soft); font-size: 13.5px;
+  border-left: 2px solid transparent;
+}
+#toc a .num { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+#toc a:hover { background: var(--raised); color: var(--ink); }
+#toc a.active { color: var(--accent); background: var(--accent-soft); font-weight: 500; }
+#toc a.sub {
+  grid-template-columns: 22px minmax(0, 1fr);
+  font-size: 12.5px; color: var(--muted); padding-top: 4px; padding-bottom: 4px;
+}
+#toc a.sub .num { visibility: hidden; }
+#toc a.sub.active { color: var(--accent); background: transparent; }
+#toc a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+#toc a[hidden] { display: none; }
+
+main { padding: 44px 48px 120px; min-width: 0; }
+.masthead { max-width: 78ch; display: flex; flex-direction: column; gap: 10px; }
+.masthead h1 {
+  margin: 0; font-size: clamp(30px, 4vw, 40px); line-height: 1.1; letter-spacing: -.02em; font-weight: 600;
+  text-wrap: balance;
+}
+.standfirst {
+  margin: 0; font-family: "IBM Plex Serif", Georgia, serif; font-size: 17px; line-height: 1.6; color: var(--ink-soft);
+  max-width: 62ch;
+}
+
+/* pipeline rail: the seven windows, in the order the pipeline runs */
+.pipeline {
+  list-style: none; margin: 22px 0 0; padding: 0;
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: stretch;
+  max-width: 100%;
+}
+.pipeline li { display: flex; align-items: center; gap: 6px; }
+.pipeline a {
+  display: flex; align-items: baseline; gap: 7px; text-decoration: none;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 5px;
+  padding: 6px 10px; color: var(--ink-soft); font-size: 12.5px; box-shadow: var(--shadow);
+}
+.pipeline a:hover { border-color: var(--accent); color: var(--ink); }
+.pipeline a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pipeline .n {
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px; color: var(--accent); font-weight: 500;
+}
+.pipeline .arrow { color: var(--rule); font-size: 12px; }
+
+/* ---------- document body ---------- */
+.doc { max-width: 78ch; margin-top: 40px; }
+.doc > * { margin: 0; }
+.doc > * + * { margin-top: 14px; }
+
+.doc h2 {
+  margin: 56px 0 0; padding-top: 18px; border-top: 1px solid var(--rule);
+  font-size: 24px; line-height: 1.2; letter-spacing: -.015em; font-weight: 600; text-wrap: balance;
+  scroll-margin-top: 20px;
+}
+.doc h2:first-child { margin-top: 0; border-top: none; padding-top: 0; }
+.doc h3 {
+  margin: 34px 0 0; font-size: 17px; font-weight: 600; letter-spacing: -.005em; color: var(--ink);
+  scroll-margin-top: 20px;
+}
+.doc h4 { margin: 24px 0 0; font-size: 14px; font-weight: 600; color: var(--ink-soft); scroll-margin-top: 20px; }
+.doc h2 + p, .doc h3 + p, .doc h4 + p { margin-top: 10px; }
+
+.doc p {
+  font-family: "IBM Plex Serif", Georgia, serif; font-size: 15.5px; line-height: 1.65; color: var(--ink-soft);
+  max-width: 68ch;
+}
+.doc strong { color: var(--ink); font-weight: 600; }
+.doc em { font-style: italic; }
+.doc a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+.doc ul, .doc ol { padding-left: 20px; max-width: 68ch; display: flex; flex-direction: column; gap: 7px; }
+.doc li { line-height: 1.55; }
+.doc li > p { margin: 0; }
+
+.doc hr { border: none; height: 0; margin: 0; }
+
+.doc code {
+  font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; font-size: .86em;
+  background: var(--code-bg); color: var(--code-ink); padding: .12em .38em; border-radius: 3px;
+  overflow-wrap: break-word;
+}
+.doc pre {
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 7px;
+  padding: 14px 16px; overflow-x: auto; box-shadow: var(--shadow);
+}
+.doc pre code {
+  background: none; color: var(--ink); padding: 0; font-size: 12.8px; line-height: 1.6; white-space: pre;
+}
+
+/* tables carry most of the reference content: give them room and their own scroll */
+.table-wrap {
+  overflow-x: auto; border: 1px solid var(--rule); border-radius: 7px; background: var(--surface);
+  box-shadow: var(--shadow); max-width: min(100%, 1040px);
+}
+.doc table { border-collapse: collapse; width: 100%; font-size: 13.6px; }
+.doc thead th {
+  text-align: left; font-weight: 600; font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted); padding: 10px 14px; border-bottom: 1px solid var(--rule); white-space: nowrap;
+  background: var(--raised);
+}
+.doc tbody td {
+  padding: 11px 14px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; color: var(--ink-soft);
+  line-height: 1.5;
+}
+.doc tbody tr:last-child td { border-bottom: none; }
+.doc tbody td:first-child { color: var(--ink); min-width: 11ch; }
+.doc table code { white-space: nowrap; }
+
+/* state chips + material swatches: the app's own vocabulary */
+.chip {
+  display: inline-flex; align-items: center; gap: 7px; white-space: nowrap;
+}
+.chip::before {
+  content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--dot, var(--blocked)); flex: none;
+}
+.chip-ok { --dot: var(--ok); }
+.chip-run { --dot: var(--accent); }
+.chip-stale { --dot: var(--warn); }
+.chip-err { --dot: var(--err); }
+.chip-off { --dot: var(--blocked); }
+.swatch {
+  display: inline-block; width: 13px; height: 13px; border-radius: 2px; border: 1px solid var(--rule);
+  margin-right: 8px; vertical-align: -2px; background: var(--sw, #000);
+}
+
+@media (max-width: 1180px) {
+  .doc, .masthead { max-width: none; }
+}
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+  .rail {
+    position: static; height: auto; border-right: none; border-bottom: 1px solid var(--rule);
+    padding-bottom: 16px;
+  }
+  #toc { max-height: 40vh; overflow-y: auto; }
+  main { padding: 28px 20px 80px; }
+  .doc table { font-size: 13px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; }
+}
+html { scroll-behavior: smooth; }
+</style>
+
+<!--BODY-->
+<a class="skip" href="#main">Skip to content</a>
+
+<div class="layout">
+  <aside class="rail">
+    <div class="rail-head">
+      <p class="eyebrow">FEABAS Workbench</p>
+      <p class="rail-title">User guide</p>
+    </div>
+    <div class="search">
+      <input id="q" type="search" placeholder="Search, e.g. conf_thresh, mip, folds" aria-label="Search the guide" autocomplete="off">
+      <p class="search-status" id="qs" hidden></p>
+    </div>
+    <nav id="toc" aria-label="Contents"></nav>
+  </aside>
+
+  <main id="main">
+    <header class="masthead">
+      <p class="eyebrow">Serial-section EM · stitching, alignment, export</p>
+      <h1>FEABAS Workbench user guide</h1>
+      <p class="standfirst">Every window, every setting: what it does, when to touch it, and what it makes
+      stale if you change it later. Written against the seven windows of the app, in the order the pipeline
+      runs.</p>
+      <ol class="pipeline" id="pipeline" aria-label="The seven windows, in pipeline order"></ol>
+    </header>
+
+    <div class="doc" id="doc">
+<!--CONTENT-->
+    </div>
+  </main>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var doc = document.getElementById("doc");
+  var tocEl = document.getElementById("toc");
+  var headings = Array.prototype.slice.call(doc.querySelectorAll("h2, h3"));
+
+  // ---- contents rail ------------------------------------------------
+  var entries = headings.map(function (h) {
+    var text = h.textContent.trim();
+    var m = text.match(/^(\d+)\.\s+(.*)$/);
+    var a = document.createElement("a");
+    a.href = "#" + h.id;
+    var num = document.createElement("span");
+    num.className = "num";
+    num.textContent = m ? m[1] : "";
+    var label = document.createElement("span");
+    label.textContent = m ? m[2] : text;
+    a.appendChild(num);
+    a.appendChild(label);
+    if (h.tagName === "H3") { a.className = "sub"; }
+    tocEl.appendChild(a);
+    return { heading: h, link: a, level: h.tagName === "H2" ? 2 : 3, text: text.toLowerCase() };
+  });
+
+  // section body text, for search
+  entries.forEach(function (e) {
+    var words = [e.text];
+    var n = e.heading.nextElementSibling;
+    while (n && !/^H[23]$/.test(n.tagName)) {
+      words.push(n.textContent.toLowerCase());
+      n = n.nextElementSibling;
+    }
+    e.body = words.join(" ");
+  });
+
+  // ---- pipeline chips ------------------------------------------------
+  var rail = document.getElementById("pipeline");
+  var windows = entries.filter(function (e) { return e.level === 2 && /window\s+\d/i.test(e.text); });
+  windows.forEach(function (e, i) {
+    var li = document.createElement("li");
+    var m = e.heading.textContent.match(/Window\s+(\d)\s*[–-]\s*(.+)$/i);
+    var a = document.createElement("a");
+    a.href = "#" + e.heading.id;
+    var n = document.createElement("span");
+    n.className = "n";
+    n.textContent = m ? m[1] : String(i);
+    var t = document.createElement("span");
+    t.textContent = m ? m[2].trim() : e.heading.textContent;
+    a.appendChild(n);
+    a.appendChild(t);
+    li.appendChild(a);
+    if (i < windows.length - 1) {
+      var arrow = document.createElement("span");
+      arrow.className = "arrow";
+      arrow.setAttribute("aria-hidden", "true");
+      arrow.textContent = "→";
+      li.appendChild(arrow);
+    }
+    rail.appendChild(li);
+  });
+
+  // ---- scroll spy ----------------------------------------------------
+  var current = null;
+  function spy() {
+    var best = null;
+    for (var i = 0; i < entries.length; i++) {
+      var top = entries[i].heading.getBoundingClientRect().top;
+      if (top <= 90) { best = entries[i]; } else { break; }
+    }
+    if (!best) { best = entries[0]; }
+    if (best === current) { return; }
+    if (current) { current.link.classList.remove("active"); }
+    best.link.classList.add("active");
+    current = best;
+  }
+  var ticking = false;
+  window.addEventListener("scroll", function () {
+    if (ticking) { return; }
+    ticking = true;
+    window.requestAnimationFrame(function () { spy(); ticking = false; });
+  }, { passive: true });
+  spy();
+
+  // ---- search --------------------------------------------------------
+  var q = document.getElementById("q");
+  var status = document.getElementById("qs");
+  function runSearch() {
+    var term = q.value.trim().toLowerCase();
+    if (!term) {
+      entries.forEach(function (e) { e.link.hidden = false; });
+      status.hidden = true;
+      return;
+    }
+    var hits = 0;
+    entries.forEach(function (e) {
+      var hit = e.body.indexOf(term) !== -1;
+      e.link.hidden = !hit;
+      if (hit) { hits++; }
+    });
+    status.hidden = false;
+    status.textContent = hits ? hits + " section" + (hits === 1 ? "" : "s") + " mention “" + q.value.trim() + "”"
+                              : "Nothing matches “" + q.value.trim() + "”";
+  }
+  q.addEventListener("input", runSearch);
+  q.addEventListener("keydown", function (ev) {
+    if (ev.key !== "Enter") { return; }
+    for (var i = 0; i < entries.length; i++) {
+      if (!entries[i].link.hidden) { entries[i].heading.scrollIntoView(); return; }
+    }
+  });
+})();
+</script>
