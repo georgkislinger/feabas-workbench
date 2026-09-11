@@ -137,9 +137,16 @@ class SetupPage(Page):
         if not self._probes and not self.ctx.settings.feabas_python:
             self._detect()
 
+    def shutdown(self) -> None:
+        # the probe thread may be blocked in `conda env list` or a probe interpreter; killing those
+        # makes it return, so the QThread can end before Qt tears it down (see envs._run_probe)
+        E.cancel_probes()
+        super().shutdown()
+
     def _detect(self) -> None:
         if self._thread is not None and self._thread.isRunning():
             return          # a probe is already running (on_shown and the button both start one)
+        E.reset_probe_cancel()
         self.detect_btn.setEnabled(False)
         self.env_list.setPlainText("probing environments (this takes a moment per environment)…")
         self._worker = _Discover()
@@ -150,7 +157,8 @@ class SetupPage(Page):
         self._thread.start()
 
     def _detected(self, probes, gpu) -> None:
-        self._thread.quit(); self._thread.wait(2000)
+        if self._thread is not None:
+            self._thread.quit(); self._thread.wait(2000)
         self.detect_btn.setEnabled(True)
         self._probes = [p for p in probes if p.ok]
         lines = []

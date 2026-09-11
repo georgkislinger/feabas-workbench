@@ -521,3 +521,42 @@ def test_worker_package_root_holds_only_the_package(tmp_path, monkeypatch):
     stamp = (root / "stamp.json").stat().st_mtime_ns
     assert jobs.worker_package_root() == root
     assert (root / "stamp.json").stat().st_mtime_ns == stamp
+
+
+def test_cancel_probes_unblocks_a_thread_stuck_in_a_probe_subprocess():
+    """Environment discovery blocks in subprocesses; closing the window must be able to end that
+    thread (a QThread destroyed while running aborts the process, and on Linux terminate() cannot
+    interrupt a thread blocked in a subprocess - seen in CI)."""
+    import subprocess
+    import sys
+    import threading
+    import time
+    from feabas_workbench.core import envs
+
+    envs.reset_probe_cancel()
+    result = {}
+
+    def worker():
+        t0 = time.time()
+        try:
+            envs._run_probe([sys.executable, "-c", "import time; time.sleep(30)"], timeout=60)
+            result["outcome"] = "completed"
+        except envs.ProbeCancelled:
+            result["outcome"] = "cancelled"
+        except subprocess.TimeoutExpired:
+            result["outcome"] = "timeout"
+        result["seconds"] = time.time() - t0
+
+    th = threading.Thread(target=worker, daemon=True)
+    th.start()
+    deadline = time.time() + 10
+    while not envs._PROBE_PROCS and time.time() < deadline:
+        time.sleep(0.05)
+    assert envs._PROBE_PROCS, "probe subprocess did not start"
+    envs.cancel_probes()
+    th.join(5)
+    assert not th.is_alive(), "thread still blocked after cancel_probes()"
+    assert result["outcome"] == "cancelled"
+    assert result["seconds"] < 5
+    assert envs.discover_environments() == []          # cancelled: no new probe starts
+    envs.reset_probe_cancel()

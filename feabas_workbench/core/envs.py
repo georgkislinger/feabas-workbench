@@ -22,12 +22,70 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import urllib.request
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Iterable
 
 from .. import ORG_NAME
+
+
+# ----------------------------------------------------------------------
+# cancellable probe subprocesses
+# ----------------------------------------------------------------------
+# Environment discovery runs `conda env list` and one probe interpreter per environment from a
+# worker thread, and each of those can block for many seconds. When the window closes while that
+# is under way the thread has to end before Qt tears it down (a QThread destroyed while running
+# aborts the process, and on Linux QThread.terminate() cannot interrupt a thread blocked in a
+# subprocess). So the probe processes are tracked here and killed by cancel_probes(), which makes
+# the blocked call return and the loop stop.
+
+class ProbeCancelled(Exception):
+    pass
+
+
+_PROBE_LOCK = threading.Lock()
+_PROBE_PROCS: set = set()
+_PROBE_CANCELLED = threading.Event()
+
+
+def _run_probe(argv: list[str], timeout: float) -> subprocess.CompletedProcess:
+    """subprocess.run(capture_output=True, text=True) that cancel_probes() can interrupt."""
+    if _PROBE_CANCELLED.is_set():
+        raise ProbeCancelled()
+    p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    with _PROBE_LOCK:
+        _PROBE_PROCS.add(p)
+    try:
+        out, err = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        p.communicate()
+        raise
+    finally:
+        with _PROBE_LOCK:
+            _PROBE_PROCS.discard(p)
+    if _PROBE_CANCELLED.is_set():
+        raise ProbeCancelled()
+    return subprocess.CompletedProcess(argv, p.returncode, out, err)
+
+
+def cancel_probes() -> None:
+    """Stop environment discovery: no new probe starts, running ones are killed."""
+    _PROBE_CANCELLED.set()
+    with _PROBE_LOCK:
+        procs = list(_PROBE_PROCS)
+    for p in procs:
+        try:
+            p.kill()
+        except OSError:
+            pass
+
+
+def reset_probe_cancel() -> None:
+    _PROBE_CANCELLED.clear()
 
 PROBE_SCRIPT = r"""
 import json, sys, importlib, importlib.metadata as md
@@ -156,7 +214,7 @@ def conda_envs(conda: Path | None = None) -> list[Path]:
     conda = conda or find_conda()
     if conda is not None:
         try:
-            r = subprocess.run([str(conda), "env", "list", "--json"], capture_output=True, text=True, timeout=60)
+            r = _run_probe([str(conda), "env", "list", "--json"], timeout=60)
             if r.returncode == 0:
                 for e in json.loads(r.stdout).get("envs", []):
                     p = Path(e)
@@ -229,8 +287,7 @@ def probe_python(python: str | Path, timeout: int = 240) -> ProbeResult:
     if not Path(python).is_file():
         return ProbeResult(python, False, error="interpreter not found")
     try:
-        r = subprocess.run([python, "-c", PROBE_SCRIPT], capture_output=True, text=True, timeout=timeout,
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        r = _run_probe([python, "-c", PROBE_SCRIPT], timeout=timeout)
     except subprocess.TimeoutExpired:
         return ProbeResult(python, False, error="probe timed out")
     except OSError as e:
@@ -285,20 +342,24 @@ def check_imports(python: str | Path, modules: Iterable[str], timeout: int = 90)
 
 
 def discover_environments() -> list[ProbeResult]:
-    """Probe every conda env (and the current interpreter) for feabas / torch."""
-    pys: list[Path] = [Path(sys.executable)]
-    for e in conda_envs():
-        p = env_python(e)
-        if p:
-            pys.append(p)
-    seen = set()
-    out = []
-    for p in pys:
-        k = str(p).lower()
-        if k in seen:
-            continue
-        seen.add(k)
-        out.append(probe_python(p))
+    """Probe every conda env (and the current interpreter) for feabas / torch.
+    Returns what it has so far if cancel_probes() is called meanwhile."""
+    out: list[ProbeResult] = []
+    try:
+        pys: list[Path] = [Path(sys.executable)]
+        for e in conda_envs():
+            p = env_python(e)
+            if p:
+                pys.append(p)
+        seen = set()
+        for p in pys:
+            k = str(p).lower()
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(probe_python(p))
+    except ProbeCancelled:
+        pass
     return out
 
 
@@ -339,9 +400,8 @@ def detect_gpu() -> GpuInfo:
     if exe is None:
         return GpuInfo()
     try:
-        r = subprocess.run([exe, "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader,nounits"],
-                           capture_output=True, text=True, timeout=20,
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        r = _run_probe([exe, "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader,nounits"],
+                       timeout=20)
         line = r.stdout.strip().splitlines()[0]
         name, drv, mem = [s.strip() for s in line.split(",")]
         return GpuInfo(True, name, drv, int(float(mem)))
