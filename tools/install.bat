@@ -30,7 +30,23 @@ if errorlevel 1 (
   "%CONDA%" create -y -n %ENVNAME% --override-channels -c conda-forge python=3.11 pip
   if errorlevel 1 goto :fail
 )
-for /f "delims=" %%i in ('"%CONDA%" run -n %ENVNAME% python -c "import sys; print(sys.executable)"') do set PY=%%i
+rem Ask the environment where its python.exe is (it may live under <conda>\envs or ~\.conda\envs).
+rem Not via `for /f ('...')`: that runs the command through `cmd /c`, which strips the outer quotes
+rem of a quoted command line and breaks it. Redirecting to a file avoids that entirely.
+set PY=
+set PYFILE=%TEMP%\feabas_workbench_python.txt
+"%CONDA%" run -n %ENVNAME% python -c "import sys; print(sys.executable)" > "%PYFILE%"
+if errorlevel 1 goto :fail
+set /p PY=<"%PYFILE%"
+del "%PYFILE%" >nul 2>&1
+if not defined PY (
+  echo Could not determine the python.exe of environment %ENVNAME%.
+  goto :fail
+)
+if not exist "%PY%" (
+  echo The reported interpreter does not exist: %PY%
+  goto :fail
+)
 echo Installing the workbench into %PY%
 "%PY%" -m pip install --index-url https://pypi.org/simple -e "%HERE%"
 if errorlevel 1 goto :fail
