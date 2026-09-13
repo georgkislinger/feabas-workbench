@@ -286,7 +286,7 @@ class MasksPage(Page):
         # ---- tab: settings -----------------------------------------------------
         self.editor = ConfigEditor()
         self.editor.changed.connect(self._editor_changed)
-        self.tabs.addTab(self.editor, "Thumbnail settings (all)")
+        self.tabs.addTab(self.editor, "Thumbnail settings")
         self.ctx.jobs.job_finished.connect(self._job_finished)
 
     # ------------------------------------------------------------------

@@ -188,7 +188,8 @@ Press **F5** (Pipeline → Re-read pipeline state) after changing files outside 
 * **Run all steps below in order** – queues the steps of that panel that are not already *done*.
 
 Only one job runs at a time; further submissions queue. The status bar shows progress and a **Cancel
-job** button; the log dock (Ctrl+L) carries FEABAS's own messages.
+job** button. The log dock opens on its own while a job runs (or when an error is logged); **View →
+Log** (Ctrl+L) shows or hides it, and it carries FEABAS's own messages.
 
 ### 2.4 Settings come in three flavours
 
@@ -661,7 +662,7 @@ image size works.
 ## 8. Window 5 – Alignment
 
 Coarse alignment works on thumbnails, fine alignment on finite-element meshes at the working mip. Tabs:
-*Coarse alignment*, *Structure-guided (optional)*, *Fine alignment*, *Test on subset*, *Quality check*,
+*Coarse alignment*, *Structure-guided*, *Fine alignment*, *Test on subset*, *Quality check*,
 and the two full settings trees.
 
 ### Coarse alignment tab
@@ -679,9 +680,9 @@ recommended, since it produces the aligned thumbnails the quality check needs).
 *Match thumbnails* is the most failure-prone step in the whole pipeline; read its log. When a pair fails
 you can add manual BigWarp matches in Fiji, or use structure-guided matching (next tab).
 
-### Structure-guided tab (optional)
+### Structure-guided tab
 
-Off by default and it does not change the normal workflow when unused. The idea: align on structures you
+Switched off by default and it does not change the normal workflow when unused. The idea: align on structures you
 care about (nuclei, mitochondria, vessels) instead of anonymous texture features.
 
 **1. Detect structures**
