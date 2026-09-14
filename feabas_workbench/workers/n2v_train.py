@@ -59,8 +59,12 @@ def main() -> int:
         masked_pixel_percentage=float(spec.get("masked_pixel_percentage", 0.2)),
         struct_n2v_axes=struct_axes, struct_n2v_span=int(spec.get("struct_span", 5)),
         num_workers=0,
+        # enable_progress_bar=False: the tqdm bar writes \r-terminated partial lines to stdout, the same
+        # stream as our ##PROGRESS lines; an epoch end while the bar is mid-refresh glues the JSON onto
+        # the partial line and the GUI reader no longer recognises it -> "no progress" in the UI.
         trainer_params={"accelerator": "gpu" if torch.cuda.is_available() else "cpu", "devices": 1,
-                        "precision": spec.get("precision", "32-true"), "log_every_n_steps": 10},
+                        "precision": spec.get("precision", "32-true"), "log_every_n_steps": 10,
+                        "enable_progress_bar": False},
         logger="none", seed=int(spec.get("seed", 42)),
     )
     careamist = CAREamist(config, work_dir=work)
