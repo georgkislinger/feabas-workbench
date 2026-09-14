@@ -155,20 +155,25 @@ class Job:
         assert self.proc is not None and self.proc.stdout is not None
         try:
             for line in self.proc.stdout:
-                if line.startswith(PROGRESS_PREFIX):
+                # Some libraries (tqdm progress bars) write \r-terminated partial lines to stdout; a
+                # worker's ##PROGRESS/##RESULT line can then be glued onto the tail of such a partial
+                # line, so look for the marker anywhere on the line instead of only at column 0.
+                prog_at = line.find(PROGRESS_PREFIX)
+                res_at = line.find(RESULT_PREFIX)
+                if prog_at >= 0 and (res_at < 0 or prog_at < res_at):
                     try:
-                        d = json.loads(line[len(PROGRESS_PREFIX):])
+                        d = json.loads(line[prog_at + len(PROGRESS_PREFIX):])
                         if self.on_progress:
                             self.on_progress(int(d.get("done", 0)), int(d.get("total", 0)), str(d.get("msg", "")))
+                        continue
                     except (ValueError, TypeError):
-                        self._emit("out", line)
-                    continue
-                if line.startswith(RESULT_PREFIX):
+                        pass  # fall through and log the raw line
+                elif res_at >= 0:
                     try:
-                        self.result_payload = json.loads(line[len(RESULT_PREFIX):])
+                        self.result_payload = json.loads(line[res_at + len(RESULT_PREFIX):])
+                        continue
                     except ValueError:
-                        self._emit("out", line)
-                    continue
+                        pass
                 low = line.lower()
                 stream = "err" if ("error" in low or "traceback" in low or "exception" in low) else "out"
                 self._emit(stream, line)
