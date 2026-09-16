@@ -88,7 +88,8 @@ STEPS: tuple[Step, ...] = (
     Step("thumbnail.downsample", "thumbnail", "Make thumbnails",
          "Downsample the stitched sections to the coarse-alignment mip level and create default masks.",
          script="scripts/thumbnail_main.py", mode="downsample",
-         out_subdir="thumbnail_align/thumbnails", out_glob="*.png",
+         # thumbnail_format in the thumbnail config picks the extension (png by default)
+         out_subdir="thumbnail_align/thumbnails", out_glob=("*.png", "*.jpg", "*.jpeg", "*.tif", "*.tiff"),
          config_kind="thumbnail", requires=("stitch.rendering",),
          clear_paths=("thumbnail_align/material_masks", "thumbnail_align/region_masks")),
     Step("masks", "masks", "Material masks",
@@ -366,8 +367,7 @@ def thumbnail_progress(root: Path, configs: ConfigStore | None, n_sections: int)
     """
     root = Path(root)
     n = max(0, int(n_sections))
-    thumbs = len([p for p in (root / "thumbnail_align" / "thumbnails").glob("*.png")]) \
-        if (root / "thumbnail_align" / "thumbnails").is_dir() else 0
+    thumbs = count_outputs(root, STEPS_BY_KEY["thumbnail.downsample"])
     driver = configs.get("stitching", "rendering.driver", "image") if configs is not None else "image"
     max_mip = thumbnail_max_mip(configs) if driver == "image" else 0
     if max_mip <= 0 or n == 0:

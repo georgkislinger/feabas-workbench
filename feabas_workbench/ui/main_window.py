@@ -166,6 +166,12 @@ class MainWindow(QMainWindow):
             self.ctx.log(f"page error: {e}", "error")
 
     def _first_run(self) -> None:
+        # Fires 200 ms after start. If the window was already shut down by then (a test that
+        # builds and closes a window quickly, or a user closing it at once), showing the Setup
+        # page would start its environment-probe thread on a dead window and nothing would
+        # stop it: Qt aborts the process when such a QThread is destroyed while running.
+        if getattr(self, "_shut_down", False):
+            return
         s = self.ctx.settings
         if self.ctx.project is not None:
             return
