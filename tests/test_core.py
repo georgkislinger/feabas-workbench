@@ -697,3 +697,42 @@ def test_full_runs_report_absolute_progress():
     assert progress_count(full, count=7, baseline=5) == 7
     assert progress_count(part, count=7, baseline=5) == 2
     assert progress_count(part, count=4, baseline=5) == 0
+
+
+# ----------------------------------------------------------------------------- synthetic dataset
+
+def test_demo_project_is_ready_for_stitching(tmp_path):
+    """The synthetic dataset goes through the same plan/config path as the Project page."""
+    from feabas_workbench.core.synthetic import make_demo_project
+    from feabas_workbench.core.steps import expected_outputs, STEPS_BY_KEY
+    p = make_demo_project(tmp_path / "demo", n_sections=3, rows=2, cols=2, tile=128, pixel_nm=8.0)
+    v = p.state.volume
+    assert (v.n_sections, v.n_tiles, v.grid_rows, v.grid_cols, v.tile_w) == (3, 12, 2, 2, 128)
+    coords = sorted(p.stitch_coord_dir.glob("*.txt"))
+    assert [c.stem for c in coords] == ["s0001", "s0002", "s0003"]
+    txt = coords[0].read_text(encoding="utf-8")
+    assert "{TILE_SIZE}\t128\t128" in txt and "Tile_001-001-000000_0-000.s0001_e00.tif" in txt
+    cs = ConfigStore(p.configs_dir)
+    # small sections -> thumbnail mip 0, where FEABAS cannot build the high-pass filter: it must be off
+    assert cs.get("thumbnail", "thumbnail_mip_level") == 0
+    assert cs.get("thumbnail", "downsample.thumbnail_highpass") is False
+    assert cs.get("alignment", "meshing.mask_mip_level") == 0
+    assert expected_outputs(p.root, STEPS_BY_KEY["stitch.matching"]) == 3
+    assert expected_outputs(p.root, STEPS_BY_KEY["thumbnail.matching"]) == 2 + 1     # compare distance 2
+    # the tiles really overlap by the declared amount: neighbouring tiles share their overlap strip
+    import tifffile
+    a = tifffile.imread(tmp_path / "demo" / "raw_tiles" / "Tile_001-001-000000_0-000.s0001_e00.tif")
+    b = tifffile.imread(tmp_path / "demo" / "raw_tiles" / "Tile_001-002-000001_0-000.s0001_e00.tif")
+    ov = 13
+    corr = np.corrcoef(a[:, -ov:].ravel().astype(float), b[:, :ov].ravel().astype(float))[0, 1]
+    assert corr > 0.9
+
+
+def test_set_thumbnail_mip_switches_highpass_off_at_mip0(tmp_path):
+    from feabas_workbench.core.configs import set_thumbnail_mip
+    p = _fake_project(tmp_path)
+    cs = ConfigStore(p.configs_dir)
+    assert set_thumbnail_mip(cs, 2) is False and cs.get("thumbnail", "downsample.thumbnail_highpass") is True
+    assert set_thumbnail_mip(cs, 0) is True and cs.get("thumbnail", "downsample.thumbnail_highpass") is False
+    assert set_thumbnail_mip(cs, 0, highpass=False) is False
+    assert cs.get("alignment", "meshing.mask_mip_level") == 0

@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QGridLayout, Q
 
 from ...core import tiles as T
 from ...core.project import Project
-from ...core.configs import suggest_working_mip, suggest_thumbnail_mip
+from ...core.configs import suggest_working_mip, suggest_thumbnail_mip, set_thumbnail_mip
 from ..widgets import PathPicker, TileGridWidget, card, hint, form_row, spin, dspin, combo
 from .base import Page
 
@@ -493,8 +493,8 @@ class ProjectPage(Page):
             w, h = plan.section_bbox(name)
             tm = suggest_thumbnail_mip(w, h)
             cs.set("alignment", "matching.working_mip_level", int(wm))
-            cs.set("thumbnail", "thumbnail_mip_level", int(tm))
-            cs.set("alignment", "meshing.mask_mip_level", int(tm))
+            if set_thumbnail_mip(cs, tm):
+                self.info("thumbnail mip 0: the high-pass filter is switched off (FEABAS needs a coarser level to build it from)")
             cs.set("stitching", "section_thickness", float(v.section_thickness_nm))
             cs.save()
         self.write_info.setText(f"wrote {len(files)} coordinate files to {p.stitch_coord_dir}")

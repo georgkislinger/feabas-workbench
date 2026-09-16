@@ -508,10 +508,12 @@ class MasksPage(Page):
         cs = self.ctx.configs
         if not cs:
             return
-        cs.set("thumbnail", "thumbnail_mip_level", self.th_mip.value())
-        cs.set("thumbnail", "downsample.thumbnail_highpass", self.th_hp.isChecked())
+        from ...core.configs import set_thumbnail_mip
+        if set_thumbnail_mip(cs, self.th_mip.value(), self.th_hp.isChecked()):
+            self.th_hp.setChecked(False)
+            self.warn("thumbnail mip 0: the high-pass filter is switched off - FEABAS builds it from a coarser "
+                      "mip level, which does not exist at mip 0")
         cs.set("thumbnail", "downsample.num_workers", self.th_workers.value())
-        cs.set("alignment", "meshing.mask_mip_level", self.th_mip.value())
         cs.save()
         self.editor.rebuild()
         self._update_hint()

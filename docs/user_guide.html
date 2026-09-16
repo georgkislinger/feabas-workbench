@@ -1907,6 +1907,14 @@ into the same output folder.</p>
 (red/green)</strong> checkbox — the final check that the stack is smooth in z.</p>
 <hr />
 <h2 id="10-a-first-dataset-end-to-end">10. A first dataset, end to end</h2>
+<p><strong>No data at hand?</strong> The workbench can make a small synthetic serial-section dataset (4 sections of
+2×2 overlapping tiles with cell-like structures, Thermo/Maps file names) together with a ready project:</p>
+<pre><code class="language-bat">python -m feabas_workbench.core.synthetic D:\demo
+</code></pre>
+<p>Open <code>D:\demo</code> in the workbench and walk the windows below on it (every step takes seconds), or let the
+whole pipeline run unattended — the same check CI performs on every commit:</p>
+<pre><code class="language-bat">python tools\run_demo_pipeline.py D:\demo --feabas-python C:\path\to\fw-feabas\python.exe --render
+</code></pre>
 <ol>
 <li><strong>Setup</strong> – <em>Detect environments</em>, check the GPU line, set Fiji/VAST, <strong>Save</strong>.</li>
 <li><strong>Project &amp; data</strong> – <em>New project</em> (empty folder, big disk) → tile folder → <strong>Guess rule</strong> → <strong>Read

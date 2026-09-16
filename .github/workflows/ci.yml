@@ -35,10 +35,12 @@ jobs:
       - name: Core and offscreen GUI tests
         run: python -m pytest tests -q
 
-      - name: Render every page offscreen
+      - name: Render every page offscreen (on a synthetic demo project)
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m feabas_workbench --screenshot screenshots
+        run: |
+          python -m feabas_workbench.core.synthetic demo_project --sections 3 --tile 256
+          python -m feabas_workbench --project demo_project --screenshot screenshots
 
       - uses: actions/upload-artifact@v7
         with:
@@ -51,9 +53,10 @@ jobs:
           python -m build
           python -m twine check dist/*
 
-  feabas-patch:
-    name: FEABAS run-time patch applies (Linux)
+  feabas-e2e:
+    name: FEABAS end-to-end on a synthetic dataset (Linux)
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
 
@@ -62,8 +65,10 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install FEABAS as the Setup page would
-        run: python -m pip install feabas==3.0.5 tifffile imagecodecs
+      - name: Install FEABAS as the Setup page would, plus the workbench core
+        run: |
+          python -m pip install feabas==3.0.5 tifffile imagecodecs
+          python -m pip install -e .
 
       # FEABAS reads configs/general_configs.yaml from the working directory, like a project folder.
       - name: stitching_matcher is patched when vendor/winfix is on PYTHONPATH
@@ -74,3 +79,18 @@ jobs:
           printf 'working_directory: %s/proj\nparallel_framework: process\nfull_resolution: 10\nsection_thickness: 50\n' "$PWD" > proj/configs/general_configs.yaml
           cd proj
           python -c "from feabas import matcher, stitcher; assert matcher._feabas_workbench_phtm_fix, 'not patched'; assert stitcher.stitching_matcher is matcher.stitching_matcher, 'stitcher not rebound'; print('FEABAS run-time patch active: OK')"
+
+      # Stitch, thumbnails, coarse and fine alignment, PNG render and mipmaps on 4 synthetic
+      # sections of 2x2 tiles - the whole pipeline the GUI drives, through the same vendored scripts.
+      - name: Run the whole pipeline on a synthetic dataset
+        run: python tools/run_demo_pipeline.py demo --render --timeout 900
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: demo-pipeline-outputs
+          path: |
+            demo/workbench.log
+            demo/thumbnail_align/aligned_thumbnails_*/
+            demo/thumbnail_align/thumbnails/
+          if-no-files-found: ignore

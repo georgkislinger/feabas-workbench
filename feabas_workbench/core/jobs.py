@@ -358,6 +358,19 @@ def write_spec_file(directory: Path, name: str, payload: dict) -> Path:
     return p
 
 
+def feabas_env() -> dict[str, str]:
+    """
+    Environment for FEABAS processes. The vendor/winfix folder is put first on PYTHONPATH:
+    its sitecustomize.py applies the FEABAS 3.0.5 run-time fixes in every process,
+    multiprocessing children included - the stitching_matcher 'phtm' UnboundLocalError on
+    every platform, and on Windows the TensorStore file URLs (file://D:/ -> file:///D:/).
+    """
+    from .project import VENDOR_DIR
+    winfix = VENDOR_DIR.parent / "winfix"
+    existing = os.environ.get("PYTHONPATH", "")
+    return {"PYTHONPATH": os.pathsep.join([str(winfix)] + ([existing] if existing else []))}
+
+
 def python_env_for_package_root(package_root: Path) -> dict[str, str]:
     """PYTHONPATH so that `python -m feabas_workbench.workers.x` works from any environment."""
     existing = os.environ.get("PYTHONPATH", "")

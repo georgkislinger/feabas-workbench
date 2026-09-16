@@ -285,6 +285,25 @@ def suggest_thumbnail_mip(section_w_px: float, section_h_px: float, target_px: f
     return max(0, int(round(math.log2(longest / target_px))))
 
 
+def set_thumbnail_mip(cs: "ConfigStore", mip: int, highpass: bool | None = None) -> bool:
+    """
+    Set the thumbnail mip level (and the mask mip level that goes with it) consistently.
+
+    FEABAS builds high-pass filtered thumbnails from a coarser intermediate mip level and asserts
+    that this level is *below* the thumbnail mip (``highpass_inter_mip_lvl < thumbnail_mip_lvl``).
+    At mip 0 no such level exists and the thumbnail step dies with an AssertionError, so the
+    high-pass is switched off there. Returns True when it had to be switched off.
+    """
+    mip = int(mip)
+    cs.set("thumbnail", "thumbnail_mip_level", mip)
+    cs.set("alignment", "meshing.mask_mip_level", mip)
+    if highpass is None:
+        highpass = bool(cs.get("thumbnail", "downsample.thumbnail_highpass", True))
+    forced_off = mip <= 0 and highpass
+    cs.set("thumbnail", "downsample.thumbnail_highpass", False if forced_off else bool(highpass))
+    return forced_off
+
+
 def parse_value(text: str, like):
     """Parse an edited string using the type of the current value."""
     t = text.strip()

@@ -3,6 +3,21 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Synthetic demo dataset and project (`python -m feabas_workbench.core.synthetic DIR`) and an
+  end-to-end runner (`tools/run_demo_pipeline.py`) that drives every FEABAS step on it; CI now runs
+  the whole pipeline on Linux on every commit and renders the page screenshots on a real project.
+  The Project-page smoke test runs on the synthetic tiles instead of being skipped.
+- `core.pipeline` with the ordered standard step list, shared by the runner and the GUI.
+
+### Fixed
+- Thumbnail mip level 0 (small sections) with the default high-pass filter made FEABAS's thumbnail
+  step die with an AssertionError; the workbench now switches the high-pass off at mip 0 wherever
+  it sets the mip (Project page, Masks page, synthetic projects) and says so.
+- Expected pair counts of the fine and coarse matching steps follow the compare distance everywhere.
+
 ## [0.2.0] – 2026-09-16
 
 ### Added

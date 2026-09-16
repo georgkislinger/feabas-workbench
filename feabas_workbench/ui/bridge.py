@@ -13,22 +13,9 @@ from PySide6.QtCore import QObject, Signal
 
 from ..core.configs import ConfigStore
 from ..core.envs import Settings, check_imports
-from ..core.jobs import JobQueue, JobSpec, JobResult, worker_env
+from ..core.jobs import JobQueue, JobSpec, JobResult, worker_env, feabas_env
 from ..core.project import Project, VENDOR_DIR
-from ..core.steps import PipelineScan, Step, count_outputs, Cardinality, thumbnail_progress
-
-
-def feabas_env() -> dict[str, str]:
-    """
-    Environment for FEABAS processes. The vendor/winfix folder is put first on PYTHONPATH:
-    its sitecustomize.py applies the FEABAS 3.0.5 run-time fixes in every process,
-    multiprocessing children included - the stitching_matcher 'phtm' UnboundLocalError on
-    every platform, and on Windows the TensorStore file URLs (file://D:/ -> file:///D:/).
-    """
-    import os
-    winfix = VENDOR_DIR.parent / "winfix"
-    existing = os.environ.get("PYTHONPATH", "")
-    return {"PYTHONPATH": os.pathsep.join([str(winfix)] + ([existing] if existing else []))}
+from ..core.steps import PipelineScan, Step, count_outputs, thumbnail_progress, step_argv, expected_outputs
 
 
 class QtJobQueue(QObject):
@@ -179,28 +166,9 @@ class AppContext(QObject):
                          tag: str = "", extra_args: list[str] | None = None) -> JobSpec:
         root = root or self.project.root
         py = self.require_feabas_python()
-        argv = [py, str(VENDOR_DIR / step.script), "--mode", step.mode]
-        if step.supports_range:
-            if start:
-                argv += ["--start", str(start)]
-            if stop:
-                argv += ["--stop", str(stop)]
-            if stride and stride > 1:
-                argv += ["--step", str(stride)]
-        if filt and step.supports_filter:
-            argv += ["--filter", filt]
-        argv += list(extra_args or [])
+        argv = step_argv(py, step, start, stop, stride, filt, extra_args)
         n = len([p for p in (root / "stitch" / "stitch_coord").glob("*.txt")])
-        if step.cardinality is Cardinality.PER_PAIR:
-            expected = max(0, n - 1)
-        elif step.cardinality is Cardinality.SINGLE:
-            expected = 1
-        else:
-            expected = n
-        if start is not None or stop is not None:
-            s0 = start or 0
-            s1 = stop if stop else expected
-            expected = max(0, len(range(s0, min(s1, expected), stride or 1)))
+        expected = expected_outputs(root, step, start, stop, stride)
         full_run = start is None and stop is None
         progress_fn = None
         if step.key == "thumbnail.downsample" and full_run:

@@ -216,6 +216,36 @@ class StepStatus:
         return base
 
 
+def expected_count(root: Path, n_sections: int, step: Step, configs: ConfigStore | None = None) -> int:
+    """
+    How many outputs a complete run of *step* leaves: one per section, one per matched pair
+    (the coarse compare distance decides how many pairs there are; the fine steps mirror the
+    coarse match list or align/match_name.txt), or a single output.
+    """
+    root = Path(root)
+    n = int(n_sections)
+    if step.cardinality is Cardinality.PER_SECTION:
+        return n
+    if step.cardinality is Cardinality.PER_PAIR:
+        if step.key.startswith("thumbnail"):
+            cd = configs.get("thumbnail", "alignment.compare_distance", 2) if configs is not None else 2
+            if isinstance(cd, (list, tuple)):
+                ks = [int(k) for k in cd]
+            else:
+                try:
+                    ks = list(range(1, int(cd) + 1))
+                except (TypeError, ValueError):
+                    ks = [1]
+            return max(0, sum(max(0, n - k) for k in ks))
+        if step.key.startswith("align"):
+            listed = read_fine_match_list(root)
+            if listed is not None:
+                return len(listed)
+            return len(list((root / "thumbnail_align" / "matches").glob("*.h5"))) or max(0, n - 1)
+        return max(0, n - 1)
+    return 1
+
+
 def _iter_outputs(root: Path, step: Step) -> list[Path]:
     d = root / step.out_subdir
     if not d.exists():
@@ -266,29 +296,7 @@ class PipelineScan:
         self.scan()
 
     def expected_for(self, step: Step) -> int:
-        n = self.n_sections
-        if step.cardinality is Cardinality.PER_SECTION:
-            return n
-        if step.cardinality is Cardinality.PER_PAIR:
-            if step.key.startswith("thumbnail") and self.configs is not None:
-                cd = self.configs.get("thumbnail", "alignment.compare_distance", 1)
-                if isinstance(cd, (list, tuple)):
-                    ks = [int(k) for k in cd]
-                else:
-                    try:
-                        ks = list(range(1, int(cd) + 1))
-                    except (TypeError, ValueError):
-                        ks = [1]
-                return max(0, sum(max(0, n - k) for k in ks))
-            if step.key.startswith("align"):
-                # fine matching mirrors the thumbnail match list, or align/match_name.txt when
-                # the fine alignment uses its own (shorter) compare distance
-                listed = read_fine_match_list(self.root)
-                if listed is not None:
-                    return len(listed)
-                return len(list((self.root / "thumbnail_align" / "matches").glob("*.h5"))) or max(0, n - 1)
-            return max(0, n - 1)
-        return 1
+        return expected_count(self.root, self.n_sections, step, self.configs)
 
     def scan(self) -> None:
         self.status = {}
@@ -335,6 +343,54 @@ class PipelineScan:
 
     def __getitem__(self, key: str) -> StepStatus:
         return self.status[key]
+
+
+# ----------------------------------------------------------------------
+# running a step
+# ----------------------------------------------------------------------
+
+def step_argv(python: str, step: Step, start: int | None = None, stop: int | None = None,
+              stride: int | None = None, filt: str | None = None, extra_args: list[str] | None = None) -> list[str]:
+    """The command line of one FEABAS step: the vendored driver script with its --mode and range."""
+    from .project import VENDOR_DIR
+    argv = [python, str(VENDOR_DIR / step.script), "--mode", step.mode]
+    if step.supports_range:
+        if start:
+            argv += ["--start", str(start)]
+        if stop:
+            argv += ["--stop", str(stop)]
+        if stride and stride > 1:
+            argv += ["--step", str(stride)]
+    if filt and step.supports_filter:
+        argv += ["--filter", filt]
+    argv += list(extra_args or [])
+    return argv
+
+
+def expected_outputs(root: Path, step: Step, start: int | None = None, stop: int | None = None,
+                     stride: int | None = None) -> int:
+    """How many outputs a run of *step* should leave behind (sections, pairs, or one), for a range too."""
+    root = Path(root)
+    n = len([p for p in (root / "stitch" / "stitch_coord").glob("*.txt")])
+    configs = ConfigStore(root / "configs") if (root / "configs").is_dir() else None
+    expected = expected_count(root, n, step, configs)
+    if start is not None or stop is not None:
+        s0 = start or 0
+        s1 = stop if stop else expected
+        expected = max(0, len(range(s0, min(s1, expected), stride or 1)))
+    return expected
+
+
+# The steps of a plain run, in order: stitch, thumbnails (FEABAS writes default masks with them),
+# coarse alignment, fine alignment. Rendering the aligned stack is optional and heavy, so it is
+# a separate list.
+STANDARD_PIPELINE: tuple[str, ...] = (
+    "stitch.matching", "stitch.optimization", "stitch.rendering",
+    "thumbnail.downsample",
+    "thumbnail.matching", "thumbnail.optimization", "thumbnail.render",
+    "align.meshing", "align.matching", "align.optimization",
+)
+RENDER_PIPELINE: tuple[str, ...] = ("align.rendering", "align.downsample")
 
 
 # ----------------------------------------------------------------------

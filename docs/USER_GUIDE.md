@@ -878,6 +878,20 @@ Tile-based viewer over the rendered PNG stack with section navigation and an **o
 
 ## 10. A first dataset, end to end
 
+**No data at hand?** The workbench can make a small synthetic serial-section dataset (4 sections of
+2×2 overlapping tiles with cell-like structures, Thermo/Maps file names) together with a ready project:
+
+```bat
+python -m feabas_workbench.core.synthetic D:\demo
+```
+
+Open `D:\demo` in the workbench and walk the windows below on it (every step takes seconds), or let the
+whole pipeline run unattended — the same check CI performs on every commit:
+
+```bat
+python tools\run_demo_pipeline.py D:\demo --feabas-python C:\path\to\fw-feabas\python.exe --render
+```
+
 1. **Setup** – *Detect environments*, check the GPU line, set Fiji/VAST, **Save**.
 2. **Project & data** – *New project* (empty folder, big disk) → tile folder → **Guess rule** → **Read
    from image metadata** → set section thickness → **Scan tiles** → check the preview and the warnings →

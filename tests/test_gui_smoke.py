@@ -60,21 +60,28 @@ def test_pages_build_without_project(app, window):
 
 
 def test_project_page_scan_and_write(app, window, tmp_path):
-    if not EXAMPLE.is_dir():
-        pytest.skip("example data not present")
+    """The Project page on real example data when present, else on a synthetic Thermo-named dataset."""
+    if EXAMPLE.is_dir():
+        src, tile_w, pix, n_tiles, n_sections, first = EXAMPLE, 6144, 10.0, 400, 10, "s0035"
+    else:
+        from feabas_workbench.core.synthetic import make_synthetic_tiles
+        facts = make_synthetic_tiles(tmp_path / "tiles", n_sections=3, rows=2, cols=2, tile=128, first_section=35)
+        src, tile_w, pix, n_tiles, n_sections, first = tmp_path / "tiles", 128, None, facts["n_tiles"], 3, "s0035"
     proj = tmp_path / "proj"
     window.open_project(proj)
     _pump(app)
     page = window._pages[1]
-    page.src.setText(str(EXAMPLE))
+    page.src.setText(str(src))
     page._guess()
     _pump(app)
     assert page.guesses.count() > 0
     page._use_guess()
     page._read_meta()
-    assert page.tile_w.value() == 6144 and page.pix.value() == pytest.approx(10.0)
-    page._estimate_overlap()
-    assert page.ov_x.value() > 100
+    assert page.tile_w.value() == tile_w
+    if pix is not None:
+        assert page.pix.value() == pytest.approx(pix)
+        page._estimate_overlap()
+        assert page.ov_x.value() > 100
     page._scan()
     # wait for the scan thread
     import time
@@ -82,10 +89,10 @@ def test_project_page_scan_and_write(app, window, tmp_path):
     while page.plan is None and time.time() - t0 < 120:
         _pump(app)
         time.sleep(0.05)
-    assert page.plan is not None and page.plan.n_tiles == 400
+    assert page.plan is not None and page.plan.n_tiles == n_tiles
     page._write()
     _pump(app)
-    assert len(list(proj.glob("stitch/stitch_coord/*.txt"))) == 10
+    assert len(list(proj.glob("stitch/stitch_coord/*.txt"))) == n_sections
     assert not window.errors, window.errors
     # other pages react to the project
     for i in range(window.page_count()):
@@ -94,11 +101,11 @@ def test_project_page_scan_and_write(app, window, tmp_path):
     assert not window.errors, window.errors
     # stitching test run creation
     st = window._pages[3]
-    st.test_sections.set_checked({"s0035"})
+    st.test_sections.set_checked({first})
     st.test_name.setText("smoke")
     st._create_test()
     _pump(app)
-    assert (proj / "tests" / "smoke" / "stitch" / "stitch_coord" / "s0035.txt").is_file()
+    assert (proj / "tests" / "smoke" / "stitch" / "stitch_coord" / f"{first}.txt").is_file()
     assert not window.errors, window.errors
     # the quality-check tab must offer the new test run as a source right away
     assert st.qc_source.findData(str(proj / "tests" / "smoke")) >= 0

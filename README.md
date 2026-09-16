@@ -85,6 +85,10 @@ needed; several GB for the deep-learning one). Without conda, the Setup page can
 > Linux desktops have the Qt libraries already. On a minimal server install add
 > `sudo apt install libegl1 libopengl0 libxkbcommon0 libdbus-1-3 libxcb-cursor0 libfontconfig1`.
 
+**Try it without data:** `python -m feabas_workbench.core.synthetic D:\demo` makes a small synthetic
+serial-section dataset with a ready project; open it in the workbench, or run the whole pipeline on it
+with `python tools/run_demo_pipeline.py D:\demo --feabas-python <fw-feabas python>` (this is what CI does).
+
 The full version with every option, and every window and setting explained – what it does, when to
 change it, what it makes stale – is the **[user guide](docs/USER_GUIDE.md)**. The same text as a page
 with a contents rail and search is [`docs/user_guide.html`](docs/user_guide.html): open it in a browser

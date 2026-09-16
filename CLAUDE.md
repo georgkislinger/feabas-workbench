@@ -23,7 +23,9 @@
 - Heavy in-process work goes through `ui/threads.ThreadRunner`; anything that needs torch/feabas goes through a
   worker in the right env via `AppContext.worker_spec` / `feabas_step_spec`.
 - Test data: `Example_data_to_stitch_and_align_and_export` (Thermo Maps tiles, 10 sections, 8×5 grid, 10 nm px;
-  gitignored). The bundled fold U-Net is `feabas_workbench/resources/fold_unet_resnet34_inference_only_fp16.ckpt`
+  gitignored). Without it, `core/synthetic.py` makes a synthetic dataset + project
+  (`python -m feabas_workbench.core.synthetic DIR`) and `tools/run_demo_pipeline.py` runs every FEABAS step on it
+  (CI does this on Linux; locally pass `--feabas-python`). Keep that green: it is the only end-to-end test. The bundled fold U-Net is `feabas_workbench/resources/fold_unet_resnet34_inference_only_fp16.ckpt`
   (smp Unet, resnet34, fp16 weights only, 49 MB; `core.masks.bundled_fold_checkpoint()`, stored in project files as
   the sentinel `"bundled"` so a project survives a move or a different install location; inside the package so wheels ship
   it). It was exported from the 280 MB Lightning checkpoint `Fold_model_ckpt/lightning_logs/version_0/checkpoints/
