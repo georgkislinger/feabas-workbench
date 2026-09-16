@@ -104,8 +104,10 @@ def make_demo_project(project_root: os.PathLike | str, tiles_root: os.PathLike |
     *tiles_root* is given), stitch coordinate files, volume info and the mip levels the Project
     page would suggest. Ready for 'Match tiles'.
     """
-    project_root = Path(project_root)
-    tiles_root = Path(tiles_root) if tiles_root else project_root / "raw_tiles"
+    # absolute paths: FEABAS runs with the project as working directory and reads the tile root
+    # from the coordinate files as it is, so a relative one would point at the wrong place
+    project_root = Path(project_root).resolve()
+    tiles_root = Path(tiles_root).resolve() if tiles_root else project_root / "raw_tiles"
     facts = make_synthetic_tiles(tiles_root, **tile_kwargs)
     p = Project.load(project_root) if Project.exists(project_root) else Project.create(project_root)
     rule = T.NamingRule(preset="thermo", ext="tif", recursive=True)

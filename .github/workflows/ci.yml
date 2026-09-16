@@ -94,3 +94,39 @@ jobs:
             demo/thumbnail_align/aligned_thumbnails_*/
             demo/thumbnail_align/thumbnails/
           if-no-files-found: ignore
+
+  frozen-windows:
+    name: Frozen Windows build (PyInstaller)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install the workbench and PyInstaller
+        run: python -m pip install -e . pyinstaller
+
+      - name: Build
+        run: python -m PyInstaller --noconfirm --clean tools/feabas_workbench.spec
+
+      # The exe must find its vendored FEABAS scripts, the checkpoint and stage the worker
+      # package from inside the bundle, and render every page on a project.
+      - name: Self-check and offscreen render of the frozen app
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m feabas_workbench.core.synthetic demo_project --sections 3 --tile 256
+          .\dist\FEABAS-Workbench\FEABAS-Workbench.exe --selfcheck selfcheck.json
+          Get-Content selfcheck.json
+          .\dist\FEABAS-Workbench\FEABAS-Workbench.exe --project demo_project --screenshot frozen_screenshots
+          if ((Get-ChildItem frozen_screenshots).Count -ne 7) { throw "expected 7 page screenshots" }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: frozen-windows-selfcheck
+          path: |
+            selfcheck.json
+            frozen_screenshots/

@@ -18,6 +18,12 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+*.spec.bak
+FEABAS-Workbench-*-windows-x64.zip
+demo_project/
+screenshots/
+frozen_screenshots/
+selfcheck.json
 .pytest_cache/
 .venv/
 
