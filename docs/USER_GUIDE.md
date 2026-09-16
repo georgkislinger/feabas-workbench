@@ -199,6 +199,14 @@ Log** (Ctrl+L) shows or hides it, and it carries FEABAS's own messages. Untick *
 while a job keeps writing: the view then stays on the lines you are looking at (it keeps the last 5000
 lines; *only warnings/errors* and the filter box narrow it down).
 
+**One click for the plain case.** *Pipeline → Run the standard pipeline…* (Ctrl+R) lists every step
+of a plain run — stitching, thumbnails, coarse and fine alignment, optionally the PNG render and its
+mipmaps — with its current state, and queues the ones that are not done yet, in order; the queue stops at
+the first failure. Settings are taken as they are on each page, and FEABAS's default masks (everything
+imaged is tissue) are used unless you composed your own on the Masks page. Use it once the coordinate
+files exist and you are happy with the defaults, or after a *Test on subset* told you which settings to
+change; the step cards on the pages stay the way to run, inspect and clear individual steps.
+
 ### 2.4 Settings come in three flavours
 
 | Kind | Stored in | Examples |

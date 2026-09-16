@@ -68,7 +68,13 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install FEABAS as the Setup page would, plus the workbench core
+      - name: Qt run-time libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libopengl0 libgl1 libxkbcommon0 libdbus-1-3 libxcb-cursor0 libfontconfig1 fonts-dejavu-core
+
+      - name: Install FEABAS as the Setup page would, plus the workbench
         run: |
           python -m pip install feabas==3.0.5 tifffile imagecodecs
           python -m pip install -e .
@@ -87,6 +93,13 @@ jobs:
       # sections of 2x2 tiles - the whole pipeline the GUI drives, through the same vendored scripts.
       - name: Run the whole pipeline on a synthetic dataset
         run: python tools/run_demo_pipeline.py demo --render --timeout 900
+
+      # The same steps once more, this time queued by the GUI's "Run the standard pipeline"
+      # through the workbench's own job queue (offscreen), on a second fresh project.
+      - name: Run the standard pipeline through the GUI's job queue
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python tools/run_demo_pipeline_gui.py demo_gui --timeout 1500
 
       - uses: actions/upload-artifact@v7
         if: always()

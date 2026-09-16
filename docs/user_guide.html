@@ -488,6 +488,13 @@ job</strong> button. The log dock opens on its own while a job runs (or when an 
 Log</strong> (Ctrl+L) shows or hides it, and it carries FEABAS's own messages. Untick <strong>autoscroll</strong> to read
 while a job keeps writing: the view then stays on the lines you are looking at (it keeps the last 5000
 lines; <em>only warnings/errors</em> and the filter box narrow it down).</p>
+<p><strong>One click for the plain case.</strong> <em>Pipeline → Run the standard pipeline…</em> (Ctrl+R) lists every step
+of a plain run — stitching, thumbnails, coarse and fine alignment, optionally the PNG render and its
+mipmaps — with its current state, and queues the ones that are not done yet, in order; the queue stops at
+the first failure. Settings are taken as they are on each page, and FEABAS's default masks (everything
+imaged is tissue) are used unless you composed your own on the Masks page. Use it once the coordinate
+files exist and you are happy with the defaults, or after a <em>Test on subset</em> told you which settings to
+change; the step cards on the pages stay the way to run, inspect and clear individual steps.</p>
 <h3 id="24-settings-come-in-three-flavours">2.4 Settings come in three flavours</h3>
 <div class="table-wrap"><table>
 <thead>

@@ -45,3 +45,89 @@ class OverlapDialog(QDialog):
         btn = QPushButton("Close")
         btn.clicked.connect(self.accept)
         lay.addWidget(btn, 0, Qt.AlignRight)
+
+
+class StandardPipelineDialog(QDialog):
+    """
+    Pipeline > Run standard pipeline: every step of a plain run (stitch, thumbnails, coarse and
+    fine alignment) with its current state, and what will be queued - the steps that are not
+    done yet, in order. The queue stops at the first failure, like 'Run all steps' on a page.
+    """
+
+    def __init__(self, ctx, parent=None):
+        from PySide6.QtWidgets import QCheckBox, QDialogButtonBox, QTreeWidget, QTreeWidgetItem
+        from ..core.steps import STEPS_BY_KEY, STANDARD_PIPELINE, RENDER_PIPELINE, State
+        from . import theme
+        super().__init__(parent)
+        self.ctx = ctx
+        self.setWindowTitle("Run the standard pipeline")
+        self.resize(760, 520)
+        lay = QVBoxLayout(self)
+        intro = QLabel("Queues every step of a plain run that is not done yet, in order, and stops at the first "
+                       "failure. Settings are taken as they are on each page; the default masks FEABAS writes "
+                       "with the thumbnails are used unless you composed your own on the Masks page.")
+        intro.setWordWrap(True); intro.setObjectName("Hint")
+        lay.addWidget(intro)
+        self.tree = QTreeWidget()
+        self.tree.setHeaderLabels(["step", "state", "outputs", "will run"])
+        self.tree.setRootIsDecorated(False)
+        lay.addWidget(self.tree, 1)
+        self.render = QCheckBox("also render the aligned stack as PNG tiles + mipmaps (large output, for VASTlite)")
+        self.render.setChecked(False)
+        lay.addWidget(self.render)
+        self.force = QCheckBox("re-run steps that are stale (their config or inputs changed after their outputs)")
+        self.force.setChecked(True)
+        lay.addWidget(self.force)
+        self.summary = QLabel(""); self.summary.setObjectName("Hint"); self.summary.setWordWrap(True)
+        lay.addWidget(self.summary)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Ok).setText("Queue the steps")
+        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self.render.toggled.connect(self._refresh)
+        self.force.toggled.connect(self._refresh)
+        self._STEPS_BY_KEY, self._STANDARD, self._RENDER, self._State, self._theme = STEPS_BY_KEY, STANDARD_PIPELINE, RENDER_PIPELINE, State, theme
+        self._QTreeWidgetItem = QTreeWidgetItem
+        self._refresh()
+
+    def keys(self) -> list[str]:
+        return list(self._STANDARD) + (list(self._RENDER) if self.render.isChecked() else [])
+
+    def steps_to_run(self) -> list:
+        """The Step objects that will be queued, in order."""
+        scan = self.ctx.scan()
+        out = []
+        for key in self.keys():
+            step = self._STEPS_BY_KEY[key]
+            if step.local:
+                continue
+            st = scan[key] if scan else None
+            if st is None:
+                continue
+            if st.state is self._State.COMPLETE:
+                continue
+            if st.state is self._State.STALE and not self.force.isChecked():
+                continue
+            out.append(step)
+        return out
+
+    def _refresh(self) -> None:
+        from PySide6.QtGui import QColor
+        scan = self.ctx.scan()
+        run = {s.key for s in self.steps_to_run()}
+        self.tree.clear()
+        for key in self.keys():
+            step = self._STEPS_BY_KEY[key]
+            if step.local:
+                continue
+            st = scan[key] if scan else None
+            it = self._QTreeWidgetItem([step.label, st.state.value if st else "", st.summary() if st else "",
+                                        "yes" if key in run else ""])
+            if st:
+                it.setForeground(1, QColor(self._theme.STATE_COLORS.get(st.state.value, self._theme.MUTED)))
+            self.tree.addTopLevelItem(it)
+        for i in range(4):
+            self.tree.resizeColumnToContents(i)
+        n = len(run)
+        self.summary.setText("Nothing to do: every step is done." if n == 0 else
+                             f"{n} step(s) will be queued. The log shows progress; the status bar has a Cancel button.")

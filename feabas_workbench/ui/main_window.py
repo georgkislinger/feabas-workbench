@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
-from PySide6.QtWidgets import (QDockWidget, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
+from PySide6.QtWidgets import (QDialog, QDockWidget, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
                                QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QProgressBar, QPushButton,
                                QStackedWidget, QVBoxLayout, QWidget)
 
@@ -117,6 +117,8 @@ class MainWindow(QMainWindow):
         a = QAction("&Quit", self); a.setShortcut(QKeySequence.Quit); a.triggered.connect(self.close); m.addAction(a)
 
         p = mb.addMenu("&Pipeline")
+        a = QAction("Run the &standard pipeline…", self); a.setShortcut("Ctrl+R"); a.triggered.connect(self.run_standard_pipeline); p.addAction(a)
+        p.addSeparator()
         a = QAction("Create &snapshot of current state…", self); a.triggered.connect(self.make_snapshot); p.addAction(a)
         a = QAction("&Restore snapshot…", self); a.triggered.connect(self.restore_snapshot_dialog); p.addAction(a)
         p.addSeparator()
@@ -284,6 +286,36 @@ class MainWindow(QMainWindow):
             self.ctx.jobs.cancel_all()
 
     # -- pipeline utilities ------------------------------------------------
+    def run_standard_pipeline(self) -> None:
+        """Queue every not-yet-done step of a plain run (stitch -> thumbnails -> coarse -> fine)."""
+        if not self.ctx.project:
+            QMessageBox.information(self, "No project", "Create or open a project first (Project page).")
+            return
+        if self.ctx.jobs.running:
+            QMessageBox.information(self, "Busy", "A job is already running. Wait for it to finish or cancel it.")
+            return
+        if not list(self.ctx.project.stitch_coord_dir.glob("*.txt")):
+            QMessageBox.information(self, "No coordinate files", "Write the stitch coordinate files first (Project page).")
+            return
+        from .dialogs import StandardPipelineDialog
+        dlg = StandardPipelineDialog(self.ctx, self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        steps = dlg.steps_to_run()
+        if not steps:
+            self.ctx.log("standard pipeline: nothing to run, every step is done")
+            return
+        specs = []
+        for step in steps:
+            try:
+                specs.append(self.ctx.feabas_step_spec(step))
+            except RuntimeError as e:
+                self.ctx.log(str(e), "error")
+                QMessageBox.warning(self, "Cannot run the pipeline", str(e))
+                return
+        self.ctx.log(f"standard pipeline: queued {len(specs)} step(s): " + ", ".join(s.label for s in steps))
+        self.ctx.jobs.submit(specs)
+
     def make_snapshot(self) -> None:
         if not self.ctx.project:
             return

@@ -15,6 +15,10 @@ versions follow [Semantic Versioning](https://semver.org/).
   GitHub Release as `FEABAS-Workbench-<tag>-windows-x64.zip`; `feabas-workbench --selfcheck report.json`
   verifies any installation without opening a window.
 - `ruff check` (pyflakes level) in CI; all README screenshots regenerated consistently.
+- *Pipeline → Run the standard pipeline…* (Ctrl+R): queues every not-yet-done step of a plain run
+  (stitch, thumbnails, coarse and fine alignment, optionally the PNG render) in order and stops at the
+  first failure. CI runs it through the real job queue on the synthetic dataset
+  (`tools/run_demo_pipeline_gui.py`).
 
 ### Fixed
 - Thumbnail mip level 0 (small sections) with the default high-pass filter made FEABAS's thumbnail

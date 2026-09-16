@@ -228,3 +228,28 @@ def test_log_panel_stays_put_without_autoscroll(app):
     panel.autoscroll.setChecked(True)
     panel.append("info", "last"); _pump(app)
     assert sb.value() == sb.maximum()
+
+
+def test_standard_pipeline_dialog_lists_what_is_left(app, window, tmp_path):
+    """Pipeline > Run the standard pipeline: queues the steps that are not done, in order."""
+    from feabas_workbench.core.synthetic import make_demo_project
+    from feabas_workbench.ui.dialogs import StandardPipelineDialog
+    p = make_demo_project(tmp_path / "demo", n_sections=2, rows=2, cols=2, tile=128)
+    window.open_project(p.root)
+    _pump(app)
+    dlg = StandardPipelineDialog(window.ctx, window)
+    steps = dlg.steps_to_run()
+    assert [s.key for s in steps] == ["stitch.matching", "stitch.optimization", "stitch.rendering", "thumbnail.downsample",
+                                      "thumbnail.matching", "thumbnail.optimization", "thumbnail.render",
+                                      "align.meshing", "align.matching", "align.optimization"]
+    assert dlg.tree.topLevelItemCount() == 10 and "10 step(s)" in dlg.summary.text()
+    dlg.render.setChecked(True)
+    assert [s.key for s in dlg.steps_to_run()][-2:] == ["align.rendering", "align.downsample"]
+    # a finished step is skipped: fake the outputs of 'Match tiles'
+    for sec in p.section_names():
+        (p.root / "stitch" / "match_h5").mkdir(parents=True, exist_ok=True)
+        (p.root / "stitch" / "match_h5" / f"{sec}.h5").write_bytes(b"")
+    dlg.render.setChecked(False)
+    assert [s.key for s in dlg.steps_to_run()][0] == "stitch.optimization"
+    dlg.close()
+    assert not window.errors, window.errors

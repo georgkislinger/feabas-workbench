@@ -107,6 +107,9 @@ from your download.
 5. **Export & view** – render PNG tiles + mipmaps → *Export* (VAST) → *Open in VASTlite*; or render the
    precomputed volume and open it in Neuroglancer.
 
+For the plain case, **Pipeline → Run the standard pipeline…** (Ctrl+R) queues steps 2–4 in one go and
+stops at the first failure.
+
 When something upstream changes, the affected steps show **stale**; *Clear…* on the earliest affected step
 lists what will be deleted, then re-run. Make a snapshot first if the previous state was valuable.
 
