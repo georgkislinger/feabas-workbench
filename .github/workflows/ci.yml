@@ -40,7 +40,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: python -m feabas_workbench --screenshot screenshots
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: screenshots-${{ matrix.os }}-py${{ matrix.python }}
           path: screenshots/
