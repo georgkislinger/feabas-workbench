@@ -30,8 +30,9 @@ def _read_match_h5(path: Path):
 
 class AlignPage(Page):
     title = "Alignment"
-    subtitle = ("Coarse alignment on thumbnails first (tab 1), then fine alignment with finite-element meshes (tab 2). "
-                "The optional structure-guided tab (YOLO-seg: nuclei, mitochondria, vessels…) can be switched on in Setup.")
+    subtitle = ("Coarse alignment on thumbnails first (tab 1), then fine alignment with finite-element meshes (tab 2), "
+                "then check the result (tab 3). Unsure about settings? Try them on a subset first (optional tab). The "
+                "structure-guided tab (YOLO-seg: nuclei, mitochondria, vessels…) can be switched on in Setup.")
     key = "align"
 
     def build(self) -> None:
@@ -40,8 +41,8 @@ class AlignPage(Page):
         self.body.addWidget(self.tabs)
         self._build_coarse()
         self._build_fine()
-        self._build_test()
         self._build_qc()
+        self._build_test()
         self._build_structure()
         self.editor_t = ConfigEditor(); self.editor_t.changed.connect(lambda: self._editor_changed("thumbnail"))
         self.editor_a = ConfigEditor(); self.editor_a.changed.connect(lambda: self._editor_changed("alignment"))
@@ -285,7 +286,7 @@ class AlignPage(Page):
         lay.addWidget(self.t_steps)
         tl.addWidget(f)
         tl.addStretch(1)
-        self.tabs.addTab(t, "3. Test on subset")
+        self.tabs.addTab(t, "Test on subset (optional)")
         self.t_list.currentIndexChanged.connect(self._test_changed)
         b2.clicked.connect(self._delete_test)
         b3.clicked.connect(self._edit_test_settings)
@@ -311,7 +312,7 @@ class AlignPage(Page):
         tl.addWidget(hint("Red/green overlay: grey means the two sections agree, coloured fringes are residual misalignment. "
                           "Some colour is expected from real biological change between sections; systematic shifts or "
                           "distortions in one region point at missing matches (check the coverage figure) or a mask problem."))
-        self.tabs.addTab(t, "4. Quality check")
+        self.tabs.addTab(t, "3. Quality check")
         self._qc_tab = t
         # the source list must pick up test runs created while the page is open
         self.tabs.currentChanged.connect(

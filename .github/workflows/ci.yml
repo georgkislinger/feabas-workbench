@@ -144,6 +144,17 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "screenshot exit code $($p.ExitCode)" }
           if ((Get-ChildItem frozen_screenshots).Count -ne 7) { throw "expected 7 page screenshots" }
 
+      - name: Zip the build
+        run: Compress-Archive -Path dist\FEABAS-Workbench -DestinationPath FEABAS-Workbench-${{ github.sha }}-windows-x64.zip -CompressionLevel Optimal
+
+      # ~170 MB per run, so kept for a week only: the Actions page of any commit has the exe of
+      # that commit; releases carry the permanent copies.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: FEABAS-Workbench-windows-x64
+          path: FEABAS-Workbench-*-windows-x64.zip
+          retention-days: 7
+
       - uses: actions/upload-artifact@v7
         with:
           name: frozen-windows-selfcheck

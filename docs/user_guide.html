@@ -491,10 +491,23 @@ lines; <em>only warnings/errors</em> and the filter box narrow it down).</p>
 <p><strong>One click for the plain case.</strong> <em>Pipeline → Run the standard pipeline…</em> (Ctrl+R) lists every step
 of a plain run — stitching, thumbnails, coarse and fine alignment, optionally the PNG render and its
 mipmaps — with its current state, and queues the ones that are not done yet, in order; the queue stops at
-the first failure. Settings are taken as they are on each page, and FEABAS's default masks (everything
-imaged is tissue) are used unless you composed your own on the Masks page. Use it once the coordinate
-files exist and you are happy with the defaults, or after a <em>Test on subset</em> told you which settings to
-change; the step cards on the pages stay the way to run, inspect and clear individual steps.</p>
+the first failure. Use it once the coordinate files exist and you are happy with the defaults, or after a
+<em>Test on subset</em> told you which settings to change; the step cards on the pages stay the way to run,
+inspect and clear individual steps. Three things to know:</p>
+<ul>
+<li><strong>Mip levels</strong> are taken from the project's settings, which were chosen for the data when the
+  coordinate files were written (thumbnails of about 1000 px; fine matching at the mip whose pixel is
+  just below the section thickness). The dialog shows them; change them on the Masks / Alignment pages
+  first if they do not suit.</li>
+<li><strong>Masks:</strong> the pipeline uses FEABAS's default — everything the tiles cover is tissue, <strong>no fold
+  detection</strong>. That is right for intact sections. For sections with folds, tears or empty areas tick
+  <em>stop after 'Make thumbnails'</em>: the run ends after the thumbnails, you make the masks on the Masks page
+  (tissue method, fold detection, <em>Compose</em>), then run the pipeline again — it skips what is done and
+  continues with your masks.</li>
+<li><strong>Stale steps</strong> (a config or an input changed after their outputs) are left alone: FEABAS never
+  recomputes outputs that exist, so queuing them again would do nothing. To redo a step, <em>Clear…</em> it on
+  its step card (that removes everything after it too), then run the pipeline again.</li>
+</ul>
 <h3 id="24-settings-come-in-three-flavours">2.4 Settings come in three flavours</h3>
 <div class="table-wrap"><table>
 <thead>
@@ -1575,9 +1588,10 @@ identical. What was left out is the optimizer and scheduler state of that traini
 <hr />
 <h2 id="8-window-5-alignment">8. Window 5 – Alignment</h2>
 <p>Coarse alignment works on thumbnails, fine alignment on finite-element meshes at the working mip. The
-tabs are numbered in the order they are used: <strong>1. Coarse alignment</strong>, <strong>2. Fine alignment</strong>, <strong>3. Test on
-subset</strong>, <strong>4. Quality check</strong>, then the two full settings trees. The experimental <em>Structure-guided
-(optional)</em> tab is hidden until you switch it on under Setup → Interface.</p>
+tabs are numbered in the order they are used: <strong>1. Coarse alignment</strong>, <strong>2. Fine alignment</strong>, <strong>3.
+Quality check</strong>, then the two full settings trees. <em>Test on subset (optional)</em> is for trying settings
+before the real run — once the pipeline has run there is nothing left to test — and the experimental
+<em>Structure-guided (optional)</em> tab is hidden until you switch it on under Setup → Interface.</p>
 <h3 id="coarse-alignment-tab">Coarse alignment tab</h3>
 <div class="table-wrap"><table>
 <thead>

@@ -17,8 +17,14 @@ versions follow [Semantic Versioning](https://semver.org/).
 - `ruff check` (pyflakes level) in CI; all README screenshots regenerated consistently.
 - *Pipeline → Run the standard pipeline…* (Ctrl+R): queues every not-yet-done step of a plain run
   (stitch, thumbnails, coarse and fine alignment, optionally the PNG render) in order and stops at the
-  first failure. CI runs it through the real job queue on the synthetic dataset
-  (`tools/run_demo_pipeline_gui.py`).
+  first failure. The dialog shows the mip levels the run will use and can stop after the thumbnails so
+  masks (folds, tissue) can be made by hand before the alignment. CI runs it through the real job
+  queue on the synthetic dataset (`tools/run_demo_pipeline_gui.py`).
+- Every CI run offers the zipped frozen Windows build as an artifact (kept for a week).
+
+### Changed
+- Alignment page: *Quality check* is step 3; *Test on subset* is an optional, unnumbered tab (it comes
+  before a real run, not after it).
 
 ### Fixed
 - Thumbnail mip level 0 (small sections) with the default high-pass filter made FEABAS's thumbnail

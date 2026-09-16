@@ -202,10 +202,22 @@ lines; *only warnings/errors* and the filter box narrow it down).
 **One click for the plain case.** *Pipeline → Run the standard pipeline…* (Ctrl+R) lists every step
 of a plain run — stitching, thumbnails, coarse and fine alignment, optionally the PNG render and its
 mipmaps — with its current state, and queues the ones that are not done yet, in order; the queue stops at
-the first failure. Settings are taken as they are on each page, and FEABAS's default masks (everything
-imaged is tissue) are used unless you composed your own on the Masks page. Use it once the coordinate
-files exist and you are happy with the defaults, or after a *Test on subset* told you which settings to
-change; the step cards on the pages stay the way to run, inspect and clear individual steps.
+the first failure. Use it once the coordinate files exist and you are happy with the defaults, or after a
+*Test on subset* told you which settings to change; the step cards on the pages stay the way to run,
+inspect and clear individual steps. Three things to know:
+
+* **Mip levels** are taken from the project's settings, which were chosen for the data when the
+  coordinate files were written (thumbnails of about 1000 px; fine matching at the mip whose pixel is
+  just below the section thickness). The dialog shows them; change them on the Masks / Alignment pages
+  first if they do not suit.
+* **Masks:** the pipeline uses FEABAS's default — everything the tiles cover is tissue, **no fold
+  detection**. That is right for intact sections. For sections with folds, tears or empty areas tick
+  *stop after 'Make thumbnails'*: the run ends after the thumbnails, you make the masks on the Masks page
+  (tissue method, fold detection, *Compose*), then run the pipeline again — it skips what is done and
+  continues with your masks.
+* **Stale steps** (a config or an input changed after their outputs) are left alone: FEABAS never
+  recomputes outputs that exist, so queuing them again would do nothing. To redo a step, *Clear…* it on
+  its step card (that removes everything after it too), then run the pipeline again.
 
 ### 2.4 Settings come in three flavours
 
@@ -735,9 +747,10 @@ identical. What was left out is the optimizer and scheduler state of that traini
 ## 8. Window 5 – Alignment
 
 Coarse alignment works on thumbnails, fine alignment on finite-element meshes at the working mip. The
-tabs are numbered in the order they are used: **1. Coarse alignment**, **2. Fine alignment**, **3. Test on
-subset**, **4. Quality check**, then the two full settings trees. The experimental *Structure-guided
-(optional)* tab is hidden until you switch it on under Setup → Interface.
+tabs are numbered in the order they are used: **1. Coarse alignment**, **2. Fine alignment**, **3.
+Quality check**, then the two full settings trees. *Test on subset (optional)* is for trying settings
+before the real run — once the pipeline has run there is nothing left to test — and the experimental
+*Structure-guided (optional)* tab is hidden until you switch it on under Setup → Interface.
 
 ### Coarse alignment tab
 

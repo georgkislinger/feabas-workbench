@@ -245,11 +245,23 @@ def test_standard_pipeline_dialog_lists_what_is_left(app, window, tmp_path):
     assert dlg.tree.topLevelItemCount() == 10 and "10 step(s)" in dlg.summary.text()
     dlg.render.setChecked(True)
     assert [s.key for s in dlg.steps_to_run()][-2:] == ["align.rendering", "align.downsample"]
+    assert "mip 0" in dlg.mips.text()                       # the tiny synthetic sections get thumbnail mip 0
+    dlg.stop_for_masks.setChecked(True)
+    assert [s.key for s in dlg.steps_to_run()][-1] == "thumbnail.downsample" and "run the pipeline again" in dlg.summary.text()
+    dlg.stop_for_masks.setChecked(False)
     # a finished step is skipped: fake the outputs of 'Match tiles'
     for sec in p.section_names():
         (p.root / "stitch" / "match_h5").mkdir(parents=True, exist_ok=True)
         (p.root / "stitch" / "match_h5" / f"{sec}.h5").write_bytes(b"")
     dlg.render.setChecked(False)
     assert [s.key for s in dlg.steps_to_run()][0] == "stitch.optimization"
+    # a stale step keeps its outputs and is not queued either; the summary explains how to redo it
+    (p.root / "configs" / "stitching_configs.yaml").write_text("matching: {num_workers: 2}\n", encoding="utf-8")
+    import os, time
+    for sec in p.section_names():
+        os.utime(p.root / "stitch" / "match_h5" / f"{sec}.h5", (time.time() - 100, time.time() - 100))
+    window.ctx.reload_configs()
+    dlg._refresh()
+    assert [s.key for s in dlg.steps_to_run()][0] == "stitch.optimization" and "stale" in dlg.summary.text()
     dlg.close()
     assert not window.errors, window.errors
