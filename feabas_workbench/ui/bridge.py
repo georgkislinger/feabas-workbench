@@ -15,7 +15,7 @@ from ..core.configs import ConfigStore
 from ..core.envs import Settings, check_imports
 from ..core.jobs import JobQueue, JobSpec, JobResult, worker_env
 from ..core.project import Project, VENDOR_DIR
-from ..core.steps import PipelineScan, Step, count_outputs, Cardinality
+from ..core.steps import PipelineScan, Step, count_outputs, Cardinality, thumbnail_progress
 
 
 def feabas_env() -> dict[str, str]:
@@ -201,10 +201,15 @@ class AppContext(QObject):
             s0 = start or 0
             s1 = stop if stop else expected
             expected = max(0, len(range(s0, min(s1, expected), stride or 1)))
+        progress_fn = None
+        if step.key == "thumbnail.downsample" and start is None and stop is None:
+            # the slow part of this step is the mip-mapping, which leaves no thumbnail behind
+            cfg = ConfigStore(root / "configs") if root != self.project.root else self.configs
+            progress_fn = lambda: thumbnail_progress(root, cfg, n)
         return JobSpec(
             name=f"{step.label}" + (f" [{tag}]" if tag else ""),
             argv=argv, cwd=root, kind="feabas", step_key=step.key, tag=tag, env=feabas_env(),
-            count_outputs=lambda: count_outputs(root, step), expected=expected,
+            count_outputs=lambda: count_outputs(root, step), expected=expected, progress_fn=progress_fn,
             log_file=root / "workbench.log",
         )
 

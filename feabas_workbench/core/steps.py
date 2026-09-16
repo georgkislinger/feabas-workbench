@@ -280,7 +280,11 @@ class PipelineScan:
                         ks = [1]
                 return max(0, sum(max(0, n - k) for k in ks))
             if step.key.startswith("align"):
-                # fine matching mirrors the thumbnail match list
+                # fine matching mirrors the thumbnail match list, or align/match_name.txt when
+                # the fine alignment uses its own (shorter) compare distance
+                listed = read_fine_match_list(self.root)
+                if listed is not None:
+                    return len(listed)
                 return len(list((self.root / "thumbnail_align" / "matches").glob("*.h5"))) or max(0, n - 1)
             return max(0, n - 1)
         return 1
@@ -330,6 +334,115 @@ class PipelineScan:
 
     def __getitem__(self, key: str) -> StepStatus:
         return self.status[key]
+
+
+# ----------------------------------------------------------------------
+# step-specific progress
+# ----------------------------------------------------------------------
+
+def thumbnail_max_mip(configs: ConfigStore | None) -> int:
+    """
+    The highest stitched-section mip level 'Make thumbnails' builds, as thumbnail_main.py
+    computes it for the PNG-tile render driver: downsample.max_mip if set, else one below the
+    thumbnail mip, and never below the fine-alignment working mip.
+    """
+    if configs is None:
+        return 0
+    tm = int(configs.get("thumbnail", "thumbnail_mip_level", 2) or 0)
+    mm = configs.get("thumbnail", "downsample.max_mip", None)
+    max_mip = int(mm) if mm is not None else max(0, tm - 1)
+    align_mip = int(configs.get("alignment", "matching.working_mip_level", 2) or 0)
+    return max(align_mip, max_mip)
+
+
+def thumbnail_progress(root: Path, configs: ConfigStore | None, n_sections: int) -> tuple[int, int, str]:
+    """
+    Progress of 'Make thumbnails' as (done, expected, message).
+
+    FEABAS first builds the intermediate mip levels of every stitched section - by far the
+    slowest part - and only then writes the thumbnails, so counting thumbnails alone shows
+    nothing until the run is almost over. Every finished mip level of a section leaves a
+    ``stitched_sections/mipN/<sec>/metadata.txt`` behind, so those are counted too.
+    """
+    root = Path(root)
+    n = max(0, int(n_sections))
+    thumbs = len([p for p in (root / "thumbnail_align" / "thumbnails").glob("*.png")]) \
+        if (root / "thumbnail_align" / "thumbnails").is_dir() else 0
+    driver = configs.get("stitching", "rendering.driver", "image") if configs is not None else "image"
+    max_mip = thumbnail_max_mip(configs) if driver == "image" else 0
+    if max_mip <= 0 or n == 0:
+        return thumbs, n, f"thumbnails {thumbs}/{n}"
+    ss = root / "stitched_sections"
+    levels = 0
+    for m in range(1, max_mip + 1):
+        d = ss / f"mip{m}"
+        if d.is_dir():
+            levels += len([p for p in d.glob("*/metadata.txt")])
+    levels = min(levels, n * max_mip)
+    expected = n * max_mip + n
+    return levels + thumbs, expected, f"mip levels {levels}/{n * max_mip}, thumbnails {thumbs}/{n}"
+
+
+# ----------------------------------------------------------------------
+# fine-alignment match list (align/match_name.txt)
+# ----------------------------------------------------------------------
+
+FINE_MATCH_LIST = "align/match_name.txt"
+
+
+def read_fine_match_list(root: Path) -> list[str] | None:
+    """The pair names listed in align/match_name.txt, or None when FEABAS uses every thumbnail match."""
+    p = Path(root) / FINE_MATCH_LIST
+    if not p.is_file():
+        return None
+    try:
+        lines = [ln.strip() for ln in p.read_text(encoding="utf-8").splitlines()]
+    except OSError:
+        return None
+    return [ln[:-3] if ln.endswith(".h5") else ln for ln in lines if ln]
+
+
+def fine_match_pairs(root: Path, section_names: list[str], compare_distance: int,
+                     delimiter: str = "__to__") -> list[str]:
+    """
+    Thumbnail match pairs (file stems in thumbnail_align/matches) whose two sections are at most
+    *compare_distance* apart in the section order. The coarse alignment often compares each
+    section to two or more neighbours on either side for robustness; the fine alignment does not
+    need that many pairs and every extra pair costs a full block-matching pass.
+    """
+    order = {name: i for i, name in enumerate(section_names)}
+    out = []
+    for p in sorted((Path(root) / "thumbnail_align" / "matches").glob("*.h5")):
+        stem = p.stem
+        if delimiter not in stem:
+            continue
+        a, b = stem.split(delimiter, 1)
+        if a in order and b in order and abs(order[a] - order[b]) <= int(compare_distance):
+            out.append(stem)
+    return out
+
+
+def write_fine_match_list(root: Path, section_names: list[str], compare_distance: int | None,
+                          delimiter: str = "__to__") -> list[str] | None:
+    """
+    Write align/match_name.txt so that 'Generate meshes' and 'Fine matching' only use the pairs
+    within *compare_distance*; None (or a distance that keeps every pair) removes the file, which
+    is FEABAS's default of using every thumbnail match. Returns the pairs listed, or None.
+    """
+    p = Path(root) / FINE_MATCH_LIST
+    if compare_distance is None or int(compare_distance) <= 0:
+        if p.is_file():
+            p.unlink()
+        return None
+    pairs = fine_match_pairs(root, section_names, int(compare_distance), delimiter)
+    all_pairs = len(list((Path(root) / "thumbnail_align" / "matches").glob("*.h5")))
+    if not pairs or len(pairs) == all_pairs:
+        if p.is_file():
+            p.unlink()
+        return None
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("\n".join(f"{s}.h5" for s in pairs) + "\n", encoding="utf-8")
+    return pairs
 
 
 # ----------------------------------------------------------------------

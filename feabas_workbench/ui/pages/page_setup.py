@@ -6,8 +6,8 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal
-from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout,
-                               QWidget, QPlainTextEdit)
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
+                               QVBoxLayout, QWidget, QPlainTextEdit)
 
 from ...core import envs as E
 from ...core.jobs import JobSpec
@@ -117,6 +117,17 @@ class SetupPage(Page):
         lay.addWidget(form_row("VASTlite", self.vast))
         self.body.addWidget(f)
 
+        f, lay = card("Interface")
+        self.show_struct = QCheckBox("show the experimental 'Structure-guided' tab on the Alignment page")
+        self.show_struct.setChecked(bool(getattr(s, "show_structure_tab", False)))
+        self.show_struct.setToolTip("Alignment driven by biological structures found with a YOLO-seg model (nuclei, "
+                                    "mitochondria, vessels ...) instead of anonymous texture features. Experimental "
+                                    "and not needed for the normal FEABAS workflow, so it is hidden by default. "
+                                    "Takes effect immediately and is remembered.")
+        lay.addWidget(self.show_struct)
+        self.show_struct.toggled.connect(self._toggle_structure_tab)
+        self.body.addWidget(f)
+
         f, lay = card("Compute settings (this project)")
         self.cpu = spin(0, 512, 0); self.cpu.setSpecialValueText("all physical cores")
         self.framework = combo([("process (multiprocessing)", "process"), ("thread", "thread"), ("dask", "dask")], "process")
@@ -223,6 +234,13 @@ class SetupPage(Page):
         s.conda_exe = self.conda.text()
         s.save()
         self.info("settings saved")
+
+    def _toggle_structure_tab(self, on: bool) -> None:
+        self.ctx.settings.show_structure_tab = bool(on)
+        self.ctx.settings.save()
+        w = self.window()
+        if hasattr(w, "apply_interface_settings"):
+            w.apply_interface_settings()
 
     def _micromamba(self) -> None:
         try:

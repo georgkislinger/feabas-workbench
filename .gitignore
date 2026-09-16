@@ -25,3 +25,6 @@ dist/
 _scratch/
 _test_projects/
 *.log
+# written by tools/install.bat / install.sh: the interpreter this checkout was installed into
+start_gui.local.bat
+start_gui.local.sh

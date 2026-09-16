@@ -8,7 +8,8 @@ Design:
 * the whole process *tree* is killed on cancel (FEABAS uses multiprocessing);
 * progress comes from two sources: workbench workers print
   ``##PROGRESS {"done": i, "total": n, "msg": "..."}`` lines, and FEABAS steps
-  are measured by counting their output files;
+  are measured by counting their output files (or by a step-specific
+  ``progress_fn`` when one count would not tell the story);
 * the core is Qt-free (threads + callbacks); the UI wraps it in signals.
 """
 
@@ -38,6 +39,9 @@ class JobSpec:
     env: dict[str, str] = field(default_factory=dict)
     count_outputs: Callable[[], int] | None = None     # for file-count progress
     expected: int = 0
+    # optional richer progress: () -> (done, expected, message). Takes precedence over
+    # count_outputs and reports absolute numbers (a step with several phases can say which one)
+    progress_fn: Callable[[], tuple[int, int, str]] | None = None
     kind: str = "worker"                                # worker | feabas | shell
     step_key: str | None = None
     tag: str = ""                                       # free-form (e.g. test-run name)
@@ -116,11 +120,12 @@ class Job:
             self._emit("err", f"could not start process: {e}\n")
             self._finish(127)
             return
-        if spec.count_outputs is not None:
-            try:
-                self._baseline = spec.count_outputs()
-            except Exception:
-                self._baseline = 0
+        if spec.progress_fn is not None or spec.count_outputs is not None:
+            if spec.count_outputs is not None:
+                try:
+                    self._baseline = spec.count_outputs()
+                except Exception:
+                    self._baseline = 0
             self._poll_thread = threading.Thread(target=self._poll_outputs, daemon=True)
             self._poll_thread.start()
         self._thread = threading.Thread(target=self._reader, daemon=True)
@@ -184,6 +189,14 @@ class Job:
 
     def _poll_outputs(self) -> None:
         while not self._stop_poll.wait(1.5):
+            if self.spec.progress_fn is not None:
+                try:
+                    done, expected, msg = self.spec.progress_fn()
+                except Exception:
+                    continue
+                if self.on_progress:
+                    self.on_progress(max(0, int(done)), int(expected), str(msg))
+                continue
             if self.spec.count_outputs is None:
                 return
             try:

@@ -319,8 +319,8 @@ the choice here only concerns the GUI.</p>
 <td>Install <strong>Miniforge</strong> from <a href="https://conda-forge.org/download/">https://conda-forge.org/download/</a> (accept the defaults; on Windows tick <em>Add to PATH</em> if offered, it is not required). Then follow the <em>conda</em> row. Miniforge is the recommended starting point because the FEABAS and deep-learning environments are conda environments too.</td>
 </tr>
 <tr>
-<td><strong>Miniforge, Miniconda or Anaconda</strong></td>
-<td>Windows: double-click <strong><code>tools\install.bat</code></strong>. Linux/macOS: <code>bash tools/install.sh</code>. The script finds your conda (on <code>PATH</code> or in its usual install folder), creates an environment called <code>feabas-workbench</code>, installs the app into it, puts a shortcut on the Windows Desktop and starts the GUI. Later, start it with <code>start_gui.bat</code> / <code>./start_gui.sh</code>.</td>
+<td><strong>micromamba, Miniforge, Miniconda or Anaconda</strong></td>
+<td>Windows: double-click <strong><code>tools\install.bat</code></strong>. Linux/macOS: <code>bash tools/install.sh</code>. The script finds a package manager (micromamba and mamba first, then conda: on <code>PATH</code>, in <code>CONDA_EXE</code> / <code>MAMBA_EXE</code>, and in the usual install folders on <code>C:</code>, <code>D:</code> and <code>E:</code>; <code>set FW_CONDA=…</code> forces one, <code>set FW_DEBUG=1</code> shows the search), creates an environment called <code>feabas-workbench</code> unless it exists, installs the app into it, <strong>records that interpreter in <code>start_gui.local.bat</code></strong> so the launcher is hard-wired to this installation, puts a shortcut on the Windows Desktop and starts the GUI. Later, start it with <code>start_gui.bat</code> / <code>./start_gui.sh</code>.</td>
 </tr>
 <tr>
 <td><strong>Plain Python 3.10+</strong> (python.org, Microsoft Store, your distribution) but no conda</td>
@@ -349,9 +349,15 @@ already have FEABAS or PyTorch installed somewhere, it finds them. Otherwise:</p
 <p>Both need internet and 10–30 minutes. They can also be created by hand; the commands are in the README.</p>
 <h3 id="14-starting">1.4 Starting</h3>
 <p>Double-click <strong><code>start_gui.bat</code></strong> (Windows) or run <strong><code>./start_gui.sh</code></strong> (Linux/macOS) in the unpacked
-folder. The script looks, in this order, for a <code>.venv</code> in that folder, then for a conda environment
-with PySide6 installed (<code>feabas-gui</code>, <code>feabas-workbench</code>, <code>feabas_env</code>, <code>feabas</code>, under the usual
-Miniforge/Miniconda/Anaconda locations and <code>~/.conda/envs</code>), and runs the app.</p>
+folder. The script first reads <code>start_gui.local.bat</code> / <code>start_gui.local.sh</code> next to it — the interpreter
+<code>tools\install.bat</code> / <code>install.sh</code> installed into — and uses that if it still exists (delete the file to
+go back to pure discovery). Otherwise it looks, in this order, for <code>FW_PYTHON</code>; the environment that is active in the shell;
+a <code>.venv</code> (or <code>venv</code>, <code>env</code>) next to the script; a conda / mamba / micromamba environment whose name
+contains <code>feabas</code> (Miniforge, Miniconda, Anaconda and micromamba roots, <code>~/.conda/envs</code>,
+<code>MAMBA_ROOT_PREFIX</code>, <code>CONDA_ENVS_PATH</code>, plus any folders in <code>FW_ENV_DIRS</code>); any other environment there
+that has PySide6; and finally what <code>conda env list</code> / <code>micromamba env list</code> and <code>PATH</code> report — then it
+runs the app. <code>start_gui.bat --envs</code> (or <code>./start_gui.sh --envs</code>) lists every interpreter that would
+work, and <code>FW_DEBUG=1</code> shows each candidate as it is tried.</p>
 <p>Both scripts forward their arguments, so from a terminal you can also do:</p>
 <pre><code class="language-bat">start_gui.bat --project D:\data\my_stack
 </code></pre>
@@ -479,7 +485,9 @@ old and new settings. The honest fix is <strong>Clear…</strong> on the earlies
 </ul>
 <p>Only one job runs at a time; further submissions queue. The status bar shows progress and a <strong>Cancel
 job</strong> button. The log dock opens on its own while a job runs (or when an error is logged); <strong>View →
-Log</strong> (Ctrl+L) shows or hides it, and it carries FEABAS's own messages.</p>
+Log</strong> (Ctrl+L) shows or hides it, and it carries FEABAS's own messages. Untick <strong>autoscroll</strong> to read
+while a job keeps writing: the view then stays on the lines you are looking at (it keeps the last 5000
+lines; <em>only warnings/errors</em> and the filter box narrow it down).</p>
 <h3 id="24-settings-come-in-three-flavours">2.4 Settings come in three flavours</h3>
 <div class="table-wrap"><table>
 <thead>
@@ -597,6 +605,11 @@ only the deep-learning workers do.</p>
 <h3 id="external-viewers">External viewers</h3>
 <p><code>Fiji</code> (<code>ImageJ-win64.exe</code>) and <code>VASTlite</code> (<code>VAST_Lite.exe</code>). Needed for <em>Edit mask in Fiji</em>, <em>Open
 section in Fiji</em> and <em>Open in VASTlite</em>. Auto-detected in the usual install locations.</p>
+<h3 id="interface">Interface</h3>
+<p><strong>Show the experimental 'Structure-guided' tab on the Alignment page</strong> – off by default. The tab lets a
+YOLO-seg model decide where the alignment is driven from (see §8); it is not part of the normal FEABAS
+workflow, so it stays out of the way until you switch it on here. The change is immediate and remembered
+across sessions.</p>
 <h3 id="compute-settings-this-project">Compute settings (this project)</h3>
 <p><strong>Apply to project</strong> writes these into <code>configs/general_configs.yaml</code>, so a project must be open.</p>
 <div class="table-wrap"><table>
@@ -840,6 +853,9 @@ does cost disk space and hours.</p>
 <p><strong>Choosing training tiles</strong> – pick tiles in the grid on the left, <strong>Add selected tiles →</strong>, or press
 <strong>Random 24</strong>. 10–40 representative tiles is plenty; at least 4 are required. Include the different
 looks in your data (dense tissue, resin, edges).</p>
+<p>The card shows what most people need – method, run name, <em>Train model</em>; model, <em>Preview on a tile</em>,
+<em>Denoise all tiles</em> – and keeps everything else under <strong>Advanced settings</strong> (click to expand). The
+StructN2V axis and span appear next to the method only when StructN2V is selected.</p>
 <div class="table-wrap"><table>
 <thead>
 <tr>
@@ -855,29 +871,9 @@ looks in your data (dense tissue, resin, edges).</p>
 <td>Use StructN2V when the noise is clearly striped along the scan direction.</td>
 </tr>
 <tr>
-<td><strong>Struct axes / span</strong></td>
+<td><strong>struct axes / span</strong></td>
 <td>Only for StructN2V: orientation (<code>horizontal</code>, <code>vertical</code>, <code>cross</code>) and width of the masked stripe.</td>
 <td>Match the axis to the visible stripes; span 5 is a sensible start.</td>
-</tr>
-<tr>
-<td><strong>patch</strong></td>
-<td>Training patch size (default 128).</td>
-<td>64–256. Larger patches see more context but need more VRAM.</td>
-</tr>
-<tr>
-<td><strong>batch</strong></td>
-<td>Patches per step (default 12).</td>
-<td>Lower it if you hit CUDA out-of-memory.</td>
-</tr>
-<tr>
-<td><strong>epochs / steps per epoch</strong></td>
-<td>Training length (default 100 / 100).</td>
-<td>100×100 is a reasonable first run; watch the loss in the log.</td>
-</tr>
-<tr>
-<td><strong>ROI / masked %</strong></td>
-<td>N2V blind-spot parameters: neighbourhood size (11) and percentage of pixels masked per patch (0.2).</td>
-<td>Defaults are fine; raising masked % speeds up learning but adds noise to the gradient.</td>
 </tr>
 <tr>
 <td><strong>Run name</strong></td>
@@ -905,7 +901,27 @@ looks in your data (dense tissue, resin, edges).</p>
 <td>If the <em>histogram-matched tiles</em> radio button is selected, it denoises those instead of the raw tiles.</td>
 </tr>
 <tr>
-<td><strong>prediction tile / overlap / batch</strong></td>
+<td><em>Advanced:</em> <strong>patch</strong></td>
+<td>Training patch size (default 128).</td>
+<td>64–256. Larger patches see more context but need more VRAM.</td>
+</tr>
+<tr>
+<td><em>Advanced:</em> <strong>batch</strong></td>
+<td>Patches per step (default 12).</td>
+<td>Lower it if you hit CUDA out-of-memory.</td>
+</tr>
+<tr>
+<td><em>Advanced:</em> <strong>epochs / steps per epoch</strong></td>
+<td>Training length (default 100 / 100).</td>
+<td>100×100 is a reasonable first run; watch the loss in the log.</td>
+</tr>
+<tr>
+<td><em>Advanced:</em> <strong>ROI / masked %</strong></td>
+<td>N2V blind-spot parameters: neighbourhood size (11) and percentage of pixels masked per patch (0.2).</td>
+<td>Defaults are fine; raising masked % speeds up learning but adds noise to the gradient.</td>
+</tr>
+<tr>
+<td><em>Advanced:</em> <strong>prediction tile / overlap / batch</strong></td>
 <td>Tiled inference: tile size 512, overlap 64, batch 4.</td>
 <td>Reduce the tile size if you run out of VRAM; increase the overlap if you see seams in the denoised output.</td>
 </tr>
@@ -1166,6 +1182,8 @@ grey-value images in thumbnail space:</p>
 </tr>
 </tbody>
 </table></div>
+<p>The tabs are numbered in the order they are used: <strong>1. Thumbnails</strong>, <strong>2. Masks</strong>; <em>Train fold model</em>
+is optional.</p>
 <h3 id="thumbnails-tab">Thumbnails tab</h3>
 <div class="table-wrap"><table>
 <thead>
@@ -1196,6 +1214,8 @@ grey-value images in thumbnail space:</p>
 <p><strong>Make thumbnails</strong> also builds the intermediate mip levels of the stitched sections that fine alignment
 reads, and writes FEABAS's default masks (everything imaged = tissue), which the next tab replaces.
 Pressing <strong>Apply</strong> here also sets <code>alignment.meshing.mask_mip_level</code> to the same mip.</p>
+<p>The progress bar in the status bar counts both phases: the mip levels (the slow part — one entry per
+section and level, <code>mip levels 120/453</code>) and then the thumbnails themselves (<code>thumbnails 40/151</code>).</p>
 <h3 id="masks-tab">Masks tab</h3>
 <p>The section list on the left shows what exists per section (<code>thumb</code>, <code>tissue</code>, <code>folds</code>, <code>mask</code>; a <code>*</code>
 marks a hand-edited mask). The viewer shows the thumbnail with any combination of overlays — <em>tissue</em>,
@@ -1207,6 +1227,125 @@ ctrl-click to add — and press <strong>✓ highlighted</strong> (or the space b
 <strong>all</strong> / <strong>none</strong> and <strong>every N</strong> are there for the whole stack. Computations refresh the list to show
 what they produced; your checks survive that, and sections that appear for the first time start checked.</p>
 <h4 id="tissue-vs-background">Tissue vs. background</h4>
+<p>Pick a <strong>method</strong> first; the card then shows only the settings that method uses, and a one-line
+explanation of what it does. Every setting has a tooltip. Two rows are common to all methods: the
+<em>border margin</em> and the <em>exclude regions inside the section</em> switches.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Method</th>
+<th>What it does</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>the stitched tile footprint is tissue</strong> (FEABAS default)</td>
+<td>The tissue region is the area the tiles cover, and only what lies outside it is excluded. Three sources, best first: FEABAS's own mask (kept under <code>masks/roi/</code> the first time the workbench replaces one); the tile boxes read straight out of <code>stitch/tform/&lt;sec&gt;.h5</code> — the same geometry FEABAS rasterises, cached in <code>masks/roi/</code>; and, if there is no montage geometry at all, the convex hull of the image data. All three are geometric rather than a flood fill from the border, because a black fold can run from one section edge to the other. Nothing to set.</td>
+<td><strong>Start here.</strong> Whenever the section fills the imaged area.</td>
+</tr>
+<tr>
+<td><strong>detect a uniform frame (black / white) from the outside in</strong></td>
+<td>For sections that sit inside a uniform frame: black padding, a saturated white rim of empty resin or support film, a grey detector line — or several of these, one inside the other. The frames are peeled off layer by layer, starting from the area outside the imaged footprint, until textured tissue is reached; a frame that does not touch the image edge itself (a white rim behind black padding) is found too.</td>
+<td>Single-tile sections with a white rim; montages with resin around the tissue.</td>
+</tr>
+<tr>
+<td><strong>fixed margins from the image edge</strong></td>
+<td>Type how far the frame reaches in from the <strong>left / top / right / bottom</strong> of the thumbnail (in thumbnail pixels; the µm equivalent is shown next to it). A dashed rectangle in the viewer updates as you type, before anything is written. The result never extends beyond the imaged footprint.</td>
+<td>When the frame is regular and you would rather say where the tissue is than detect it.</td>
+</tr>
+<tr>
+<td><strong>auto</strong></td>
+<td>Splits by local texture only if a clear background/tissue split exists (Otsu separability above a threshold), otherwise falls back to "everything imaged".</td>
+<td>Mixed datasets where some sections have resin background.</td>
+</tr>
+<tr>
+<td><strong>local texture</strong></td>
+<td>Always splits by local grey-level standard deviation.</td>
+<td>Sections with genuine resin/support background. Careful on high-pass filtered thumbnails: it can split tissue by texture.</td>
+</tr>
+<tr>
+<td><strong>intensity threshold</strong></td>
+<td>Plain grey-level threshold.</td>
+<td>Simple, high-contrast background.</td>
+</tr>
+</tbody>
+</table></div>
+<p>Settings of the <strong>frame</strong> method:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Meaning</th>
+<th>Guidance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>frame colour</strong></td>
+<td><em>black or white</em> (the usual case: black padding around a white rim), <em>black only</em>, <em>white only</em>, or <em>any uniform grey (auto)</em> – any locally flat area counts as frame, whatever its brightness.</td>
+<td>Start with <em>black or white</em>. Use <em>auto</em> for a grey frame. Pixels of the no-data value 0 count as frame in every mode, so a white rim behind black padding is reached with <em>white only</em> too.</td>
+</tr>
+<tr>
+<td><strong>black: grey ≤</strong> (0)</td>
+<td>Grey level up to which a pixel belongs to the black frame.</td>
+<td>Raise a little if the padding is not exactly 0.</td>
+</tr>
+<tr>
+<td><strong>white: grey ≥</strong> (250)</td>
+<td>Grey level from which a pixel belongs to the white frame.</td>
+<td>250 leaves room for a slightly blurred rim; 255 = pure white only.</td>
+</tr>
+<tr>
+<td><strong>flatness tolerance</strong> (4)</td>
+<td><em>auto</em> only: a pixel is flat when the grey range of its 3×3 neighbourhood is at most this.</td>
+<td>EM tissue is never flat over a large area, so the default is safe.</td>
+</tr>
+<tr>
+<td><strong>ignore streaks thinner than px</strong> (15)</td>
+<td>A fold of the frame colour that touches the frame would be peeled off with it; streaks thinner than this are given back and stay tissue (label them as folds below). Slivers of tissue thinner than this – the seam between two frames, a detector line – are dropped.</td>
+<td>Set it above the width of your folds in the thumbnail and below the width of the frame.</td>
+</tr>
+</tbody>
+</table></div>
+<p>Clean-up, shared by the frame, auto, texture and intensity methods:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Meaning</th>
+<th>Guidance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>drop tissue pieces smaller than px</strong> (2000)</td>
+<td>Connected pieces of tissue with fewer pixels than this are removed: a piece has to be <em>at least</em> this big to count as tissue.</td>
+<td>Raise to remove specks of debris or resin classified as tissue; keep it well below the size of the section.</td>
+</tr>
+<tr>
+<td><strong>fill holes up to px</strong> (5000)</td>
+<td>Background holes <em>enclosed by tissue</em> that are smaller than this become tissue again; larger enclosed holes stay excluded.</td>
+<td>Raise if pale patches or vacuoles inside the section get excluded.</td>
+</tr>
+<tr>
+<td><strong>texture window px</strong> (31)</td>
+<td>auto/texture: neighbourhood over which the local grey-level variation is measured.</td>
+<td>Larger for coarse textures, smaller for fine ones.</td>
+</tr>
+<tr>
+<td><strong>threshold</strong></td>
+<td>Manual override for the texture score or intensity; empty = automatic (Otsu).</td>
+<td>Only when the automatic threshold is visibly wrong.</td>
+</tr>
+<tr>
+<td><strong>dark tissue</strong></td>
+<td>intensity: tissue is darker than the background.</td>
+<td>For inverted images.</td>
+</tr>
+</tbody>
+</table></div>
+<p>Common to every method:</p>
 <div class="table-wrap"><table>
 <thead>
 <tr>
@@ -1217,43 +1356,8 @@ what they produced; your checks survive that, and sections that appear for the f
 </thead>
 <tbody>
 <tr>
-<td><strong>method: the stitched tile footprint is tissue</strong></td>
-<td>The FEABAS default. The tissue region is the area the tiles cover, and only what lies outside it is excluded. Three sources, best first: FEABAS's own mask (kept under <code>masks/roi/</code> the first time the workbench replaces one); the tile boxes read straight out of <code>stitch/tform/&lt;sec&gt;.h5</code> — the same geometry FEABAS rasterises, so this needs neither its environment nor the thumbnail step, and the result is cached in <code>masks/roi/</code>; and, if there is no montage geometry at all, the convex hull of the image data. All three are geometric or hull-based rather than a flood fill from the border, because a black fold can run from one section edge to the other: it touches the outside but is still inside the imaged area.</td>
-<td><strong>Start here.</strong> Black areas inside the footprint stay tissue; label them as folds (below) rather than excluding them.</td>
-</tr>
-<tr>
-<td><strong>method: auto</strong></td>
-<td>Splits by local texture only if a clear background/tissue split exists (Otsu separability above a threshold), otherwise falls back to "everything imaged".</td>
-<td>Mixed datasets where some sections have resin background.</td>
-</tr>
-<tr>
-<td><strong>method: local texture</strong></td>
-<td>Always splits by local grey-level standard deviation.</td>
-<td>Sections with genuine resin/support background. Careful on high-pass filtered thumbnails: it can split tissue by texture.</td>
-</tr>
-<tr>
-<td><strong>method: intensity threshold</strong></td>
-<td>Plain grey-level threshold.</td>
-<td>Simple, high-contrast background.</td>
-</tr>
-<tr>
-<td><strong>window</strong> (31)</td>
-<td>Texture window in thumbnail pixels.</td>
-<td>Larger for coarse textures, smaller for fine ones.</td>
-</tr>
-<tr>
-<td><strong>min component px</strong> (2000)</td>
-<td>Connected tissue components smaller than this are dropped.</td>
-<td>Raise to remove specks of debris counted as tissue.</td>
-</tr>
-<tr>
-<td><strong>fill holes px</strong> (5000)</td>
-<td>Background holes inside tissue smaller than this are filled.</td>
-<td>Raise if empty-looking areas inside the section get excluded.</td>
-</tr>
-<tr>
 <td><strong>border margin</strong> (0 px)</td>
-<td>A ring of this width just inside the section outline — it follows the outline, it is not a rectangle. The field next to it converts the width into µm, measured against the montage rather than assumed from the mip level. Applied when the material mask is composed, so it appears after <em>Compose</em>, not in the tissue preview.</td>
+<td>A ring of this width just inside the section outline — it follows the outline, it is not a rectangle. The field next to it converts the width into µm, measured against the montage rather than assumed from the mip level. Applied when the material mask is composed, so it appears after <em>Compose</em>, not in the tissue preview (tick <em>border margin preview</em> above the viewer to see it).</td>
 <td>The montage edge is where the mask is least certain and matching least reliable. Pick a width that covers the ragged rim: on a 128 nm/px thumbnail, 20 px ≈ 2.6 µm.</td>
 </tr>
 <tr>
@@ -1262,19 +1366,19 @@ what they produced; your checks survive that, and sections that appear for the f
 <td>soft for a safety margin: you keep the pixels and only stop the alignment from being driven by the uncertain edge. exclude only where there is nothing worth keeping.</td>
 </tr>
 <tr>
-<td><strong>threshold</strong></td>
-<td>Manual override for the texture score or intensity; empty = automatic (Otsu).</td>
-<td>Only when the automatic threshold is visibly wrong.</td>
-</tr>
-<tr>
-<td><strong>dark tissue</strong></td>
-<td>Invert the intensity test.</td>
-<td>For inverted images where tissue is darker than background.</td>
-</tr>
-<tr>
-<td><strong>exclude black regions</strong> (off)</td>
-<td>Also drops every connected region at or below <strong>grey ≤</strong> that is at least <strong>at least px</strong> large, wherever it is — including inside the section.</td>
+<td><strong>also exclude black regions inside the section, grey ≤</strong> (off, 0)</td>
+<td>Drops every connected black region of at least <strong>at least px</strong> pixels, wherever it is — including inside the section.</td>
 <td>Leave off unless those black areas really carry no data. A fold is black <em>and</em> is tissue: excluding it removes it from the mesh and swallows its fold label, because fold labels are only painted inside the tissue mask.</td>
+</tr>
+<tr>
+<td><strong>white regions, grey ≥</strong> (off, 255)</td>
+<td>The same for saturated white regions: empty resin, burnt spots, support film inside the section.</td>
+<td>Same caveat.</td>
+</tr>
+<tr>
+<td><strong>at least px</strong> (24)</td>
+<td>Minimum size of a black/white region before it is excluded; smaller ones are normal tissue detail.</td>
+<td></td>
 </tr>
 <tr>
 <td><strong>Preview on current section</strong></td>
@@ -1340,18 +1444,18 @@ the log when most of a section's detected folds were swallowed that way.</p>
 <td>Lower to catch faint folds (more false positives), raise if normal tissue is flagged. Check with the <em>fold probability</em> overlay.</td>
 </tr>
 <tr>
-<td><strong>tile / overlap</strong> (1024 / 128)</td>
+<td><strong>tile / overlap</strong> (1024 / 128, under <em>Advanced U-Net settings</em>)</td>
 <td>Tiled inference geometry.</td>
 <td>Lower the tile size on small GPUs; raise the overlap if you see tile-edge artefacts in the fold mask.</td>
 </tr>
 <tr>
-<td><strong>min area px</strong> (50)</td>
-<td>Drop fold blobs smaller than this.</td>
+<td><strong>drop fold blobs smaller than px</strong> (50)</td>
+<td>Fold regions with fewer pixels than this are speckle and are dropped.</td>
 <td>Raise to remove speckle.</td>
 </tr>
 <tr>
-<td><strong>dilate px</strong> (2)</td>
-<td>Grow fold regions.</td>
+<td><strong>grow folds by px</strong> (2)</td>
+<td>Dilate the fold regions.</td>
 <td>A little dilation helps the mesh absorb the compression around a fold.</td>
 </tr>
 </tbody>
@@ -1443,17 +1547,30 @@ image size works.</p>
 <td>Lower the batch on small GPUs.</td>
 </tr>
 <tr>
-<td><strong>start from checkpoint above</strong></td>
-<td>On = fine-tune the checkpoint in the Masks tab; off = train from scratch (needs much more data).</td>
+<td><strong>start from the checkpoint on the Masks tab</strong></td>
+<td>On = fine-tune that checkpoint; off = train from scratch (needs much more data).</td>
 </tr>
 </tbody>
 </table></div>
 <p><strong>Use selected model</strong> puts the trained <code>best.pt</code> into the checkpoint field.</p>
+<p><strong>About the bundled checkpoint.</strong> <code>fold_unet_resnet34_inference_only_fp16.ckpt</code> (49 MB, in
+<code>feabas_workbench/resources/</code>) is an export of the original Lightning checkpoint
+<code>best-epoch=25-val_iou=0.6638.ckpt</code>: every model weight is there, stored as fp16, and the detections are
+identical. What was left out is the optimizer and scheduler state of that training run. Consequences:</p>
+<ul>
+<li><strong>fine-tuning from it works</strong> — <em>start from the checkpoint on the Masks tab</em> loads the weights into a
+  fresh fp32 U-Net and trains with a new optimizer, which is what fine-tuning is;</li>
+<li><strong>resuming the original run</strong> (continuing epoch 26 with its optimizer momentum and learning-rate
+  schedule) is the one thing it cannot do. That needs the full 280 MB Lightning checkpoint, which is not
+  bundled; if it becomes available for download, the link will be added here. The workbench itself never
+  resumes runs, so nothing in the GUI depends on it.</li>
+</ul>
 <hr />
 <h2 id="8-window-5-alignment">8. Window 5 – Alignment</h2>
-<p>Coarse alignment works on thumbnails, fine alignment on finite-element meshes at the working mip. Tabs:
-<em>Coarse alignment</em>, <em>Structure-guided</em>, <em>Fine alignment</em>, <em>Test on subset</em>, <em>Quality check</em>,
-and the two full settings trees.</p>
+<p>Coarse alignment works on thumbnails, fine alignment on finite-element meshes at the working mip. The
+tabs are numbered in the order they are used: <strong>1. Coarse alignment</strong>, <strong>2. Fine alignment</strong>, <strong>3. Test on
+subset</strong>, <strong>4. Quality check</strong>, then the two full settings trees. The experimental <em>Structure-guided
+(optional)</em> tab is hidden until you switch it on under Setup → Interface.</p>
 <h3 id="coarse-alignment-tab">Coarse alignment tab</h3>
 <div class="table-wrap"><table>
 <thead>
@@ -1494,10 +1611,11 @@ and the two full settings trees.</p>
 <p>Steps: <strong>Match thumbnails</strong> → <strong>Optimize coarse stack</strong> → <strong>Render coarse stack</strong> (optional but strongly
 recommended, since it produces the aligned thumbnails the quality check needs).</p>
 <p><em>Match thumbnails</em> is the most failure-prone step in the whole pipeline; read its log. When a pair fails
-you can add manual BigWarp matches in Fiji, or use structure-guided matching (next tab).</p>
-<h3 id="structure-guided-tab">Structure-guided tab</h3>
-<p>Switched off by default and it does not change the normal workflow when unused. The idea: align on structures you
-care about (nuclei, mitochondria, vessels) instead of anonymous texture features.</p>
+you can add manual BigWarp matches in Fiji, or use structure-guided matching (optional tab).</p>
+<h3 id="structure-guided-tab-optional-hidden-by-default">Structure-guided tab (optional, hidden by default)</h3>
+<p>Shown only when <em>Setup → Interface → show the experimental 'Structure-guided' tab</em> is ticked. It does not
+change the normal workflow when unused. The idea: align on structures you care about (nuclei,
+mitochondria, vessels) instead of anonymous texture features.</p>
 <p><strong>1. Detect structures</strong></p>
 <div class="table-wrap"><table>
 <thead>
@@ -1601,6 +1719,12 @@ next section as a red/green overlay with displacement lines.</p>
 </tr>
 </thead>
 <tbody>
+<tr>
+<td><strong>compare distance</strong></td>
+<td><code>align/match_name.txt</code> (workbench-side; <em>same as coarse alignment</em> = no file)</td>
+<td>Which section pairs the fine matching works on. By default FEABAS reuses every pair the coarse alignment matched, i.e. it inherits the coarse compare distance. Choosing 1 (or 2, 3 …) lists only the pairs within that distance in <code>align/match_name.txt</code>, which FEABAS reads instead — its own mechanism for a custom pair list. The line under the settings says how many of the coarse pairs will be used; the list is refreshed every time a fine step is started, so pairs matched later are picked up.</td>
+<td>Every pair costs a full block-matching pass at the working mip. With a robust coarse stack (compare distance 2) a fine distance of 1 halves the fine matching time and is usually enough; keep 2 for thin, fragile sections.</td>
+</tr>
 <tr>
 <td><strong>working mip</strong></td>
 <td><code>alignment.matching.working_mip_level</code> (2)</td>
@@ -1864,7 +1988,11 @@ survive the re-run.</p>
 <tbody>
 <tr>
 <td><code>start_gui.bat</code> says it found no environment</td>
-<td>No conda env with PySide6 under the standard names. Run <code>tools\install.bat</code>, or set <code>FW_PYTHON</code> to the interpreter you want.</td>
+<td>No environment with PySide6 in any of the places it scans (<code>start_gui.bat --envs</code> shows what it found, <code>set FW_DEBUG=1</code> every path it tried). Run <code>tools\install.bat</code> (it records its environment in <code>start_gui.local.bat</code>), put the folder with your environments in <code>FW_ENV_DIRS</code>, or set <code>FW_PYTHON</code> to the interpreter you want.</td>
+</tr>
+<tr>
+<td><code>tools\install.bat</code> says it found no conda</td>
+<td>It looks on <code>PATH</code>, in <code>CONDA_EXE</code> / <code>MAMBA_EXE</code> and in the usual install folders on <code>C:</code>, <code>D:</code> and <code>E:</code> (<code>set FW_DEBUG=1</code> lists every path). Point it at your package manager: <code>set FW_CONDA=C:\path\to\micromamba.exe</code> (or <code>conda.exe</code>), then run it again.</td>
 </tr>
 <tr>
 <td>Step card says <strong>blocked</strong></td>
@@ -1946,6 +2074,10 @@ survive the re-run.</p>
 </table></div>
 <hr />
 <h2 id="13-where-every-setting-is-stored">13. Where every setting is stored</h2>
+<p>New in this version: the fine-alignment compare distance is kept as <code>alignment.fine_compare_distance</code>
+in <code>workbench_project.json</code> and materialised as <code>align/match_name.txt</code>; the tissue method with its frame
+and margin settings is under <code>masks.tissue</code>; the <em>show structure-guided tab</em> switch is global, in
+<code>%APPDATA%/FeabasWorkbench/settings.json</code>.</p>
 <div class="table-wrap"><table>
 <thead>
 <tr>

@@ -560,3 +560,112 @@ def test_cancel_probes_unblocks_a_thread_stuck_in_a_probe_subprocess():
     assert result["seconds"] < 5
     assert envs.discover_environments() == []          # cancelled: no new probe starts
     envs.reset_probe_cancel()
+
+
+# ----------------------------------------------------------------------------- frames, margins, progress
+
+def _framed_section(rng, h=240, w=320):
+    """Black padding, then a white rim, then textured tissue; a black fold reaches in from the rim."""
+    img = np.zeros((h, w), np.uint8)                       # black padding
+    img[10:h - 10, 12:w - 12] = 255                        # white frame
+    tissue = np.clip(rng.normal(120, 35, (h - 80, w - 100)), 0, 255).astype(np.uint8)
+    img[40:h - 40, 50:w - 50] = tissue                     # tissue inside
+    img[100:104, 50:110] = 0                               # a 4 px black fold from the rim into the tissue
+    img[0, :] = 107                                        # a one-pixel detector line along the top edge
+    return img
+
+
+def test_uniform_border_peels_frames_from_the_outside_in():
+    from feabas_workbench.core.masks import uniform_border, detect_tissue, TissueParams
+    rng = np.random.default_rng(0)
+    img = _framed_section(rng)
+    roi = np.ones(img.shape, bool)                         # the tile covers the whole image
+    for mode in ("both", "auto"):
+        border = uniform_border(img, roi, mode=mode, min_width=9)
+        assert border[5, 5] and border[20, 20] and not border[100, 200]      # padding, rim, and not the tissue
+        assert not border[102, 80]                                           # the thin fold is given back
+        assert not border[150, 160]
+    only_white = uniform_border(img, roi, mode="white", min_width=9)
+    assert only_white[20, 20] and only_white[5, 5]                           # the rim is reached through the padding
+    assert not only_white[150, 160] and not only_white[102, 80]
+    grey = img.copy(); grey[img == 0] = 30                                   # padding that is dark grey, not no-data
+    only_white = uniform_border(grey, roi, mode="white", min_width=9)
+    assert not only_white[5, 5] and not only_white[20, 20]                   # nothing white touches the outside
+    only_black = uniform_border(img, roi, mode="black", min_width=9)
+    assert only_black[5, 5] and not only_black[20, 20]
+    # through detect_tissue: the frame and the detector line go, the tissue with its fold stays
+    m, _ = detect_tissue(img, TissueParams(method="border", border_mode="both", border_min_width=9,
+                                           min_component_px=500, fill_holes_px=200, erode=0), roi=roi)
+    assert m[150, 160] and m[102, 80] and not m[20, 20] and not m[0, 100]
+    ys, xs = np.nonzero(m)
+    assert 38 <= ys.min() <= 42 and 48 <= xs.min() <= 52
+
+
+def test_manual_margins_and_white_exclusion():
+    from feabas_workbench.core.masks import manual_bounds, detect_tissue, TissueParams, bright_regions
+    rng = np.random.default_rng(1)
+    img = _framed_section(rng)
+    roi = np.ones(img.shape, bool)
+    m, _ = detect_tissue(img, TissueParams(method="manual", crop_left=50, crop_top=40, crop_right=50, crop_bottom=40, erode=0), roi=roi)
+    ys, xs = np.nonzero(m)
+    assert (ys.min(), ys.max(), xs.min(), xs.max()) == (40, 199, 50, 269)
+    assert not manual_bounds((10, 10), left=6, right=6).any()               # margins that meet leave nothing
+    # white regions inside the section can be excluded like black ones
+    img2 = np.clip(rng.normal(120, 35, (120, 120)), 0, 254).astype(np.uint8)
+    img2[40:70, 40:70] = 255                                                 # a burnt patch
+    img2[100, 100] = 255                                                     # one saturated pixel of real tissue
+    assert bright_regions(img2, 255, min_px=24)[50, 50] and not bright_regions(img2, 255, min_px=24)[100, 100]
+    keep, _ = detect_tissue(img2, TissueParams(method="all", erode=0), roi=np.ones(img2.shape, bool))
+    drop, _ = detect_tissue(img2, TissueParams(method="all", erode=0, exclude_bright=True, bright_min=255, nodata_dilate=0),
+                            roi=np.ones(img2.shape, bool))
+    assert keep[50, 50] and not drop[50, 50] and drop[100, 100]
+    # old project files without the new keys still load
+    assert TissueParams.from_dict({"method": "texture", "window": 15}).border_mode == "both"
+
+
+def test_thumbnail_progress_counts_mip_levels_first(tmp_path):
+    """The mip-mapping is the slow part of 'Make thumbnails' and leaves no thumbnail behind."""
+    from feabas_workbench.core.steps import thumbnail_progress, thumbnail_max_mip
+    p = _fake_project(tmp_path, n=4)
+    cs = ConfigStore(p.configs_dir)
+    cs.set("thumbnail", "thumbnail_mip_level", 4); cs.set("alignment", "matching.working_mip_level", 2); cs.save()
+    assert thumbnail_max_mip(cs) == 3
+    done, expected, msg = thumbnail_progress(p.root, cs, 4)
+    assert (done, expected) == (0, 16)
+    for m in (1, 2, 3):
+        for sec in ("s0000", "s0001"):
+            d = p.root / "stitched_sections" / f"mip{m}" / sec
+            d.mkdir(parents=True)
+            (d / "metadata.txt").write_text("x", encoding="utf-8")
+    done, expected, msg = thumbnail_progress(p.root, cs, 4)
+    assert done == 6 and "mip levels 6/12" in msg
+    (p.root / "thumbnail_align" / "thumbnails").mkdir(parents=True)
+    (p.root / "thumbnail_align" / "thumbnails" / "s0000.png").write_bytes(b"")
+    done, expected, msg = thumbnail_progress(p.root, cs, 4)
+    assert done == 7 and "thumbnails 1/4" in msg
+    # the precomputed driver has no PNG mip folders: thumbnails only
+    cs.set("stitching", "rendering.driver", "neuroglancer_precomputed"); cs.save()
+    assert thumbnail_progress(p.root, cs, 4) == (1, 4, "thumbnails 1/4")
+
+
+def test_fine_match_list_restricts_pairs_by_distance(tmp_path):
+    from feabas_workbench.core.steps import fine_match_pairs, write_fine_match_list, read_fine_match_list
+    names = [f"s{i:04d}" for i in range(5)]
+    md = tmp_path / "thumbnail_align" / "matches"
+    md.mkdir(parents=True)
+    for k in (1, 2):
+        for i in range(5 - k):
+            (md / f"{names[i]}__to__{names[i + k]}.h5").write_bytes(b"")
+    assert len(fine_match_pairs(tmp_path, names, 1)) == 4 and len(fine_match_pairs(tmp_path, names, 2)) == 7
+    pairs = write_fine_match_list(tmp_path, names, 1)
+    assert pairs == ["s0000__to__s0001", "s0001__to__s0002", "s0002__to__s0003", "s0003__to__s0004"]
+    assert read_fine_match_list(tmp_path) == pairs
+    assert (tmp_path / "align" / "match_name.txt").read_text(encoding="utf-8").startswith("s0000__to__s0001.h5\n")
+    # the scan's expectation for the fine steps follows the list
+    (tmp_path / "stitch" / "stitch_coord").mkdir(parents=True)
+    scan = PipelineScan(tmp_path, 5)
+    assert scan["align.matching"].expected == 4
+    # a distance that keeps every pair, or none at all, means FEABAS's default: no file
+    assert write_fine_match_list(tmp_path, names, 2) is None and not (tmp_path / "align" / "match_name.txt").exists()
+    assert write_fine_match_list(tmp_path, names, None) is None
+    assert PipelineScan(tmp_path, 5)["align.matching"].expected == 7

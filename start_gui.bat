@@ -10,6 +10,8 @@ rem     start_gui.bat --page 3             jump straight to a window (0..6)
 rem     start_gui.bat --envs               list every environment that would work
 rem
 rem Search order:
+rem     0  start_gui.local.bat next to this script: the interpreter tools\install.bat installed
+rem        into (delete that file to go back to pure discovery)
 rem     1  %FW_PYTHON%
 rem     2  the environment already active in this shell (conda or venv)
 rem     3  a venv next to this script (.venv, .venv-*, venv, env, ..\.venv*)
@@ -26,8 +28,14 @@ cd /d "%~dp0"
 
 set "PY="
 set "LISTONLY="
+set "SEEN="
 if /i "%~1"=="--envs" set "LISTONLY=1"
 if defined LISTONLY echo Environments that can run the workbench:
+
+rem --- 0. the installation tools\install.bat recorded -------------------------
+rem An FW_PYTHON set in the shell still wins; a recorded interpreter that no longer
+rem exists is skipped by :check and the search below takes over.
+if not defined FW_PYTHON if exist "%~dp0start_gui.local.bat" call "%~dp0start_gui.local.bat"
 
 rem --- 1. explicit override ---------------------------------------------------
 if defined FW_PYTHON call :check "%FW_PYTHON%" force
@@ -131,7 +139,12 @@ if defined FW_DEBUG echo [debug] test %cand%
 "%cand%" -c "import PySide6" >nul 2>&1
 if errorlevel 1 exit /b
 if defined LISTONLY (
-  echo     %cand%
+  rem the roots overlap (a micromamba env is reachable two ways), so list each interpreter once
+  echo !SEEN! | findstr /I /L /C:"!cand!" >nul
+  if errorlevel 1 (
+    echo     !cand!
+    set "SEEN=!SEEN!;!cand!"
+  )
   exit /b
 )
 set "PY=%cand%"

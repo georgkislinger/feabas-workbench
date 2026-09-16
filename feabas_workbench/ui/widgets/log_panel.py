@@ -32,6 +32,8 @@ class LogPanel(QWidget):
         self.only_problems = QCheckBox("only warnings/errors")
         self.autoscroll = QCheckBox("autoscroll")
         self.autoscroll.setChecked(True)
+        self.autoscroll.setToolTip("Follow new lines as they arrive. Untick to read while a job keeps writing; "
+                                   "the view then stays where it is.")
         clear = QPushButton("Clear")
         clear.setObjectName("Flat")
         top.addWidget(self.filter)
@@ -73,11 +75,22 @@ class LogPanel(QWidget):
     def _write(self, level: str, text: str) -> None:
         fmt = QTextCharFormat()
         fmt.setForeground(QColor(COLORS.get(level, theme.TEXT)))
-        cur = self.view.textCursor()
+        sb = self.view.verticalScrollBar()
+        doc = self.view.document()
+        before_value, before_blocks = sb.value(), doc.blockCount()
+        # a cursor on the document, not the widget's own: moving the widget cursor makes the view
+        # follow it, which is exactly the scrolling that 'autoscroll off' is meant to stop
+        cur = QTextCursor(doc)
         cur.movePosition(QTextCursor.End)
         cur.insertText(text if text.endswith("\n") else text + "\n", fmt)
         if self.autoscroll.isChecked():
-            self.view.verticalScrollBar().setValue(self.view.verticalScrollBar().maximum())
+            sb.setValue(sb.maximum())
+        else:
+            # keep the same lines in view; when the block limit trims lines at the top, the
+            # remaining lines move up by that many, so the scroll position follows them
+            added = text.count("\n") or 1
+            trimmed = max(0, before_blocks + added - doc.blockCount())
+            sb.setValue(max(0, before_value - trimmed))
 
     def _refilter(self) -> None:
         self.view.clear()

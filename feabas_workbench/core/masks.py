@@ -11,8 +11,10 @@ grey value labels the material of each pixel:
 
 FEABAS writes a default mask (whole imaged ROI = tissue) in
 ``thumbnail_align/material_masks``; the workbench replaces it with
-tissue-vs-background from local texture plus folds from the fold U-Net, and
-can write higher-resolution masks to ``align/material_masks``.
+tissue-vs-background (the imaged footprint, a uniform frame peeled from the
+outside in, fixed margins, or a texture/intensity split) plus folds from a
+threshold or the fold U-Net, and can write higher-resolution masks to
+``align/material_masks``.
 
 Also here: the structure-guided material variant (see ``structure_material``)
 that makes FEABAS's fine matching concentrate on user-chosen structures.
@@ -32,21 +34,42 @@ LABEL_SOFT = 100
 LABEL_SPLIT = 200
 
 
+TISSUE_METHODS = ("all", "border", "manual", "auto", "texture", "intensity")
+BORDER_MODES = ("both", "black", "white", "auto")
+
+
 @dataclass
 class TissueParams:
     window: int = 31            # texture window (px) in the thumbnail
     nodata_value: int = 0       # padding value in rendered sections
     nodata_dilate: int = 8
-    min_component_px: int = 2000
-    fill_holes_px: int = 5000
+    min_component_px: int = 2000     # tissue pieces smaller than this are dropped
+    fill_holes_px: int = 5000        # enclosed background holes up to this size become tissue again
     erode: int = 3              # pull back from the section edge
-    method: str = "all"         # all | auto | texture | intensity   ('all' = FEABAS default: everything imaged is tissue)
+    method: str = "all"         # all | border | manual | auto | texture | intensity
+    #   all        FEABAS default: everything the tiles cover is tissue
+    #   border     a uniform frame (black and/or white, or any flat grey) is peeled off from the outside in
+    #   manual     fixed margins from the image edge
+    #   auto/texture/intensity   split by local texture or grey level
     min_separability: float = 0.72   # auto: below this Otsu separability everything imaged counts as tissue (unimodal ~0.64)
     invert_intensity: bool = False
     threshold: float | None = None   # manual override (texture score or intensity)
     exclude_dark: bool = False  # drop black holes/tears; off by default - a fold is black but IS tissue
     dark_max: int = 0           # grey level up to which a pixel counts as 'no data'
-    dark_min_px: int = 24       # ignore dark specks smaller than this (thumbnail pixels)
+    dark_min_px: int = 24       # ignore dark/bright specks smaller than this (thumbnail pixels)
+    exclude_bright: bool = False     # the same for saturated white regions inside the section
+    bright_min: int = 255            # grey level from which a pixel counts as 'white'
+    # method 'border'
+    border_mode: str = "both"        # both | black | white | auto   (auto: any locally flat grey value)
+    border_black_max: int = 0        # black frame: grey <= this
+    border_white_min: int = 250      # white frame: grey >= this
+    border_tol: int = 4              # auto: a 3x3 neighbourhood whose grey range is <= this counts as flat
+    border_min_width: int = 15       # streaks of the frame colour thinner than this are folds, not border
+    # method 'manual': margins from the image edge, in thumbnail pixels
+    crop_left: int = 0
+    crop_top: int = 0
+    crop_right: int = 0
+    crop_bottom: int = 0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -259,6 +282,29 @@ def footprint_mask(img: np.ndarray, value: int = 0, close: int = 9, min_px: int 
     return out.astype(bool)
 
 
+def value_regions(img: np.ndarray, lo: int, hi: int, min_px: int = 24, dilate: int = 0) -> np.ndarray:
+    """
+    Connected regions whose grey value lies in [lo, hi] and that are at least *min_px* large.
+
+    ``min_px`` keeps single pixels of real tissue that happen to be saturated out of the result;
+    ``dilate`` grows what is left so the blurred rim of a hole is dropped too.
+    """
+    cv2 = _cv2()
+    img = np.asarray(img)
+    if img.ndim == 3:
+        img = img[..., 0]
+    sel = ((img >= int(lo)) & (img <= int(hi))).astype(np.uint8)
+    if min_px > 0:
+        n, lab, stats, _ = cv2.connectedComponentsWithStats(sel, connectivity=8)
+        keep = stats[:, cv2.CC_STAT_AREA] >= int(min_px)
+        keep[0] = False
+        sel = keep[lab].astype(np.uint8)
+    if dilate > 0:
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * int(dilate) + 1, 2 * int(dilate) + 1))
+        sel = cv2.dilate(sel, k)
+    return sel.astype(bool)
+
+
 def dark_regions(img: np.ndarray, max_value: int = 0, min_px: int = 24, dilate: int = 0) -> np.ndarray:
     """
     Connected regions at or below *max_value* that are at least *min_px* large.
@@ -267,20 +313,100 @@ def dark_regions(img: np.ndarray, max_value: int = 0, min_px: int = 24, dilate: 
     section, but also holes, tears and folds inside it. Thresholding finds them all
     without a model; ``min_px`` keeps single dark pixels of real tissue out.
     """
+    return value_regions(img, 0, int(max_value), min_px, dilate)
+
+
+def bright_regions(img: np.ndarray, min_value: int = 255, min_px: int = 24, dilate: int = 0) -> np.ndarray:
+    """Connected regions at or above *min_value*: saturated white frames, empty resin, burnt areas."""
+    return value_regions(img, int(min_value), 255, min_px, dilate)
+
+
+def local_range(img: np.ndarray, size: int = 3) -> np.ndarray:
+    """max - min over a size x size neighbourhood: ~0 where the image is locally flat (a uniform frame)."""
+    cv2 = _cv2()
+    k = cv2.getStructuringElement(cv2.MORPH_RECT, (int(size), int(size)))
+    a = np.asarray(img)
+    return cv2.dilate(a, k).astype(np.int16) - cv2.erode(a, k).astype(np.int16)
+
+
+def uniform_border(img: np.ndarray, roi: np.ndarray | None = None, mode: str = "both",
+                   black_max: int = 0, white_min: int = 250, tol: int = 4, min_width: int = 15,
+                   max_layers: int = 6, nodata_value: int | None = 0) -> np.ndarray:
+    """
+    The border region of a section, found from the outside in: everything that is NOT tissue
+    because it is a uniform frame reachable from the edge of the imaged area.
+
+    Sections are often surrounded by more than one frame - black padding where nothing was
+    imaged, then a white (saturated) rim of empty resin or support film, sometimes a thin grey
+    line from the detector - and the inner frames do not touch the image edge themselves. So
+    the frames are peeled layer by layer: starting from the area outside the imaged footprint
+    (*roi*, or the image edge when there is none), connected regions of the frame colour that
+    touch what is already outside are added, and that is repeated until nothing new is reached.
+
+    *mode* says what counts as frame colour: ``black`` (grey <= black_max), ``white``
+    (grey >= white_min), ``both`` (either), or ``auto`` - any locally flat area (grey range over
+    a 3x3 neighbourhood <= tol), which finds a frame of any grey value. EM tissue is never flat
+    over a large area, so only saturated blobs inside the tissue qualify, and those are not
+    reached from the outside. Pixels of the no-data value (*nodata_value*, the padding of a
+    rendered section) count as frame in every mode, so a white rim behind black padding is
+    reached with ``white`` too.
+
+    A fold that runs from the section edge inwards has the frame colour and touches the frame,
+    so it would be peeled too; it is thin, though, and the frame is not. Peeled streaks
+    narrower than *min_width* pixels are given back (morphological opening), so they stay
+    tissue and can be labelled as folds instead.
+
+    Returns a bool mask that is True on the border (outside the tissue).
+    """
     cv2 = _cv2()
     img = np.asarray(img)
     if img.ndim == 3:
         img = img[..., 0]
-    dark = (img <= int(max_value)).astype(np.uint8)
-    if min_px > 0:
-        n, lab, stats, _ = cv2.connectedComponentsWithStats(dark, connectivity=8)
-        keep = stats[:, cv2.CC_STAT_AREA] >= int(min_px)
-        keep[0] = False
-        dark = keep[lab].astype(np.uint8)
-    if dilate > 0:
-        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * int(dilate) + 1, 2 * int(dilate) + 1))
-        dark = cv2.dilate(dark, k)
-    return dark.astype(bool)
+    h, w = img.shape[:2]
+    outside0 = ~np.asarray(roi).astype(bool) if roi is not None else np.zeros((h, w), bool)
+    if mode == "auto":
+        cand = local_range(img) <= int(tol)
+    elif mode == "black":
+        cand = img <= int(black_max)
+    elif mode == "white":
+        cand = img >= int(white_min)
+    else:
+        cand = (img <= int(black_max)) | (img >= int(white_min))
+    if nodata_value is not None:
+        cand = cand | (img == int(nodata_value))
+    cand &= ~outside0
+    n, lab = cv2.connectedComponents(cand.astype(np.uint8), connectivity=4)
+    outside = outside0.copy()
+    edge = np.zeros((h, w), bool)
+    edge[0, :] = edge[-1, :] = edge[:, 0] = edge[:, -1] = True
+    bridge = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))   # anti-aliased 1-2 px seams between frames
+    for _ in range(int(max_layers)):
+        seed = cv2.dilate(outside.astype(np.uint8), bridge).astype(bool) | edge
+        ids = np.unique(lab[seed & cand])
+        ids = ids[ids > 0]
+        if ids.size == 0:
+            break
+        new = np.isin(lab, ids) & ~outside
+        if not new.any():
+            break
+        outside |= new
+    peeled = outside & ~outside0
+    if min_width > 0 and peeled.any():
+        d = 2 * (int(min_width) // 2) + 1
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (d, d))
+        peeled = cv2.morphologyEx(peeled.astype(np.uint8), cv2.MORPH_OPEN, k).astype(bool)
+    return outside0 | peeled
+
+
+def manual_bounds(shape: tuple[int, int], left: int = 0, top: int = 0, right: int = 0, bottom: int = 0) -> np.ndarray:
+    """Everything inside fixed margins from the image edge (True = tissue)."""
+    h, w = int(shape[0]), int(shape[1])
+    m = np.zeros((h, w), bool)
+    y0, y1 = min(max(0, int(top)), h), max(0, h - max(0, int(bottom)))
+    x0, x1 = min(max(0, int(left)), w), max(0, w - max(0, int(right)))
+    if y1 > y0 and x1 > x0:
+        m[y0:y1, x0:x1] = True
+    return m
 
 
 def remove_small(mask: np.ndarray, min_px: int) -> np.ndarray:
@@ -289,6 +415,28 @@ def remove_small(mask: np.ndarray, min_px: int) -> np.ndarray:
     keep = np.zeros(n, bool)
     for i in range(1, n):
         keep[i] = stats[i, cv2.CC_STAT_AREA] >= min_px
+    return keep[lab]
+
+
+def remove_thin(mask: np.ndarray, min_width: int) -> np.ndarray:
+    """
+    Drop connected pieces of *mask* that are nowhere at least *min_width* pixels thick.
+
+    The seams between two frames (anti-aliased pixels that are neither black nor white) and
+    a detector line along the image edge survive a frame detection as slivers one or two
+    pixels wide; real tissue is thick somewhere.
+    """
+    if min_width <= 1:
+        return mask
+    cv2 = _cv2()
+    m = mask.astype(np.uint8)
+    r = max(1, int(min_width) // 2)
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
+    core = cv2.erode(m, k, borderValue=1) > 0     # the image edge does not count as an edge of the piece
+    n, lab = cv2.connectedComponents(m, connectivity=8)
+    keep = np.zeros(n, bool)
+    keep[np.unique(lab[core])] = True
+    keep[0] = False
     return keep[lab]
 
 
@@ -335,17 +483,35 @@ def detect_tissue(img: np.ndarray, params: TissueParams | None = None,
         img = img[..., 0]
 
     def finish(m: np.ndarray) -> np.ndarray:
-        """Black holes inside the section are not tissue either; then pull the edge back."""
+        """Black/white holes inside the section are not tissue either; then pull the edge back."""
         if params.exclude_dark:
             m = m & ~dark_regions(img, params.dark_max, params.dark_min_px, params.nodata_dilate)
+        if params.exclude_bright:
+            m = m & ~bright_regions(img, params.bright_min, params.dark_min_px, params.nodata_dilate)
         if params.erode > 0:
             k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * params.erode + 1, 2 * params.erode + 1))
             m = cv2.erode(m.astype(np.uint8), k, borderValue=0).astype(bool)
         return m
 
+    def cleanup(m: np.ndarray) -> np.ndarray:
+        if params.min_component_px > 0:
+            m = remove_small(m, params.min_component_px)
+        if params.fill_holes_px > 0:
+            m = fill_holes(m, params.fill_holes_px)
+        return m
+
+    footprint = np.asarray(roi).astype(bool) if roi is not None else footprint_mask(img, params.nodata_value)
     if params.method == "all":
-        base = np.asarray(roi).astype(bool) if roi is not None else footprint_mask(img, params.nodata_value)
-        return finish(base), float("nan")
+        return finish(footprint), float("nan")
+    if params.method == "manual":
+        # fixed margins from the image edge, never beyond what was imaged
+        m = manual_bounds(img.shape[:2], params.crop_left, params.crop_top, params.crop_right, params.crop_bottom)
+        return finish(m & footprint), float("nan")
+    if params.method == "border":
+        border = uniform_border(img, roi=footprint, mode=params.border_mode, black_max=params.border_black_max,
+                                white_min=params.border_white_min, tol=params.border_tol,
+                                min_width=params.border_min_width, nodata_value=params.nodata_value)
+        return finish(cleanup(remove_thin(~border, params.border_min_width))), float("nan")
     pad = padding_mask(img, params.nodata_value)
     nd = pad.copy()
     if params.nodata_dilate or params.window:
@@ -366,11 +532,7 @@ def detect_tissue(img: np.ndarray, params: TissueParams | None = None,
         # smooth the decision at the window scale
         m = cv2.morphologyEx(m.astype(np.uint8), cv2.MORPH_CLOSE,
                              cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (params.window | 1, params.window | 1))).astype(bool)
-    if params.min_component_px > 0:
-        m = remove_small(m, params.min_component_px)
-    if params.fill_holes_px > 0:
-        m = fill_holes(m, params.fill_holes_px)
-    return finish(m), thr
+    return finish(cleanup(m)), thr
 
 
 def compose_material_mask(tissue: np.ndarray, folds: np.ndarray | None = None,

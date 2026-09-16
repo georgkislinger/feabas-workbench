@@ -34,8 +34,8 @@ FEABAS environment with the project folder as working directory.
 | **1 Project & data** | Points at the raw tiles, guesses how filenames encode row/column/section (Thermo Maps, Zeiss Atlas, sequential numbers, custom pattern), reads pixel size and stage positions from the TIFF metadata, previews the layout, writes FEABAS's `stitch_coord` files. |
 | **2 Preprocessing** | Optional histogram matching to a template and CAREamics Noise2Void / N2V2 / StructN2V denoising trained on tiles you pick. |
 | **3 Stitching** | Tile matching, montage optimisation and rendering with the settings that matter up front; test runs on a few sections and tiles in a sandbox; a full-resolution viewer for seams; every other setting in a documented tree editor. |
-| **4 Masks** | Thumbnails, tissue-vs-background masks, fold detection with the bundled U-Net (or one you train here), import of masks made elsewhere, composition into FEABAS's material mask, split lines for broken sections, hand editing in Fiji. |
-| **5 Alignment** | Coarse (thumbnail) and fine (finite-element) alignment, sandbox test runs, red/green and checkerboard overlays, and **structure-guided alignment**: a YOLO-seg model finds nuclei / mitochondria / vessels and the alignment is driven from them. |
+| **4 Masks** | Thumbnails, tissue-vs-background masks (tile footprint, a black/white frame peeled from the outside in, fixed margins, or texture/intensity — each method shows only its own settings), fold detection with the bundled U-Net (or one you train here), import of masks made elsewhere, composition into FEABAS's material mask, split lines for broken sections, hand editing in Fiji. |
+| **5 Alignment** | Coarse (thumbnail) and fine (finite-element) alignment with its own compare distance, sandbox test runs, red/green and checkerboard overlays, and — optional, switched on in Setup — **structure-guided alignment**: a YOLO-seg model finds nuclei / mitochondria / vessels and the alignment is driven from them. |
 | **6 Export & view** | Full-resolution PNG tiles or a Neuroglancer precomputed volume, mipmaps, VASTlite export (`.vsvi`, hard-linked, instant), OME-Zarr, open in VASTlite / Fiji / Neuroglancer. |
 
 Across all of them: pipeline state is read from the files on disk (done / partly done / stale / errors /
@@ -73,7 +73,7 @@ afterwards, so this only concerns the GUI.
 | You already have | Do this |
 |---|---|
 | **nothing** | install [Miniforge](https://conda-forge.org/download/) (defaults are fine), then the next row |
-| **Miniforge / Miniconda / Anaconda** | Windows: double-click `tools\install.bat` · Linux/macOS: `bash tools/install.sh` |
+| **micromamba / Miniforge / Miniconda / Anaconda** | Windows: double-click `tools\install.bat` · Linux/macOS: `bash tools/install.sh` — finds the package manager, creates the `feabas-workbench` env, installs the app and hard-wires `start_gui.bat` / `start_gui.sh` to it |
 | **plain Python ≥ 3.10**, no conda | `python -m venv .venv` then `.venv\Scripts\python -m pip install -e .` (Linux: `.venv/bin/python`) |
 
 Start with **`start_gui.bat`** (Windows) or **`./start_gui.sh`** (Linux/macOS); both find the `.venv` or
@@ -108,7 +108,7 @@ lists what will be deleted, then re-run. Make a snapshot first if the previous s
 
 ### Structure-guided alignment
 
-Off by default. With a YOLO-seg model (bring `.pt` weights, or train on a YOLO-format dataset from the
+Off by default (Setup → Interface shows the tab). With a YOLO-seg model (bring `.pt` weights, or train on a YOLO-format dataset from the
 Alignment window): *Detect structures* on thumbnails, then *Match structures* – centroids of the same
 structures in neighbouring sections become coarse matches, either added to FEABAS's feature matches with a
 weight or used instead of them where they succeed. For fine alignment, *restrict* turns tissue outside the
@@ -152,7 +152,9 @@ Code map: `feabas_workbench/core` (Qt-free: project, tiles, configs, steps, jobs
 environments), `feabas_workbench/workers` (subprocess workers: histogram matching, N2V, fold U-Net, YOLO,
 structure matching, match re-weighting, export), `feabas_workbench/ui` (PySide6 pages and widgets),
 `feabas_workbench/vendor/feabas_3_0_5` (FEABAS driver scripts, tools and default configs),
-`feabas_workbench/resources` (the bundled fold U-Net weights).
+`feabas_workbench/resources` (the bundled fold U-Net weights: an fp16 export with every model weight, so it
+detects and can be fine-tuned; only the original training run's optimizer state is not included, which
+only matters for resuming that run — the full 280 MB checkpoint is not bundled).
 
 ## Credits and license
 

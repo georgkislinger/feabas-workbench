@@ -151,6 +151,13 @@ class MainWindow(QMainWindow):
     def show_page(self, index: int) -> None:
         self.nav.setCurrentRow(max(0, min(index, len(self._pages) - 1)))
 
+    def apply_interface_settings(self) -> None:
+        """Global interface switches (Setup page) that pages read, e.g. optional tabs."""
+        for page in self._pages:
+            fn = getattr(page, "apply_interface_settings", None)
+            if fn:
+                fn()
+
     def _nav_changed(self, row: int) -> None:
         self.stack.setCurrentIndex(row)
         try:

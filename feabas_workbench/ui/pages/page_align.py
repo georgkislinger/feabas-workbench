@@ -10,12 +10,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
                                QSplitter, QTabWidget, QVBoxLayout, QWidget, QPlainTextEdit)
 
-from ...core.steps import PipelineScan
+from ...core.steps import PipelineScan, write_fine_match_list, read_fine_match_list
 from ...core.testruns import create_align_test, list_test_runs, delete_test_run, TestRun
 from ...core.maskstore import MaskStore
 from ...core.images import imread, to_uint8, compose_two_color, downsample
 from ...core.configs import suggest_working_mip
-from ..widgets import PathPicker, ImageView, SectionPicker, ConfigEditor, card, hint, form_row, spin, dspin, combo
+from ..widgets import PathPicker, ImageView, SectionPicker, ConfigEditor, card, hint, form_row, spin, dspin, combo, labelled
 from ..widgets.steps_panel import StepsPanel
 from .base import Page
 from .. import theme
@@ -31,8 +31,8 @@ def _read_match_h5(path: Path):
 
 class AlignPage(Page):
     title = "Alignment"
-    subtitle = ("Coarse alignment on thumbnails, then fine alignment with finite-element meshes. Optionally let a "
-                "structure detector (YOLO-seg: nuclei, mitochondria, vessels…) decide where the alignment should be driven from.")
+    subtitle = ("Coarse alignment on thumbnails first (tab 1), then fine alignment with finite-element meshes (tab 2). "
+                "The optional structure-guided tab (YOLO-seg: nuclei, mitochondria, vessels…) can be switched on in Setup.")
     key = "align"
 
     def build(self) -> None:
@@ -40,15 +40,28 @@ class AlignPage(Page):
         self.tabs = QTabWidget()
         self.body.addWidget(self.tabs)
         self._build_coarse()
-        self._build_structure()
         self._build_fine()
         self._build_test()
         self._build_qc()
+        self._build_structure()
         self.editor_t = ConfigEditor(); self.editor_t.changed.connect(lambda: self._editor_changed("thumbnail"))
         self.editor_a = ConfigEditor(); self.editor_a.changed.connect(lambda: self._editor_changed("alignment"))
         self.tabs.addTab(self.editor_t, "Thumbnail settings")
         self.tabs.addTab(self.editor_a, "Alignment settings")
         self.ctx.jobs.job_finished.connect(self._job_finished)
+        self.apply_interface_settings()
+
+    def apply_interface_settings(self) -> None:
+        """The structure-guided tab is experimental: hidden unless enabled on the Setup page."""
+        i = self.tabs.indexOf(self._structure_tab)
+        show = bool(getattr(self.ctx.settings, "show_structure_tab", False))
+        if i >= 0:
+            self.tabs.setTabVisible(i, show)
+        if not show and self.tabs.currentWidget() is self._structure_tab:
+            self.tabs.setCurrentIndex(0)
+
+    def _qc_index(self) -> int:
+        return self.tabs.indexOf(self._qc_tab)
 
     # ---------------------------------------------------------------- coarse
     def _build_coarse(self) -> None:
@@ -57,15 +70,20 @@ class AlignPage(Page):
         r = QHBoxLayout()
         self.c_dist = spin(1, 10, 2); self.c_mode = combo([("feature matching (general)", "feature"), ("template/block matching (block-face style)", "template")], "feature")
         self.c_feat = spin(0, 100000, 5000, 500); self.c_workers = spin(1, 256, 15)
-        r.addWidget(QLabel("compare distance")); r.addWidget(self.c_dist)
+        r.addWidget(labelled("compare distance", self.c_dist,
+                             "How many neighbours on either side each section is matched to. 2 makes the stack robust "
+                             "to one bad section; 1 is faster. The fine alignment can use a shorter distance (tab 2)."))
+        self.c_mode.setToolTip("feature: SIFT-like keypoints, for most data. template: block matching, for block-face "
+                               "style data where consecutive sections look almost identical.")
         r.addWidget(QLabel("match mode")); r.addWidget(self.c_mode, 1)
-        r.addWidget(QLabel("max keypoints")); r.addWidget(self.c_feat)
-        r.addWidget(QLabel("workers")); r.addWidget(self.c_workers)
+        r.addWidget(labelled("max keypoints", self.c_feat, "Keypoints detected per thumbnail; more is slower and rarely better."))
+        r.addWidget(labelled("workers", self.c_workers, "Parallel processes for thumbnail matching."))
         b = QPushButton("Apply"); b.setObjectName("Primary"); r.addWidget(b)
+        b.setToolTip("Save these settings to thumbnail_configs.yaml.")
         lay.addLayout(r)
         lay.addWidget(hint("compare distance 2 matches each section to its two neighbours on either side, which makes the "
                            "stack robust to one bad section. If thumbnail matching fails for a pair (see log warnings), you can "
-                           "add manual BigWarp matches in Fiji or use structure-guided matching on the next tab."))
+                           "add manual BigWarp matches in Fiji or use structure-guided matching (optional tab, see Setup)."))
         b.clicked.connect(self._apply_coarse)
         tl.addWidget(f)
         f, lay = card("Steps")
@@ -74,7 +92,7 @@ class AlignPage(Page):
         lay.addWidget(self.c_steps)
         tl.addWidget(f)
         tl.addStretch(1)
-        self.tabs.addTab(t, "Coarse alignment")
+        self.tabs.addTab(t, "1. Coarse alignment")
 
     # ---------------------------------------------------------------- structure-guided
     def _build_structure(self) -> None:
@@ -180,7 +198,8 @@ class AlignPage(Page):
         self.s_show.currentIndexChanged.connect(self._show_structure)
         fb.clicked.connect(self.s_view.fit)
         tl.addWidget(f)
-        self.tabs.addTab(t, "Structure-guided")
+        self._structure_tab = t
+        self.tabs.addTab(t, "Structure-guided (optional)")
 
     # ---------------------------------------------------------------- fine
     def _build_fine(self) -> None:
@@ -189,23 +208,44 @@ class AlignPage(Page):
         r = QHBoxLayout()
         self.f_mip = spin(0, 10, 2); self.f_mesh = spin(50, 20000, 600, 50); self.f_conf = dspin(0, 1, 0.35, 0.05, 2)
         self.f_workers = spin(1, 256, 15); self.f_optw = spin(1, 256, 5)
-        r.addWidget(QLabel("working mip")); r.addWidget(self.f_mip); r.addWidget(QLabel("mesh size (mip0 px)")); r.addWidget(self.f_mesh)
-        r.addWidget(QLabel("match confidence")); r.addWidget(self.f_conf)
-        r.addWidget(QLabel("workers: matching")); r.addWidget(self.f_workers); r.addWidget(QLabel("optimization")); r.addWidget(self.f_optw)
+        self.f_dist = combo([("same as coarse alignment", 0), ("1: immediate neighbours only", 1), ("2", 2), ("3", 3), ("4", 4)], 0)
+        r.addWidget(labelled("compare distance", self.f_dist,
+                             "Which section pairs the fine matching works on. By default FEABAS reuses every pair the "
+                             "coarse alignment matched (its compare distance). Every pair costs a full block-matching "
+                             "pass at the working mip, so for a robust coarse stack a distance of 1 halves the fine "
+                             "matching time. Written to align/match_name.txt, FEABAS's own mechanism."))
+        r.addWidget(labelled("working mip", self.f_mip,
+                             "Mip level of the stitched sections the fine matching reads. The hint below suggests one "
+                             "from the pixel size and section thickness."))
+        r.addWidget(labelled("mesh size (mip0 px)", self.f_mesh,
+                             "Edge length of the finite-element triangles in full-resolution pixels. Finer meshes follow "
+                             "local distortion but may fit real z-changes as if they were deformation."))
+        r.addWidget(labelled("match confidence", self.f_conf, "Block matches below this normalised cross-correlation "
+                                                              "confidence are discarded."))
+        r.addWidget(labelled("workers: matching", self.f_workers, "Parallel processes for fine matching."))
+        r.addWidget(labelled("optimization", self.f_optw, "Parallel processes for the stack optimisation."))
         lay.addLayout(r)
         r = QHBoxLayout()
         self.f_chunk = spin(0, 4, 0); self.f_chunksize = spin(2, 1000, 16); self.f_window = spin(4, 2000, 64); self.f_buffer = spin(1, 500, 16)
-        r.addWidget(QLabel("chunked depth (0 = sliding window)")); r.addWidget(self.f_chunk); r.addWidget(QLabel("chunk size")); r.addWidget(self.f_chunksize)
-        r.addWidget(QLabel("window")); r.addWidget(self.f_window); r.addWidget(QLabel("buffer")); r.addWidget(self.f_buffer)
+        r.addWidget(labelled("chunked depth (0 = sliding window)", self.f_chunk,
+                             "0 optimises the stack with a sliding window; >0 solves it in chunks (hierarchically), "
+                             "which scales to very long stacks."))
+        r.addWidget(labelled("chunk size", self.f_chunksize, "Sections per chunk (chunked mode)."))
+        r.addWidget(labelled("window", self.f_window, "Sections per sliding window."))
+        r.addWidget(labelled("buffer", self.f_buffer, "Sections of overlap between consecutive windows."))
         b = QPushButton("Apply"); b.setObjectName("Primary"); r.addWidget(b); r.addStretch(1)
+        b.setToolTip("Save these settings to alignment_configs.yaml (and the compare distance to align/match_name.txt).")
         lay.addLayout(r)
         self.f_hint = QLabel(""); self.f_hint.setObjectName("Hint"); self.f_hint.setWordWrap(True)
         lay.addWidget(self.f_hint)
+        self.f_dist_info = QLabel(""); self.f_dist_info.setObjectName("Hint"); self.f_dist_info.setWordWrap(True)
+        lay.addWidget(self.f_dist_info)
         b.clicked.connect(self._apply_fine)
         tl.addWidget(f)
         f, lay = card("Steps")
         self.f_steps = StepsPanel(self.ctx, ["align.meshing", "align.matching", "align.optimization"], compact=True)
         self.f_steps.inspect_requested.connect(self._inspect_fine)
+        self.f_steps.before_run = lambda _steps: self._sync_fine_match_list()
         lay.addWidget(self.f_steps)
         r = QHBoxLayout()
         b = QPushButton("Make match-coverage figures (FEABAS tool)")
@@ -216,7 +256,7 @@ class AlignPage(Page):
                            "section, green = to the next; areas without yellow have no matches and will only follow the mesh."))
         tl.addWidget(f)
         tl.addStretch(1)
-        self.tabs.addTab(t, "Fine alignment")
+        self.tabs.addTab(t, "2. Fine alignment")
 
     # ---------------------------------------------------------------- test
     def _build_test(self) -> None:
@@ -246,7 +286,7 @@ class AlignPage(Page):
         lay.addWidget(self.t_steps)
         tl.addWidget(f)
         tl.addStretch(1)
-        self.tabs.addTab(t, "Test on subset")
+        self.tabs.addTab(t, "3. Test on subset")
         self.t_list.currentIndexChanged.connect(self._test_changed)
         b2.clicked.connect(self._delete_test)
         b3.clicked.connect(self._edit_test_settings)
@@ -272,7 +312,7 @@ class AlignPage(Page):
         tl.addWidget(hint("Red/green overlay: grey means the two sections agree, coloured fringes are residual misalignment. "
                           "Some colour is expected from real biological change between sections; systematic shifts or "
                           "distortions in one region point at missing matches (check the coverage figure) or a mask problem."))
-        self.tabs.addTab(t, "Quality check")
+        self.tabs.addTab(t, "4. Quality check")
         self._qc_tab = t
         # the source list must pick up test runs created while the page is open
         self.tabs.currentChanged.connect(
@@ -312,9 +352,11 @@ class AlignPage(Page):
     def on_state_changed(self) -> None:
         scan = self.ctx.scan()
         self.c_steps.refresh(scan); self.f_steps.refresh(scan)
+        if self.project:
+            self._update_fine_dist_info()
         self._refresh_test_scan()
         self._refresh_struct_sources()
-        if self.tabs.currentIndex() == 4:
+        if self.tabs.currentWidget() is self._qc_tab:
             self._qc_sources()
 
     def on_running_changed(self, running: bool) -> None:
@@ -337,6 +379,9 @@ class AlignPage(Page):
         self.f_chunksize.setValue(int(a("optimization.chunk_settings.default_chunk_size", 16)))
         self.f_window.setValue(int(a("optimization.slide_window.window_size", 64)))
         self.f_buffer.setValue(int(a("optimization.slide_window.buffer_size", 16)))
+        fd = int(self.project.state.alignment.get("fine_compare_distance", 0) or 0)
+        self.f_dist.setCurrentIndex(max(0, self.f_dist.findData(fd)))
+        self._update_fine_dist_info()
         v = self.project.state.volume
         wm = suggest_working_mip(v.pixel_size_nm, v.section_thickness_nm)
         self.f_hint.setText(f"Suggested working mip for {v.pixel_size_nm:g} nm pixels and {v.section_thickness_nm:g} nm sections: "
@@ -364,7 +409,43 @@ class AlignPage(Page):
         cs.set("alignment", "optimization.slide_window.window_size", self.f_window.value())
         cs.set("alignment", "optimization.slide_window.buffer_size", self.f_buffer.value())
         cs.save("alignment"); self.editor_a.rebuild()
+        self.project.state.alignment["fine_compare_distance"] = int(self.f_dist.currentData() or 0)
+        self.project.save()
+        self._sync_fine_match_list()
         self.info("fine alignment settings saved"); self.ctx.state_changed.emit()
+
+    def _sync_fine_match_list(self) -> None:
+        """
+        Keep align/match_name.txt in step with the chosen fine compare distance. FEABAS reads that
+        file, if present, instead of using every thumbnail match; it is rewritten right before the
+        fine steps run, so thumbnail matches made after 'Apply' are picked up too.
+        """
+        if not self.project:
+            return
+        fd = int(self.project.state.alignment.get("fine_compare_distance", 0) or 0)
+        delim = self.ctx.configs.get("thumbnail", "alignment.match_name_delimiter", "__to__") if self.ctx.configs else "__to__"
+        before = read_fine_match_list(self.project.root)
+        pairs = write_fine_match_list(self.project.root, self.project.section_names(), fd or None, delim)
+        if pairs is not None and before != pairs:
+            self.info(f"fine alignment: {len(pairs)} section pairs within distance {fd} listed in align/match_name.txt")
+        elif pairs is None and before is not None:
+            self.info("fine alignment: align/match_name.txt removed, every coarse pair is used")
+        self._update_fine_dist_info()
+
+    def _update_fine_dist_info(self) -> None:
+        if not self.project:
+            self.f_dist_info.setText("")
+            return
+        n_all = len(list((self.project.root / "thumbnail_align" / "matches").glob("*.h5")))
+        listed = read_fine_match_list(self.project.root)
+        fd = int(self.f_dist.currentData() or 0)
+        if n_all == 0:
+            self.f_dist_info.setText("Fine matching runs on the pairs the coarse alignment produces; none exist yet.")
+        elif listed is None:
+            self.f_dist_info.setText(f"Fine matching will run on all {n_all} coarse pairs."
+                                     + (f" Press Apply to restrict it to distance {fd}." if fd else ""))
+        else:
+            self.f_dist_info.setText(f"Fine matching will run on {len(listed)} of the {n_all} coarse pairs (align/match_name.txt).")
 
     def _editor_changed(self, kind: str) -> None:
         if self.ctx.configs:
@@ -739,20 +820,20 @@ class AlignPage(Page):
             self.error(f"cannot show: {e}", dialog=False)
 
     def _inspect_coarse(self, step) -> None:
-        self.tabs.setCurrentIndex(4)
+        self.tabs.setCurrentIndex(self._qc_index())
         self._qc_sources()
-        if step.key == "thumbnail.matching":
-            self.tabs.setCurrentIndex(1)
+        if step.key == "thumbnail.matching" and self.tabs.isTabVisible(self.tabs.indexOf(self._structure_tab)):
+            self.tabs.setCurrentWidget(self._structure_tab)
             self.s_show.setCurrentIndex(1)
             self._show_structure()
 
     def _inspect_fine(self, step) -> None:
-        self.tabs.setCurrentIndex(4)
+        self.tabs.setCurrentIndex(self._qc_index())
         self.q_what.setCurrentIndex(self.q_what.findData("cover") if step.key == "align.matching" else 1)
         self._qc_sources()
 
     def _inspect_test(self, step) -> None:
-        self.tabs.setCurrentIndex(4)
+        self.tabs.setCurrentIndex(self._qc_index())
         self._qc_sources()
         tr = self._current_test()
         if tr:
@@ -783,4 +864,4 @@ class AlignPage(Page):
                 ok = sum(1 for v in d.values() if v.get("n_pairs"))
                 self.info(f"structure matching: {ok}/{len(d)} pairs matched; details in {rep}")
         elif n == "match coverage figures":
-            self.tabs.setCurrentIndex(4); self.q_what.setCurrentIndex(self.q_what.findData("cover")); self._qc_sources()
+            self.tabs.setCurrentIndex(self._qc_index()); self.q_what.setCurrentIndex(self.q_what.findData("cover")); self._qc_sources()

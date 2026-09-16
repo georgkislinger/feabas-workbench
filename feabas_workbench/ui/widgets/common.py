@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFrame, QHBoxLayout, QLabel, QPushButton, QSpinBox,
-                               QVBoxLayout, QWidget, QSizePolicy)
+                               QToolButton, QVBoxLayout, QWidget, QSizePolicy)
 
 
 def hline() -> QFrame:
@@ -91,6 +91,79 @@ def combo(items: list[tuple[str, object]] | list[str], current=None) -> QComboBo
         if idx >= 0:
             c.setCurrentIndex(idx)
     return c
+
+
+def labelled(label: str, widget: QWidget, tip: str = "") -> QWidget:
+    """A label and its widget as one unit, so a row can show or hide them together."""
+    row = QWidget()
+    lay = QHBoxLayout(row)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(6)
+    lab = QLabel(label)
+    lay.addWidget(lab)
+    lay.addWidget(widget)
+    if tip:
+        lab.setToolTip(tip)
+        widget.setToolTip(tip)
+    return row
+
+
+def row_widget(*items: QWidget, stretch: bool = True) -> QWidget:
+    """Widgets side by side in a container, so the whole row can be shown/hidden per method."""
+    w = QWidget()
+    lay = QHBoxLayout(w)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(8)
+    for it in items:
+        lay.addWidget(it)
+    if stretch:
+        lay.addStretch(1)
+    return w
+
+
+class Collapsible(QWidget):
+    """
+    A header button that shows or hides a block of settings ("Advanced settings ▸").
+
+    Most people keep the defaults, so the rarely touched settings of a card live in one of
+    these: still one click away, but not in the way.
+    """
+
+    def __init__(self, title: str = "Advanced settings", expanded: bool = False, parent=None):
+        super().__init__(parent)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+        self.button = QToolButton()
+        self.button.setObjectName("Collapser")
+        self.button.setText(title)
+        self.button.setCheckable(True)
+        self.button.setChecked(expanded)
+        self.button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.button.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
+        self.button.setAutoRaise(True)
+        self.button.setCursor(Qt.PointingHandCursor)
+        lay.addWidget(self.button, 0, Qt.AlignLeft)
+        self.content = QWidget()
+        self.layout_ = QVBoxLayout(self.content)
+        self.layout_.setContentsMargins(12, 0, 0, 0)
+        self.layout_.setSpacing(6)
+        self.content.setVisible(expanded)
+        lay.addWidget(self.content)
+        self.button.toggled.connect(self._toggle)
+
+    def _toggle(self, on: bool) -> None:
+        self.content.setVisible(on)
+        self.button.setArrowType(Qt.DownArrow if on else Qt.RightArrow)
+
+    def addWidget(self, w: QWidget) -> None:      # noqa: N802 - mirrors QLayout
+        self.layout_.addWidget(w)
+
+    def addLayout(self, lay) -> None:             # noqa: N802
+        self.layout_.addLayout(lay)
+
+    def set_expanded(self, on: bool) -> None:
+        self.button.setChecked(on)
 
 
 def busy_button(text: str, primary: bool = False) -> QPushButton:

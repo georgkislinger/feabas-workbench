@@ -124,6 +124,7 @@ class ProjectState:
     envs: dict = field(default_factory=lambda: {"feabas_python": "", "dl_python": ""})
     masks: dict = field(default_factory=dict)
     structure: dict = field(default_factory=dict)
+    alignment: dict = field(default_factory=dict)     # workbench-side alignment choices (fine compare distance ...)
     export: dict = field(default_factory=dict)
     notes: str = ""
     feabas_version: str = "3.0.5"
@@ -247,6 +248,7 @@ class Project:
         st.envs = {**{"feabas_python": "", "dl_python": ""}, **(raw.get("envs") or {})}
         st.masks = raw.get("masks") or {}
         st.structure = raw.get("structure") or {}
+        st.alignment = raw.get("alignment") or {}
         st.export = raw.get("export") or {}
         st.notes = raw.get("notes", "")
         st.feabas_version = raw.get("feabas_version", "3.0.5")
@@ -268,6 +270,7 @@ class Project:
             "envs": self.state.envs,
             "masks": self.state.masks,
             "structure": self.state.structure,
+            "alignment": self.state.alignment,
             "export": self.state.export,
             "notes": self.state.notes,
             "feabas_version": self.state.feabas_version,

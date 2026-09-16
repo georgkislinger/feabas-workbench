@@ -48,6 +48,8 @@ QPushButton#Primary:hover {{ background: #2563EB; }}
 QPushButton#Danger {{ background: #7F1D1D; border-color: #991B1B; }}
 QPushButton#Danger:hover {{ background: #991B1B; }}
 QPushButton#Flat {{ background: transparent; border: none; color: {ACCENT2}; padding: 2px 6px; }}
+QToolButton#Collapser {{ background: transparent; border: none; color: {ACCENT2}; padding: 2px 4px; font-weight: 600; }}
+QToolButton#Collapser:hover {{ text-decoration: underline; }}
 QPushButton#Flat:hover {{ text-decoration: underline; }}
 QListWidget#Nav {{ background: {PANEL}; border: none; font-size: 14px; outline: 0; }}
 QListWidget#Nav::item {{ padding: 10px 12px; border-left: 3px solid transparent; }}

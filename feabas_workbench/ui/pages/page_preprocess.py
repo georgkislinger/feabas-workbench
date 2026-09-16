@@ -14,7 +14,7 @@ from ...core import tiles as T
 from ...core import histmatch as H
 from ...core.images import imread, downsample, to_uint8
 from ...core.testruns import retarget_stitch_coords, parse_stitch_coord
-from ..widgets import PathPicker, TileGridWidget, ImageView, card, hint, form_row, spin, dspin, combo
+from ..widgets import PathPicker, TileGridWidget, ImageView, card, hint, form_row, spin, dspin, combo, labelled, row_widget, Collapsible
 from .base import Page
 
 
@@ -99,37 +99,54 @@ class PreprocessPage(Page):
         split.addWidget(right)
         split.setSizes([600, 300])
         lay.addWidget(split)
+        # what most people touch: method, run name, train; model, preview, denoise all
         r = QHBoxLayout()
         self.dn_method = combo([("N2V", "n2v"), ("N2V2", "n2v2"), ("StructN2V (line noise)", "structn2v")], "n2v")
+        self.dn_method.setToolTip("N2V: the classic blind-spot denoiser. N2V2: improved variant without checkerboard "
+                                  "artefacts (recommended). StructN2V: also removes line-structured scan noise along "
+                                  "one axis.")
         self.dn_axes = combo([("horizontal", "horizontal"), ("vertical", "vertical"), ("cross", "cross")], "horizontal")
         self.dn_span = spin(3, 15, 5)
-        r.addWidget(QLabel("Method")); r.addWidget(self.dn_method)
-        r.addWidget(QLabel("Struct axes")); r.addWidget(self.dn_axes); r.addWidget(QLabel("span")); r.addWidget(self.dn_span)
-        r.addStretch(1)
-        lay.addLayout(r)
-        r = QHBoxLayout()
-        self.dn_patch = spin(32, 1024, 128, 32); self.dn_batch = spin(1, 128, 12); self.dn_epochs = spin(1, 5000, 100)
-        self.dn_steps = spin(1, 5000, 100); self.dn_roi = spin(3, 31, 11); self.dn_mask = dspin(0.01, 20, 0.2, 0.05, 2)
-        for lab, w in (("patch", self.dn_patch), ("batch", self.dn_batch), ("epochs", self.dn_epochs), ("steps/epoch", self.dn_steps),
-                       ("ROI", self.dn_roi), ("masked %", self.dn_mask)):
-            r.addWidget(QLabel(lab)); r.addWidget(w)
-        r.addStretch(1)
-        lay.addLayout(r)
-        r = QHBoxLayout()
+        self.dn_struct_row = row_widget(
+            labelled("struct axes", self.dn_axes, "StructN2V: direction of the line noise to remove."),
+            labelled("span px", self.dn_span, "StructN2V: length of the blind stripe along that axis."), stretch=False)
         self.dn_name = QLineEdit("n2v_run1"); self.dn_name.setMaximumWidth(200)
         self.dn_train = QPushButton("Train model"); self.dn_train.setObjectName("Primary")
-        self.dn_models = QComboBox(); self.dn_models.setMinimumWidth(240)
-        self.dn_preview = QPushButton("Preview on a tile")
-        self.dn_run = QPushButton("Denoise all tiles"); self.dn_run.setObjectName("Primary")
-        r.addWidget(QLabel("Run name")); r.addWidget(self.dn_name); r.addWidget(self.dn_train)
-        r.addSpacing(16); r.addWidget(QLabel("Model")); r.addWidget(self.dn_models); r.addWidget(self.dn_preview); r.addWidget(self.dn_run)
+        self.dn_train.setToolTip("Train on the training tiles listed above, in the deep-learning environment. "
+                                 "The result appears in the model list.")
+        r.addWidget(labelled("Method", self.dn_method)); r.addWidget(self.dn_struct_row)
+        r.addWidget(labelled("Run name", self.dn_name, "Folder name under models/n2v/.")); r.addWidget(self.dn_train)
         r.addStretch(1)
         lay.addLayout(r)
         r = QHBoxLayout()
-        self.dn_tile = spin(128, 4096, 512, 64); self.dn_overlap = spin(0, 512, 64, 16); self.dn_pbatch = spin(1, 64, 4)
-        r.addWidget(QLabel("prediction tile")); r.addWidget(self.dn_tile); r.addWidget(QLabel("overlap")); r.addWidget(self.dn_overlap)
-        r.addWidget(QLabel("batch")); r.addWidget(self.dn_pbatch); r.addStretch(1)
+        self.dn_models = QComboBox(); self.dn_models.setMinimumWidth(240)
+        self.dn_models.setToolTip("Trained models found under models/n2v/.")
+        self.dn_preview = QPushButton("Preview on a tile")
+        self.dn_preview.setToolTip("Denoise one tile (the selected one, or the first of the section) and show raw vs. denoised.")
+        self.dn_run = QPushButton("Denoise all tiles"); self.dn_run.setObjectName("Primary")
+        self.dn_run.setToolTip("Denoise every tile of the project into preprocessed/denoised (skips tiles already done).")
+        r.addWidget(labelled("Model", self.dn_models)); r.addWidget(self.dn_preview); r.addWidget(self.dn_run)
+        r.addStretch(1)
         lay.addLayout(r)
+        # everything else keeps its defaults for most data
+        self.dn_adv = Collapsible("Advanced settings")
+        self.dn_patch = spin(32, 1024, 128, 32); self.dn_batch = spin(1, 128, 12); self.dn_epochs = spin(1, 5000, 100)
+        self.dn_steps = spin(1, 5000, 100); self.dn_roi = spin(3, 31, 11); self.dn_mask = dspin(0.01, 20, 0.2, 0.05, 2)
+        self.dn_adv.addWidget(row_widget(
+            QLabel("training:"),
+            labelled("patch px", self.dn_patch, "Size of the random crops the network is trained on."),
+            labelled("batch", self.dn_batch, "Crops per training step; lower on small GPUs."),
+            labelled("epochs", self.dn_epochs, "Training epochs."),
+            labelled("steps/epoch", self.dn_steps, "Training steps per epoch."),
+            labelled("ROI px", self.dn_roi, "Neighbourhood from which a masked pixel's replacement is drawn."),
+            labelled("masked %", self.dn_mask, "Percentage of pixels masked per patch.")))
+        self.dn_tile = spin(128, 4096, 512, 64); self.dn_overlap = spin(0, 512, 64, 16); self.dn_pbatch = spin(1, 64, 4)
+        self.dn_adv.addWidget(row_widget(
+            QLabel("prediction:"),
+            labelled("tile px", self.dn_tile, "Tiles the image is cut into for prediction; lower on small GPUs."),
+            labelled("overlap px", self.dn_overlap, "Overlap between prediction tiles, so no seams show."),
+            labelled("batch", self.dn_pbatch, "Prediction tiles per batch.")))
+        lay.addWidget(self.dn_adv)
         self.dn_status = QLabel("")
         self.dn_status.setObjectName("Hint")
         lay.addWidget(self.dn_status)
@@ -248,8 +265,7 @@ class PreprocessPage(Page):
         self._save_dn()
 
     def _dn_method_changed(self) -> None:
-        st = self.dn_method.currentData() == "structn2v"
-        self.dn_axes.setEnabled(st); self.dn_span.setEnabled(st)
+        self.dn_struct_row.setVisible(self.dn_method.currentData() == "structn2v")
 
     def _dn_settings(self) -> dict:
         return {

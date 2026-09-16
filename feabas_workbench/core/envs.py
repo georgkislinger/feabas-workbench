@@ -150,6 +150,7 @@ class Settings:
     torch_index: str = "https://download.pytorch.org/whl/cu126"
     last_project: str = ""
     theme: str = "dark"
+    show_structure_tab: bool = False   # the experimental structure-guided alignment tab (YOLO-seg)
 
     @classmethod
     def load(cls) -> "Settings":

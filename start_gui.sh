@@ -8,6 +8,8 @@
 #     ./start_gui.sh --envs                 list every environment that would work
 #
 # Search order:
+#     0  start_gui.local.sh next to this script: the interpreter tools/install.sh installed
+#        into (delete that file to go back to pure discovery)
 #     1  $FW_PYTHON
 #     2  the environment already active in this shell (conda or venv)
 #     3  a venv next to this script (.venv, .venv-*, venv, env, ../.venv*)
@@ -107,6 +109,14 @@ ask_managers() {
   if command -v python >/dev/null 2>&1; then check "$(command -v python)" force; fi
   if command -v python3 >/dev/null 2>&1; then check "$(command -v python3)" force; fi
 }
+
+# --- 0. the installation tools/install.sh recorded ---------------------------
+# An FW_PYTHON set in the shell still wins; a recorded interpreter that no longer
+# exists is skipped by check and the search below takes over.
+if [ -z "${FW_PYTHON:-}" ] && [ -f "./start_gui.local.sh" ]; then
+  # shellcheck disable=SC1091
+  . "./start_gui.local.sh"
+fi
 
 # --- 1. explicit override ---------------------------------------------------
 if [ -n "${FW_PYTHON:-}" ]; then check "$FW_PYTHON" force; fi

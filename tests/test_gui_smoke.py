@@ -152,3 +152,72 @@ def test_thread_runner_calls_back_on_the_gui_thread(app):
     assert seen.get("progress_main") is True and seen.get("done_main") is True
     assert seen.get("result") == "ok" and seen.get("error") == ""
     assert not runner.running
+
+
+def test_masks_page_shows_only_the_chosen_methods_settings(app, window, tmp_path):
+    """Each tissue method has its own row; the shared rows stay."""
+    window.open_project(tmp_path / "proj_masks")
+    _pump(app)
+    page = next(p for p in window._pages if p.key == "masks")
+    window.show_page(window._pages.index(page)); page.tabs.setCurrentIndex(1); _pump(app)
+    vis = lambda w: not w.isHidden()
+    page.ti_method.setCurrentIndex(page.ti_method.findData("all")); _pump(app)
+    assert not vis(page.ti_border_row) and not vis(page.ti_manual_row) and not vis(page.ti_texture_row) and not vis(page.ti_cleanup_row)
+    page.ti_method.setCurrentIndex(page.ti_method.findData("border")); _pump(app)
+    assert vis(page.ti_border_row) and vis(page.ti_cleanup_row) and not vis(page.ti_manual_row)
+    assert vis(page.ti_border_black_w) and vis(page.ti_border_white_w) and not vis(page.ti_border_tol_w)
+    page.ti_border_mode.setCurrentIndex(page.ti_border_mode.findData("auto")); _pump(app)
+    assert vis(page.ti_border_tol_w) and not vis(page.ti_border_black_w)
+    page.ti_method.setCurrentIndex(page.ti_method.findData("manual")); _pump(app)
+    assert vis(page.ti_manual_row) and not vis(page.ti_cleanup_row)
+    page.ti_method.setCurrentIndex(page.ti_method.findData("intensity")); _pump(app)
+    assert vis(page.ti_texture_row) and vis(page.ti_invert) and not vis(page.ti_window_w)
+    page.ti_left.setValue(12); page.ti_bright.setChecked(True); page.ti_bright_min.setValue(240)
+    tp = page._tissue_params()
+    assert tp.method == "intensity" and tp.crop_left == 12 and tp.exclude_bright and tp.bright_min == 240
+    page.fold_method.setCurrentIndex(page.fold_method.findData("unet")); _pump(app)
+    assert vis(page.fold_unet_row) and vis(page.fold_adv) and not vis(page.fold_dark_w)
+    assert page.tabs.tabText(0).startswith("1.") and page.tabs.tabText(1).startswith("2.")
+    assert not window.errors
+
+
+def test_structure_tab_follows_the_setup_switch(app, window):
+    page = next(p for p in window._pages if p.key == "align")
+    i = page.tabs.indexOf(page._structure_tab)
+    assert i >= 0 and not page.tabs.isTabVisible(i)
+    assert page.tabs.tabText(0).startswith("1.") and page.tabs.tabText(1).startswith("2.")
+    setup = window._pages[0]
+    setup.show_struct.setChecked(True); _pump(app)
+    assert page.tabs.isTabVisible(i) and window.ctx.settings.show_structure_tab
+    setup.show_struct.setChecked(False); _pump(app)
+    assert not page.tabs.isTabVisible(i)
+    assert not window.errors
+
+
+def test_denoise_card_hides_advanced_settings(app, window):
+    page = next(p for p in window._pages if p.key == "preprocess")
+    assert page.dn_adv.content.isHidden() and page.dn_struct_row.isHidden()
+    page.dn_adv.set_expanded(True); _pump(app)
+    assert not page.dn_adv.content.isHidden()
+    page.dn_method.setCurrentIndex(page.dn_method.findData("structn2v")); _pump(app)
+    assert not page.dn_struct_row.isHidden()
+
+
+def test_log_panel_stays_put_without_autoscroll(app):
+    from feabas_workbench.ui.widgets.log_panel import LogPanel
+    panel = LogPanel()
+    panel.resize(400, 120); panel.show(); _pump(app)
+    for i in range(300):
+        panel.append("info", f"line {i}")
+    _pump(app)
+    sb = panel.view.verticalScrollBar()
+    assert sb.value() == sb.maximum()
+    panel.autoscroll.setChecked(False)
+    sb.setValue(10); _pump(app)
+    for i in range(300, 400):
+        panel.append("info", f"line {i}")
+    _pump(app)
+    assert sb.value() == 10
+    panel.autoscroll.setChecked(True)
+    panel.append("info", "last"); _pump(app)
+    assert sb.value() == sb.maximum()

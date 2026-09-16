@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
@@ -43,6 +44,9 @@ class StepsPanel(QWidget):
         self.run_all.clicked.connect(self._run_all)
         self.root_override: Path | None = None
         self.tag = ""
+        # called with the step(s) about to run, before their specs are built - a page can
+        # write inputs the step reads (e.g. the fine-alignment match list) at the last moment
+        self.before_run: Callable[[list[Step]], None] | None = None
 
     def refresh(self, scan: PipelineScan | None) -> None:
         busy = self.ctx.jobs.running
@@ -60,6 +64,8 @@ class StepsPanel(QWidget):
         if self.ctx.jobs.running:
             self.ctx.log("a job is already running", "warn")
             return
+        if self.before_run:
+            self.before_run([step])
         try:
             spec = self._spec(step, start, stop, stride)
         except RuntimeError as e:
@@ -75,6 +81,8 @@ class StepsPanel(QWidget):
     def _run_all(self) -> None:
         if self.ctx.jobs.running:
             return
+        if self.before_run:
+            self.before_run([c.step for c in self.cards.values() if not c.step.local])
         specs = []
         for k, card in self.cards.items():
             step = card.step

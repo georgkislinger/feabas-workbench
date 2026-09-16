@@ -14,7 +14,8 @@ from ...core.maskstore import MaskStore
 from ...core.images import colorize_labels, to_uint8
 from ...core.jobs import package_root
 from ...core.steps import STEPS_BY_KEY
-from ..widgets import PathPicker, ImageView, SectionPicker, ConfigEditor, card, hint, form_row, spin, dspin, combo
+from ..widgets import (PathPicker, ImageView, SectionPicker, ConfigEditor, card, hint, form_row, spin, dspin, combo,
+                       labelled, row_widget, Collapsible)
 from ..widgets.steps_panel import StepsPanel
 from ..threads import ThreadRunner
 from .base import Page
@@ -28,7 +29,7 @@ DEFAULT_FOLD_CKPT = package_root() / "feabas_workbench" / "resources" / "fold_un
 class MasksPage(Page):
     title = "Masks"
     subtitle = ("FEABAS needs to know where the section is (tissue vs. background) and where it is folded. Thumbnails "
-                "come first; the masks are built from them and from the fold U-Net, then written where FEABAS expects them.")
+                "come first (tab 1); the masks are built from them (tab 2) and written where FEABAS expects them.")
     key = "masks"
 
     def build(self) -> None:
@@ -42,9 +43,17 @@ class MasksPage(Page):
         f, lay = card("Thumbnail settings")
         r = QHBoxLayout()
         self.th_mip = spin(0, 10, 2); self.th_hp = QCheckBox("high-pass filter (SE images)"); self.th_workers = spin(1, 128, 10)
-        r.addWidget(QLabel("thumbnail mip level")); r.addWidget(self.th_mip); r.addWidget(self.th_hp)
-        r.addWidget(QLabel("workers")); r.addWidget(self.th_workers)
+        r.addWidget(labelled("thumbnail mip level", self.th_mip,
+                             "Downsampling level of the thumbnails (each level halves the size). Aim for 500-2000 px "
+                             "on the long side: the hint below computes it. Masks are made at this resolution."))
+        self.th_hp.setToolTip("Suppress low-frequency shading before downsampling. Helps feature matching on "
+                              "secondary-electron images; leave it off for backscatter images and when the "
+                              "thumbnails are only one or two mip levels below the rendered sections.")
+        r.addWidget(self.th_hp)
+        r.addWidget(labelled("workers", self.th_workers, "Parallel processes for mip-mapping and thumbnailing."))
         apply_b = QPushButton("Apply"); apply_b.setObjectName("Primary"); r.addWidget(apply_b); r.addStretch(1)
+        apply_b.setToolTip("Save these three settings to thumbnail_configs.yaml (and the mask mip level to the "
+                           "alignment config).")
         lay.addLayout(r)
         self.th_hint = QLabel(""); self.th_hint.setObjectName("Hint"); self.th_hint.setWordWrap(True)
         lay.addWidget(self.th_hint)
@@ -58,7 +67,7 @@ class MasksPage(Page):
                            "and FEABAS's default masks (everything imaged = tissue), which the next tab replaces."))
         tl.addWidget(f)
         tl.addStretch(1)
-        self.tabs.addTab(t, "Thumbnails")
+        self.tabs.addTab(t, "1. Thumbnails")
 
         # ---- tab: masks --------------------------------------------------------
         m = QWidget(); ml = QVBoxLayout(m); ml.setContentsMargins(6, 6, 6, 6)
@@ -71,14 +80,21 @@ class MasksPage(Page):
         r = QHBoxLayout()
         self.ov_tissue = QCheckBox("tissue"); self.ov_folds = QCheckBox("folds"); self.ov_prob = QCheckBox("fold probability")
         self.ov_mat = QCheckBox("material mask"); self.ov_struct = QCheckBox("structures")
-        self.ov_frame = QCheckBox("border frame preview")
+        self.ov_frame = QCheckBox("border margin preview")
+        self.ov_tissue.setToolTip("The tissue mask (masks/tissue): everything NOT tissue is tinted red.")
+        self.ov_folds.setToolTip("Detected folds (masks/folds) in yellow.")
+        self.ov_prob.setToolTip("The U-Net's fold probability map, orange = likely fold.")
+        self.ov_mat.setToolTip("The material mask FEABAS reads (thumbnail_align/material_masks): grey labels "
+                               "coloured - excluded, wrinkle, soft, split.")
+        self.ov_struct.setToolTip("Structures found by the YOLO-seg detector (Alignment page), green.")
         self.ov_frame.setToolTip("Shows the border margin from the tissue card as it will be written: cyan = soft, red = excluded.")
         self.ov_mat.setChecked(True)
         for w in (self.ov_tissue, self.ov_folds, self.ov_prob, self.ov_mat, self.ov_struct, self.ov_frame):
             r.addWidget(w); w.toggled.connect(self._show)
         r.addWidget(QLabel("opacity")); self.opacity = QSlider(Qt.Horizontal); self.opacity.setRange(10, 100); self.opacity.setValue(55); self.opacity.setMaximumWidth(120)
+        self.opacity.setToolTip("Overlay opacity.")
         r.addWidget(self.opacity); self.opacity.valueChanged.connect(self._show)
-        fit_b = QPushButton("fit"); fit_b.clicked.connect(lambda: self.view.fit()); r.addWidget(fit_b)
+        fit_b = QPushButton("fit"); fit_b.setToolTip("Zoom to fit the whole thumbnail."); fit_b.clicked.connect(lambda: self.view.fit()); r.addWidget(fit_b)
         rl.addLayout(r)
         self.view = ImageView(); self.view.setMinimumHeight(420)
         rl.addWidget(self.view, 1)
@@ -86,15 +102,27 @@ class MasksPage(Page):
         rl.addWidget(self.view_info)
         r = QHBoxLayout()
         self.split_btn = QPushButton("Split section: click 2 points"); self.split_btn.setCheckable(True)
+        self.split_btn.setToolTip("Paint a split line (label 200) through a broken section so the two pieces can move "
+                                  "independently: click the two end points of a line through the gap.")
         self.fiji_btn = QPushButton("Edit mask in Fiji"); self.reload_btn = QPushButton("Reload mask (mark hand-edited)")
+        self.fiji_btn.setToolTip("Open this section's material mask in Fiji. Paint 0 = tissue, 255 = outside, "
+                                 "50 = wrinkle, then save and press 'Reload mask'.")
+        self.reload_btn.setToolTip("Re-read the material mask from disk and mark it hand-edited, so 'Compose' "
+                                   "leaves it alone.")
         self.default_btn = QPushButton("Reset checked sections to FEABAS default")
+        self.default_btn.setToolTip("Back to FEABAS's own mask (everything imaged = tissue). Also deletes the tissue "
+                                    "and fold masks computed for the checked sections and clears the hand-edited flag.")
         self.rebuild_btn = QPushButton("Rebuild FEABAS masks…")
         self.rebuild_btn.setToolTip("Delete the material masks of the checked sections and let FEABAS write its own "
                                     "again from the tile bounding boxes (runs the thumbnail step). Use this if the "
                                     "workbench overwrote them before it kept a copy.")
         self.rebuild_btn.clicked.connect(self._rebuild_roi)
-        for b in (self.split_btn, self.fiji_btn, self.reload_btn, self.default_btn, self.rebuild_btn):
-            r.addWidget(b)
+        # two short rows instead of one long one, so the page fits a 1500 px window
+        r.addWidget(QLabel("hand editing:")); r.addWidget(self.split_btn); r.addWidget(self.fiji_btn); r.addWidget(self.reload_btn)
+        r.addStretch(1)
+        rl.addLayout(r)
+        r = QHBoxLayout()
+        r.addWidget(QLabel("start over:")); r.addWidget(self.default_btn); r.addWidget(self.rebuild_btn)
         r.addStretch(1)
         rl.addLayout(r)
         split.addWidget(right)
@@ -108,20 +136,89 @@ class MasksPage(Page):
         self.default_btn.clicked.connect(self._restore_default)
         self._split_pts: list[tuple[float, float]] = []
 
-        # tissue card
+        # tissue card: one method selector, and only the settings that method uses
         f, lay = card("Tissue vs. background")
         r = QHBoxLayout()
         self.ti_method = combo([("the stitched tile footprint is tissue (FEABAS default, recommended)", "all"),
+                                ("detect a uniform frame (black / white) from the outside in", "border"),
+                                ("fixed margins from the image edge (left / top / right / bottom)", "manual"),
                                 ("auto: texture split only if a clear background/tissue split exists", "auto"),
-                                ("local texture", "texture"), ("intensity threshold", "intensity")], "all")
-        self.ti_window = spin(5, 301, 31, 2); self.ti_min = spin(0, 10_000_000, 2000, 500); self.ti_holes = spin(0, 10_000_000, 5000, 500)
+                                ("local texture (resin vs. tissue)", "texture"),
+                                ("intensity threshold", "intensity")], "all")
+        self.ti_method.setToolTip("How the tissue outline is found. Everything outside it is excluded (255): not "
+                                  "meshed, not matched, not rendered.")
+        r.addWidget(QLabel("method")); r.addWidget(self.ti_method, 1)
+        lay.addLayout(r)
+        self.ti_method_hint = hint("")
+        lay.addWidget(self.ti_method_hint)
+
+        # -- border method
+        self.ti_border_mode = combo([("black or white frame", "both"), ("black frame only", "black"),
+                                     ("white frame only", "white"), ("any uniform grey (auto)", "auto")], "both")
+        self.ti_border_mode.setToolTip("What counts as frame colour. 'black or white' handles the usual case of black "
+                                       "padding around a white (saturated) rim. 'auto' takes any locally flat grey "
+                                       "value - a frame of any brightness - and needs no threshold.")
+        self.ti_border_black = spin(0, 255, 0); self.ti_border_white = spin(0, 255, 250); self.ti_border_tol = spin(0, 64, 4)
+        self.ti_border_width = spin(0, 200, 15)
+        self.ti_border_black_w = labelled("black: grey ≤", self.ti_border_black,
+                                          "A pixel belongs to the black frame at or below this grey level. 0 = only "
+                                          "pure black; raise it a little if the padding is not exactly 0.")
+        self.ti_border_white_w = labelled("white: grey ≥", self.ti_border_white,
+                                          "A pixel belongs to the white frame at or above this grey level. 250 leaves "
+                                          "room for a slightly blurred rim; 255 = only pure white.")
+        self.ti_border_tol_w = labelled("flatness tolerance", self.ti_border_tol,
+                                        "auto only: a pixel is 'flat' when the grey range of its 3x3 neighbourhood is "
+                                        "at most this. Real tissue is never flat over a large area.")
+        self.ti_border_width_w = labelled("ignore streaks thinner than px", self.ti_border_width,
+                                          "A fold of the frame colour that reaches the frame would be peeled off with "
+                                          "it. Streaks thinner than this stay tissue (and can be labelled as folds "
+                                          "below); slivers of tissue thinner than this are dropped.")
+        self.ti_border_row = row_widget(labelled("frame colour", self.ti_border_mode), self.ti_border_black_w,
+                                        self.ti_border_white_w, self.ti_border_tol_w, self.ti_border_width_w)
+        lay.addWidget(self.ti_border_row)
+
+        # -- manual method
+        self.ti_left = spin(0, 100_000, 0, 10); self.ti_top = spin(0, 100_000, 0, 10)
+        self.ti_right = spin(0, 100_000, 0, 10); self.ti_bottom = spin(0, 100_000, 0, 10)
+        crop_tip = ("Margin from the {} edge of the thumbnail, in thumbnail pixels (the µm equivalent is shown on "
+                    "the right). Everything inside the four margins - and inside the imaged footprint - is tissue. "
+                    "The dashed preview updates as you type; press Preview/Compute to write the mask.")
+        self.ti_manual_info = QLabel(""); self.ti_manual_info.setObjectName("Hint")
+        self.ti_manual_row = row_widget(labelled("left", self.ti_left, crop_tip.format("left")),
+                                        labelled("top", self.ti_top, crop_tip.format("top")),
+                                        labelled("right", self.ti_right, crop_tip.format("right")),
+                                        labelled("bottom", self.ti_bottom, crop_tip.format("bottom")),
+                                        QLabel("px"), self.ti_manual_info)
+        lay.addWidget(self.ti_manual_row)
+        for w in (self.ti_left, self.ti_top, self.ti_right, self.ti_bottom):
+            w.valueChanged.connect(self._manual_changed)
+
+        # -- texture / intensity methods
+        self.ti_window = spin(5, 301, 31, 2)
         self.ti_thr = QLineEdit(""); self.ti_thr.setPlaceholderText("auto"); self.ti_thr.setMaximumWidth(80)
         self.ti_invert = QCheckBox("dark tissue")
-        for lab, w in (("method", self.ti_method), ("window", self.ti_window), ("min component px", self.ti_min),
-                       ("fill holes px", self.ti_holes), ("threshold", self.ti_thr)):
-            r.addWidget(QLabel(lab)); r.addWidget(w)
-        r.addWidget(self.ti_invert); r.addStretch(1)
-        lay.addLayout(r)
+        self.ti_window_w = labelled("texture window px", self.ti_window,
+                                    "Size of the neighbourhood over which the local grey-level variation is measured. "
+                                    "Larger for coarse textures, smaller for fine ones.")
+        self.ti_thr_w = labelled("threshold", self.ti_thr,
+                                 "Manual threshold on the texture score (or on the grey level for the intensity "
+                                 "method). Leave empty for automatic (Otsu).")
+        self.ti_invert.setToolTip("Intensity method: tissue is darker than the background (inverted images).")
+        self.ti_texture_row = row_widget(self.ti_window_w, self.ti_thr_w, self.ti_invert)
+        lay.addWidget(self.ti_texture_row)
+
+        # -- clean-up shared by every method that classifies pixels
+        self.ti_min = spin(0, 10_000_000, 2000, 500); self.ti_holes = spin(0, 10_000_000, 5000, 500)
+        self.ti_min_w = labelled("drop tissue pieces smaller than px", self.ti_min,
+                                 "Connected pieces of tissue with fewer pixels than this are removed (debris, specks "
+                                 "of resin classified as tissue). A piece has to be at least this big to count.")
+        self.ti_holes_w = labelled("fill holes up to px", self.ti_holes,
+                                   "Background holes enclosed by tissue that are smaller than this become tissue "
+                                   "again (pale patches, vacuoles). Larger enclosed holes stay excluded.")
+        self.ti_cleanup_row = row_widget(self.ti_min_w, self.ti_holes_w)
+        lay.addWidget(self.ti_cleanup_row)
+
+        # -- border margin: applied to every method when the material mask is composed
         r = QHBoxLayout()
         self.ti_margin = spin(0, 500, 0)
         self.ti_margin_label = combo([("keep it, but never match there (soft, 100)", LABEL_SOFT),
@@ -129,7 +226,8 @@ class MasksPage(Page):
         self.ti_margin_info = QLabel(""); self.ti_margin_info.setObjectName("Hint")
         self.ti_margin.setToolTip("A ring of this width just inside the section outline, following its shape. "
                                   "The edge of a montage is where the tissue mask is least certain and where "
-                                  "matching is least reliable.")
+                                  "matching is least reliable. 0 = no margin. Applied when the material mask is "
+                                  "composed, so it shows up after 'Compose' (tick 'border margin preview' to see it).")
         self.ti_margin_label.setToolTip("soft (100) is meshed and rendered but its stiffness is below FEABAS's "
                                         "matching threshold, so no match point is placed there and you keep the "
                                         "image data. exclude (255) is not meshed and NOT RENDERED: that strip is "
@@ -141,31 +239,43 @@ class MasksPage(Page):
         self.ti_margin.valueChanged.connect(self._update_margin_info)
         self.ti_margin.valueChanged.connect(self._frame_changed)
         self.ti_margin_label.currentIndexChanged.connect(self._frame_changed)
+
+        # -- holes inside the section, black and/or white
         r = QHBoxLayout()
-        self.ti_dark = QCheckBox("also exclude black regions inside the section")
-        self.ti_dark_max = spin(0, 255, 0); self.ti_dark_min = spin(0, 1_000_000, 24, 8)
+        self.ti_dark = QCheckBox("also exclude black regions inside the section, grey ≤")
+        self.ti_dark_max = spin(0, 255, 0)
+        self.ti_bright = QCheckBox("white regions, grey ≥")
+        self.ti_bright_min = spin(0, 255, 255)
+        self.ti_dark_min = spin(0, 1_000_000, 24, 8)
         self.ti_dark.setToolTip("Off by default: a fold is black but it is still tissue, and excluding it removes it "
                                 "from the mesh and swallows its fold label. Turn this on only where the black areas "
-                                "carry no data at all.")
-        r.addWidget(self.ti_dark); r.addWidget(QLabel("grey ≤")); r.addWidget(self.ti_dark_max)
+                                "carry no data at all (holes, missing tiles).")
+        self.ti_dark_max.setToolTip("A pixel counts as black at or below this grey level.")
+        self.ti_bright.setToolTip("Also exclude saturated white regions inside the section: empty resin, burnt "
+                                  "spots, support film. Same caveat as for black regions.")
+        self.ti_bright_min.setToolTip("A pixel counts as white at or above this grey level.")
+        self.ti_dark_min.setToolTip("Only black/white regions of at least this many pixels are excluded; smaller "
+                                    "ones are normal tissue detail (single saturated pixels, small vesicles).")
+        r.addWidget(self.ti_dark); r.addWidget(self.ti_dark_max)
+        r.addWidget(self.ti_bright); r.addWidget(self.ti_bright_min)
         r.addWidget(QLabel("at least px")); r.addWidget(self.ti_dark_min); r.addStretch(1)
         lay.addLayout(r)
+
         r = QHBoxLayout()
         b1 = QPushButton("Preview on current section"); b2 = QPushButton("Compute for checked sections"); b2.setObjectName("Primary")
+        b1.setToolTip("Compute the tissue mask for the section in the viewer only and show it (red = not tissue).")
+        b2.setToolTip("Compute and save the tissue mask (masks/tissue) for every checked section.")
         r.addWidget(b1); r.addWidget(b2); r.addStretch(1)
         lay.addLayout(r)
-        lay.addWidget(hint("The border margin is a ring just inside the section outline, applied when the material mask "
-                           "is composed (so it shows up after 'Compose', not in the tissue preview). soft keeps the "
-                           "pixels and only stops FEABAS from matching there; exclude removes them from the mesh and "
-                           "from the rendered volume."))
-        lay.addWidget(hint("Default: the area covered by the stitched tiles is tissue, and only what lies outside it is "
-                           "excluded — the same mask FEABAS builds from the tile bounding boxes. Black areas inside stay "
-                           "tissue, even a fold that runs from one section edge to the other; mark those as folds below "
-                           "instead. 'exclude black regions' is for data that is genuinely missing. Use the texture methods "
-                           "only for sections with resin or support background; on high-pass filtered thumbnails they can "
-                           "split tissue by texture. Better masks from other tools can be imported below."))
+        lay.addWidget(hint("The tissue mask says where the section is; 'Compose' below turns it into the material mask "
+                           "FEABAS reads and adds the border margin and the folds. Black areas inside the section stay "
+                           "tissue with every method: mark those as folds below instead. Better masks from other tools "
+                           "can be imported further down."))
         b1.clicked.connect(lambda: self._tissue(preview=True))
         b2.clicked.connect(lambda: self._tissue(preview=False))
+        self.ti_method.currentIndexChanged.connect(self._ti_method_changed)
+        self.ti_border_mode.currentIndexChanged.connect(self._ti_method_changed)
+        self._ti_method_changed()
         ml.addWidget(f)
 
         # folds card
@@ -173,40 +283,55 @@ class MasksPage(Page):
         r = QHBoxLayout()
         self.fold_method = combo([("dark regions (threshold, no model)", "dark"),
                                   ("U-Net checkpoint (deep-learning environment)", "unet")], "dark")
+        self.fold_method.setToolTip("Folds and tears are usually black in the rendered montage, so a threshold finds "
+                                    "them in seconds without a model. The U-Net is for folds that are grey or "
+                                    "textured rather than black; it runs in the deep-learning environment.")
         self.fold_dark_max = spin(0, 255, 0)
+        self.fold_dark_w = labelled("grey ≤", self.fold_dark_max,
+                                    "A pixel counts as fold at or below this grey level. 0 = pure black; raise to "
+                                    "3-10 if fold edges are not exactly black after downsampling.")
         r.addWidget(QLabel("method")); r.addWidget(self.fold_method, 1)
-        r.addWidget(QLabel("grey ≤")); r.addWidget(self.fold_dark_max); r.addStretch(1)
+        r.addWidget(self.fold_dark_w); r.addStretch(1)
         lay.addLayout(r)
         self.fold_ckpt = PathPicker("file", "checkpoint (.ckpt / .pt)", "Checkpoints (*.ckpt *.pt *.pth)")
-        self.fold_ckpt_row = form_row("Checkpoint", self.fold_ckpt)
+        self.fold_ckpt_row = form_row("Checkpoint", self.fold_ckpt,
+                                      "The fold U-Net weights. The bundled checkpoint is used unless you pick one you "
+                                      "trained on the 'Train fold model' tab.")
         lay.addWidget(self.fold_ckpt_row)
-        self.fold_unet_row = QWidget()
-        r = QHBoxLayout(self.fold_unet_row); r.setContentsMargins(0, 0, 0, 0)
         self.fold_src = combo([("thumbnails", "thumb")], "thumb")
         self.fold_thr = dspin(0.05, 0.95, 0.5, 0.05, 2); self.fold_tile = spin(256, 4096, 1024, 256); self.fold_ov = spin(0, 1024, 128, 32)
-        for lab, w in (("run on", self.fold_src), ("threshold", self.fold_thr), ("tile", self.fold_tile), ("overlap", self.fold_ov)):
-            r.addWidget(QLabel(lab)); r.addWidget(w)
-        r.addStretch(1)
+        self.fold_unet_row = row_widget(
+            labelled("run on", self.fold_src, "The thumbnails, or a finer mip of the stitched sections (PNG-tile "
+                                              "render driver) when folds are only a few pixels wide in the thumbnail; "
+                                              "higher-resolution masks are then written to align/material_masks."),
+            labelled("threshold", self.fold_thr, "Probability above which a pixel counts as fold. Lower catches "
+                                                 "fainter folds (more false positives); check with the 'fold "
+                                                 "probability' overlay."))
         lay.addWidget(self.fold_unet_row)
-        r = QHBoxLayout()
+        self.fold_adv = Collapsible("Advanced U-Net settings")
+        self.fold_adv.addWidget(row_widget(
+            labelled("tile px", self.fold_tile, "Tiled inference geometry: lower on small GPUs."),
+            labelled("overlap px", self.fold_ov, "Overlap between inference tiles; raise if tile edges show in the mask.")))
+        lay.addWidget(self.fold_adv)
         self.fold_min = spin(0, 1_000_000, 50, 10); self.fold_dil = spin(0, 100, 2)
-        for lab, w in (("min area px", self.fold_min), ("dilate px", self.fold_dil)):
-            r.addWidget(QLabel(lab)); r.addWidget(w)
-        r.addStretch(1)
-        lay.addLayout(r)
+        lay.addWidget(row_widget(
+            labelled("drop fold blobs smaller than px", self.fold_min, "Fold regions with fewer pixels than this are speckle and are dropped."),
+            labelled("grow folds by px", self.fold_dil, "Dilate the fold regions a little so the mesh can absorb the "
+                                                        "compression around a fold.")))
         r = QHBoxLayout()
         b3 = QPushButton("Detect folds on checked sections"); b3.setObjectName("Primary")
         b3p = QPushButton("Preview on current section")
+        b3.setToolTip("Run the chosen method on every checked section and save the fold masks (masks/folds).")
+        b3p.setToolTip("Run the chosen method on the section in the viewer only and show the result in yellow.")
         r.addWidget(b3); r.addWidget(b3p); r.addStretch(1)
         lay.addLayout(r)
-        lay.addWidget(hint("Folds and tears are usually black in the rendered montage, so the threshold method finds them "
-                           "without a model and runs in seconds. Use the U-Net when folds are grey rather than black; it was "
-                           "trained on EM sections at roughly the thumbnail scale, and can run on a finer mip (needs the "
-                           "PNG-tile render driver), in which case higher-resolution masks are written to align/material_masks. "
-                           "Dilation widens fold regions slightly, which helps the mesh absorb the compression."))
+        lay.addWidget(hint("A black region is either a fold (meshed as fold material, the default) or missing data "
+                           "(exclude it in the tissue card): fold labels are only painted inside the tissue mask, so if "
+                           "both are on, exclusion wins."))
         b3.clicked.connect(lambda: self._detect_folds(preview=False))
         b3p.clicked.connect(lambda: self._detect_folds(preview=True))
         self.fold_method.currentIndexChanged.connect(self._fold_method_changed)
+        self._fold_method_changed()
         ml.addWidget(f)
 
         # import card
@@ -220,7 +345,12 @@ class MasksPage(Page):
         self.imp_mip = spin(0, 10, 0); self.imp_kind = combo([("tissue mask (non-zero = tissue)", "tissue"),
                                                               ("fold mask (non-zero = fold)", "folds"),
                                                               ("complete FEABAS material mask (grey labels as they are)", "material")], "tissue")
-        r.addWidget(self.imp_dir, 1); r.addWidget(QLabel("mip")); r.addWidget(self.imp_mip); r.addWidget(self.imp_kind, 1)
+        self.imp_kind.setToolTip("What the images are. Tissue and fold masks go through 'Compose'; a complete "
+                                 "material mask is written for FEABAS as it is.")
+        r.addWidget(self.imp_dir, 1)
+        r.addWidget(labelled("made at mip", self.imp_mip, "Mip level of the stitched sections the masks were drawn on "
+                                                          "(0 = full resolution). They are resampled to the thumbnail mip."))
+        r.addWidget(self.imp_kind, 1)
         b_imp = QPushButton("Import for checked sections"); b_imp.setObjectName("Primary"); r.addWidget(b_imp)
         lay.addLayout(r)
         b_imp.clicked.connect(self._import_masks)
@@ -230,9 +360,14 @@ class MasksPage(Page):
         f, lay = card("Write material masks for FEABAS")
         r = QHBoxLayout()
         self.use_folds = QCheckBox("include folds as"); self.use_folds.setChecked(True)
+        self.use_folds.setToolTip("Whether the detected folds enter the material mask at all.")
         self.fold_label = combo([("wrinkle (50): expands freely, resists compression", LABEL_WRINKLE),
                                  ("exclude (255): cut out of the mesh", LABEL_EXCLUDE), ("soft (100): very soft material", LABEL_SOFT)], LABEL_WRINKLE)
+        self.fold_label.setToolTip("The material a fold becomes. wrinkle is the usual choice; exclude only for "
+                                   "genuinely destroyed regions (they will be missing from the rendered volume).")
         self.hires = QCheckBox("also write higher-resolution masks (align/material_masks)")
+        self.hires.setToolTip("Additionally write masks at the finest mip for which a mask source exists (fold "
+                              "detection on a finer mip, or imported masks) and point the alignment config at them.")
         r.addWidget(self.use_folds); r.addWidget(self.fold_label, 1); r.addWidget(self.hires)
         lay.addLayout(r)
         r = QHBoxLayout()
@@ -246,14 +381,18 @@ class MasksPage(Page):
         lay.addLayout(r)
         r = QHBoxLayout()
         b4 = QPushButton("Compose for checked sections"); b4.setObjectName("Primary")
+        b4.setToolTip("Write the material mask FEABAS reads (thumbnail_align/material_masks) for every checked "
+                      "section: tissue mask + border margin + folds. Sections without a tissue mask get one with "
+                      "the settings above first.")
         self.skip_edited = QCheckBox("keep hand-edited masks"); self.skip_edited.setChecked(True)
+        self.skip_edited.setToolTip("Skip sections whose mask you edited by hand (marked * in the list).")
         r.addWidget(b4); r.addWidget(self.skip_edited); r.addStretch(1)
         lay.addLayout(r)
         self.compose_info = QLabel(""); self.compose_info.setObjectName("Hint"); self.compose_info.setWordWrap(True)
         lay.addWidget(self.compose_info)
         b4.clicked.connect(self._compose)
         ml.addWidget(f)
-        self.tabs.addTab(m, "Masks")
+        self.tabs.addTab(m, "2. Masks")
 
         # ---- tab: train fold model ----------------------------------------------
         tr = QWidget(); trl = QVBoxLayout(tr); trl.setContentsMargins(6, 6, 6, 6)
@@ -266,9 +405,16 @@ class MasksPage(Page):
         r = QHBoxLayout()
         self.tr_name = QLineEdit("folds_run1"); self.tr_name.setMaximumWidth(180)
         self.tr_epochs = spin(1, 1000, 50); self.tr_patch = spin(64, 1024, 256, 64); self.tr_batch = spin(1, 64, 16)
-        self.tr_init = QCheckBox("start from checkpoint above"); self.tr_init.setChecked(True)
-        for lab, w in (("run name", self.tr_name), ("epochs", self.tr_epochs), ("patch", self.tr_patch), ("batch", self.tr_batch)):
-            r.addWidget(QLabel(lab)); r.addWidget(w)
+        self.tr_init = QCheckBox("start from the checkpoint on the Masks tab"); self.tr_init.setChecked(True)
+        self.tr_init.setToolTip("On = fine-tune the current checkpoint on your data (converges fast). Off = train "
+                                "from scratch, which needs much more data. The bundled checkpoint can be fine-tuned: "
+                                "it holds every model weight (fp16); only the original run's optimizer state was "
+                                "left out, and fine-tuning starts a fresh optimizer anyway. Resuming that original "
+                                "training run would need the full 280 MB Lightning checkpoint, which is not bundled.")
+        r.addWidget(labelled("run name", self.tr_name, "Folder name under models/folds/."))
+        r.addWidget(labelled("epochs", self.tr_epochs, "Passes over the sampled crops. Fine-tuning needs far fewer than training from scratch."))
+        r.addWidget(labelled("patch px", self.tr_patch, "Size of the random crops sampled from the images."))
+        r.addWidget(labelled("batch", self.tr_batch, "Crops per training step; lower on small GPUs."))
         r.addWidget(self.tr_init); r.addStretch(1)
         lay.addLayout(r)
         r = QHBoxLayout()
@@ -281,7 +427,7 @@ class MasksPage(Page):
         b6.clicked.connect(lambda: self.fold_ckpt.setText(self.tr_models.currentData() or ""))
         trl.addWidget(f)
         trl.addStretch(1)
-        self.tabs.addTab(tr, "Train fold model")
+        self.tabs.addTab(tr, "Train fold model (optional)")
 
         # ---- tab: settings -----------------------------------------------------
         self.editor = ConfigEditor()
@@ -310,6 +456,13 @@ class MasksPage(Page):
         self.ti_invert.setChecked(tp.invert_intensity)
         self.ti_thr.setText("" if tp.threshold is None else str(tp.threshold))
         self.ti_dark.setChecked(tp.exclude_dark); self.ti_dark_max.setValue(tp.dark_max); self.ti_dark_min.setValue(tp.dark_min_px)
+        self.ti_bright.setChecked(tp.exclude_bright); self.ti_bright_min.setValue(tp.bright_min)
+        self.ti_border_mode.setCurrentIndex(max(0, self.ti_border_mode.findData(tp.border_mode)))
+        self.ti_border_black.setValue(tp.border_black_max); self.ti_border_white.setValue(tp.border_white_min)
+        self.ti_border_tol.setValue(tp.border_tol); self.ti_border_width.setValue(tp.border_min_width)
+        for w, v in ((self.ti_left, tp.crop_left), (self.ti_top, tp.crop_top), (self.ti_right, tp.crop_right), (self.ti_bottom, tp.crop_bottom)):
+            w.blockSignals(True); w.setValue(int(v)); w.blockSignals(False)
+        self._ti_method_changed()
         # projects made before the margin existed carry it as the tissue mask's erode radius
         self.ti_margin.setValue(int(ms.get("margin_px", tp.erode)))
         self.ti_margin_label.setCurrentIndex(max(0, self.ti_margin_label.findData(int(ms.get("margin_label", LABEL_SOFT)))))
@@ -466,10 +619,11 @@ class MasksPage(Page):
             rgba[band] = (60, 200, 230, min(255, a + 60)) if soft else (230, 60, 60, min(255, a + 60))
             self.view.set_overlay("frame", rgba)
             nm = self._thumb_nm()
-            info.append(f"frame {margin} px" + (f" ≈ {margin * nm / 1000:.1f} µm" if nm else "") +
+            info.append(f"margin {margin} px" + (f" ≈ {margin * nm / 1000:.1f} µm" if nm else "") +
                         f" → {'soft (kept, not matched)' if soft else 'excluded'}; {100 * band.mean():.1f}% of the image"
                         + ("" if self.store.tissue_mask(sec) is not None else " (from the imaged footprint; compute tissue for the exact outline)"))
         self.view_info.setText("   ".join(info))
+        self._manual_changed()
 
     def _frame_changed(self, *_a) -> None:
         if self.ov_frame.isChecked():
@@ -504,7 +658,71 @@ class MasksPage(Page):
         return TissueParams(window=self.ti_window.value(), min_component_px=self.ti_min.value(), fill_holes_px=self.ti_holes.value(),
                             erode=0, method=self.ti_method.currentData(), invert_intensity=self.ti_invert.isChecked(),
                             threshold=float(thr) if thr else None, exclude_dark=self.ti_dark.isChecked(),
-                            dark_max=self.ti_dark_max.value(), dark_min_px=self.ti_dark_min.value())
+                            dark_max=self.ti_dark_max.value(), dark_min_px=self.ti_dark_min.value(),
+                            exclude_bright=self.ti_bright.isChecked(), bright_min=self.ti_bright_min.value(),
+                            border_mode=self.ti_border_mode.currentData(), border_black_max=self.ti_border_black.value(),
+                            border_white_min=self.ti_border_white.value(), border_tol=self.ti_border_tol.value(),
+                            border_min_width=self.ti_border_width.value(),
+                            crop_left=self.ti_left.value(), crop_top=self.ti_top.value(),
+                            crop_right=self.ti_right.value(), crop_bottom=self.ti_bottom.value())
+
+    TISSUE_METHOD_HINTS = {
+        "all": "Everything the stitched tiles cover is tissue and only what lies outside is excluded: the same mask "
+               "FEABAS builds from the tile bounding boxes. Nothing to set. Use it whenever the section fills the "
+               "imaged area.",
+        "border": "For sections that sit inside a uniform frame - black padding, a saturated white rim of empty "
+                  "resin or support film, or both. The frame is peeled off from the outside in, layer by layer, "
+                  "until real texture is reached; frames that do not touch the image edge themselves are found too.",
+        "manual": "When the frame is regular, simply say how far it reaches in from each side of the thumbnail. "
+                  "The dashed rectangle in the viewer shows the result before anything is written.",
+        "auto": "Splits by local texture only when the section clearly contains two populations (textured tissue "
+                "and flat background); otherwise everything imaged is tissue. For mixed stacks.",
+        "texture": "Always splits by local grey-level variation: tissue is textured, resin is flat. Careful on "
+                   "high-pass filtered thumbnails, which can split tissue by texture.",
+        "intensity": "Plain grey-level threshold on the thumbnail: for a bright, uniform background (tick 'dark "
+                     "tissue' for the opposite polarity).",
+    }
+
+    def _ti_method_changed(self, *_a) -> None:
+        """Show only the settings the chosen method uses."""
+        m = self.ti_method.currentData()
+        self.ti_method_hint.setText(self.TISSUE_METHOD_HINTS.get(m, ""))
+        self.ti_border_row.setVisible(m == "border")
+        bm = self.ti_border_mode.currentData()
+        self.ti_border_black_w.setVisible(bm in ("both", "black"))
+        self.ti_border_white_w.setVisible(bm in ("both", "white"))
+        self.ti_border_tol_w.setVisible(bm == "auto")
+        self.ti_manual_row.setVisible(m == "manual")
+        self.ti_texture_row.setVisible(m in ("auto", "texture", "intensity"))
+        self.ti_window_w.setVisible(m in ("auto", "texture"))
+        self.ti_invert.setVisible(m == "intensity")
+        self.ti_cleanup_row.setVisible(m in ("border", "auto", "texture", "intensity"))
+        self._manual_changed()
+
+    def _manual_changed(self, *_a) -> None:
+        """Live preview of the fixed margins as a dashed frame; nothing is written."""
+        if not hasattr(self, "view"):
+            return
+        sec = self.sections.current() if self.store else None
+        img = self.store.thumbnail(sec) if sec else None
+        if self.ti_method.currentData() != "manual" or img is None:
+            self.view.set_overlay("manual", None)
+            self.ti_manual_info.setText("")
+            return
+        from ...core.masks import manual_bounds
+        h, w = img.shape[:2]
+        inside = manual_bounds((h, w), self.ti_left.value(), self.ti_top.value(), self.ti_right.value(), self.ti_bottom.value())
+        rgba = np.zeros((h, w, 4), np.uint8)
+        rgba[~inside] = (230, 60, 60, 70)
+        edge = inside ^ (np.roll(inside, 1, 0) & np.roll(inside, -1, 0) & np.roll(inside, 1, 1) & np.roll(inside, -1, 1))
+        rgba[edge & inside] = (255, 255, 255, 230)
+        self.view.set_overlay("manual", rgba)
+        nm = self._thumb_nm()
+        if nm:
+            self.ti_manual_info.setText("= %.1f / %.1f / %.1f / %.1f µm" % tuple(v * nm / 1000 for v in (
+                self.ti_left.value(), self.ti_top.value(), self.ti_right.value(), self.ti_bottom.value())))
+        else:
+            self.ti_manual_info.setText("")
 
     def _save_mask_settings(self) -> None:
         if not self.project:
@@ -569,7 +787,8 @@ class MasksPage(Page):
         unet = self.fold_method.currentData() == "unet"
         self.fold_ckpt_row.setVisible(unet)
         self.fold_unet_row.setVisible(unet)
-        self.fold_dark_max.setEnabled(not unet)
+        self.fold_adv.setVisible(unet)
+        self.fold_dark_w.setVisible(not unet)
 
     def _detect_folds_dark(self, preview: bool) -> None:
         """Folds/tears as black regions: no model, no GPU, runs here."""
