@@ -10,7 +10,7 @@
   <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-blue">
   <img alt="Windows | Linux" src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey">
   <img alt="FEABAS 3.0.5" src="https://img.shields.io/badge/FEABAS-3.0.5-8a2be2">
-  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-green"></a>
+  <a href="LICENSE"><img alt="Apache-2.0 license" src="https://img.shields.io/badge/license-Apache--2.0-green"></a>
 </p>
 
 <p align="center">
@@ -163,4 +163,13 @@ Brain Science, Harvard University), which does the actual stitching and alignmen
 its driver scripts and default configuration files are vendored here unchanged, with their license, under
 `feabas_workbench/vendor/feabas_3_0_5/` (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 
-The workbench is released under the [MIT License](LICENSE).
+The workbench is released under the [Apache License 2.0](LICENSE). Its [NOTICE](NOTICE) file carries the
+author attribution; anyone who redistributes the workbench, or substantial parts of it, has to keep it.
+
+## How to cite
+
+If the workbench was useful in your work, please cite it (GitHub's *Cite this repository* button uses
+[CITATION.cff](CITATION.cff)) and cite FEABAS for the stitching and alignment itself:
+
+> Kislinger, G. (2026). *FEABAS Workbench* (version 0.1.0) [Computer software].
+> https://github.com/georgkislinger/feabas-workbench — ORCID 0000-0002-6559-7421

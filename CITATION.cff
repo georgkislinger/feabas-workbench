@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use FEABAS Workbench in your work, please cite it as below, and cite FEABAS (Yuelong Wu) for the stitching and alignment itself."
+type: software
+title: "FEABAS Workbench"
+abstract: "A desktop workbench around FEABAS: data preparation, preprocessing, stitching, masks, alignment and export for serial-section electron microscopy."
+authors:
+  - family-names: Kislinger
+    given-names: Georg
+    orcid: "https://orcid.org/0000-0002-6559-7421"
+    affiliation: "German Center for Neurodegenerative Diseases (DZNE); Technical University of Munich (TUM)"
+repository-code: "https://github.com/georgkislinger/feabas-workbench"
+license: Apache-2.0
+version: 0.1.0
+date-released: "2026-09-16"
+keywords:
+  - electron microscopy
+  - connectomics
+  - stitching
+  - alignment
+  - FEABAS
+references:
+  - type: software
+    title: "FEABAS"
+    authors:
+      - family-names: Wu
+        given-names: Yuelong
+    repository-code: "https://github.com/YuelongWu/feabas"
+    license: MIT

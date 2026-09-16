@@ -4,8 +4,8 @@ version = "0.1.0"
 description = "Desktop workbench around FEABAS: data prep, preprocessing, stitching, masks, structure-guided alignment and export for serial-section EM"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "MIT"
-license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "Georg Kislinger", email = "georg.kislinger@dzne.de" }]
 keywords = ["electron-microscopy", "connectomics", "stitching", "alignment", "FEABAS", "serial-section"]
 classifiers = [

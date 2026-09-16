@@ -1,0 +1,15 @@
+FEABAS Workbench
+Copyright 2026 Georg Kislinger
+German Center for Neurodegenerative Diseases (DZNE) and Technical University of Munich (TUM)
+https://github.com/georgkislinger/feabas-workbench
+ORCID: https://orcid.org/0000-0002-6559-7421
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+Redistributions of this software, or of substantial portions of it, in source or
+binary form, must retain this NOTICE file.
+
+This product is a front end for, and bundles the driver scripts, tools and default
+configuration files of, FEABAS 3.0.5:
+    Copyright (c) 2022 Yuelong Wu, Center for Brain Science, Harvard University
+    Licensed under the MIT License (see feabas_workbench/vendor/feabas_3_0_5/LICENSE
+    and THIRD_PARTY_NOTICES.md).

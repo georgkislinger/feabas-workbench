@@ -1,5 +1,9 @@
 # Third-party notices
 
+The workbench itself is Copyright 2026 Georg Kislinger and licensed under the Apache License 2.0
+(`LICENSE`); its author attribution is in `NOTICE`. What follows are the notices of bundled third-party
+software.
+
 ## FEABAS
 
 This repository vendors the driver scripts, tools and default configuration files of
