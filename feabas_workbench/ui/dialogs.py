@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout
+from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QVBoxLayout
 
 from ..core.images import imread, downsample, compose_two_color, to_uint8
 from .widgets.imageview import ImageView

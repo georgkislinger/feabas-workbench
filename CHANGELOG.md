@@ -11,6 +11,10 @@ versions follow [Semantic Versioning](https://semver.org/).
   the whole pipeline on Linux on every commit and renders the page screenshots on a real project.
   The Project-page smoke test runs on the synthetic tiles instead of being skipped.
 - `core.pipeline` with the ordered standard step list, shared by the runner and the GUI.
+- Frozen Windows build (PyInstaller): built and self-checked in CI on every push, attached to each
+  GitHub Release as `FEABAS-Workbench-<tag>-windows-x64.zip`; `feabas-workbench --selfcheck report.json`
+  verifies any installation without opening a window.
+- `ruff check` (pyflakes level) in CI; all README screenshots regenerated consistently.
 
 ### Fixed
 - Thumbnail mip level 0 (small sections) with the default high-pass filter made FEABAS's thumbnail

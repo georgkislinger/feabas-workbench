@@ -12,7 +12,6 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 import numpy as np
 

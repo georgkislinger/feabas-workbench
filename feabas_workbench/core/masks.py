@@ -483,7 +483,6 @@ def remove_thin(mask: np.ndarray, min_width: int) -> np.ndarray:
 
 def fill_holes(mask: np.ndarray, max_px: int) -> np.ndarray:
     inv = ~mask
-    small_holes = inv & ~remove_small(inv, max_px)
     # holes touching the border are background, not holes
     cv2 = _cv2()
     n, lab, stats, _ = cv2.connectedComponentsWithStats(inv.astype(np.uint8), connectivity=4)

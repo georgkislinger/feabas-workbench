@@ -6,11 +6,9 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox,
                                QPushButton, QRadioButton, QVBoxLayout, QWidget, QSplitter)
 
-from ...core import tiles as T
 from ...core import histmatch as H
 from ...core.images import imread, downsample, to_uint8
 from ...core.testruns import retarget_stitch_coords, parse_stitch_coord

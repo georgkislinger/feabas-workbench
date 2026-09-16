@@ -157,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
     win.close()
     win.deleteLater()
     app.processEvents()
-    del win
+    win = None
     return code
 
 

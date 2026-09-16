@@ -13,7 +13,7 @@ from PySide6.QtCore import QObject, Signal
 
 from ..core.configs import ConfigStore
 from ..core.envs import Settings, check_imports
-from ..core.jobs import JobQueue, JobSpec, JobResult, worker_env, feabas_env
+from ..core.jobs import JobQueue, JobSpec, worker_env, feabas_env
 from ..core.project import Project, VENDOR_DIR
 from ..core.steps import PipelineScan, Step, count_outputs, thumbnail_progress, step_argv, expected_outputs
 

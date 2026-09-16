@@ -195,7 +195,6 @@ def main() -> int:
     mode = spec.get("mode", "augment")            # replace | augment
     weight = float(spec.get("weight", 1.0))
     pairs = spec["pairs"]                          # [[sec0, sec1], ...]
-    struct_mip = None
     progress(0, len(pairs), "starting")
     report = {}
     n_written = 0

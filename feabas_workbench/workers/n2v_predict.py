@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from feabas_workbench.workers.common import load_spec, progress, result, log, run

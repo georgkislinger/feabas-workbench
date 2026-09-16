@@ -21,7 +21,6 @@ from pathlib import Path
 import yaml
 
 from .project import Project, DEFAULT_CONFIG_NAMES, USER_CONFIG_NAMES
-from .tiles import format_stitch_coord
 
 
 def _link_dir(src: Path, dst: Path) -> None:

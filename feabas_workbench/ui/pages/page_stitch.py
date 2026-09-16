@@ -4,15 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSplitter,
                                QTabWidget, QVBoxLayout, QWidget, QCheckBox)
 
-from ...core.steps import STEPS_BY_KEY, PipelineScan
+from ...core.steps import PipelineScan
 from ...core.testruns import create_montage_test, list_test_runs, delete_test_run, parse_stitch_coord, TestRun
 from ...core.images import TiledSectionSource, TensorStoreSource
-from ..widgets import ConfigEditor, ImageView, SectionPicker, TileGridWidget, card, hint, form_row, spin, dspin, combo
+from ..widgets import ConfigEditor, ImageView, SectionPicker, TileGridWidget, card, hint, spin, dspin, combo
 from ..widgets.steps_panel import StepsPanel
 from ..widgets.imageview import RectSpec
 from .base import Page

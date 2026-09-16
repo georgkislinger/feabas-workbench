@@ -6,8 +6,8 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
-                               QVBoxLayout, QWidget, QPlainTextEdit)
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QMessageBox, QPushButton,
+                               QPlainTextEdit)
 
 from ...core import envs as E
 from ...core.jobs import JobSpec

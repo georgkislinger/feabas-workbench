@@ -6,14 +6,13 @@ import json
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
-                               QSplitter, QTabWidget, QVBoxLayout, QWidget, QPlainTextEdit)
+from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
+                               QSplitter, QTabWidget, QVBoxLayout, QWidget)
 
 from ...core.steps import PipelineScan, write_fine_match_list, read_fine_match_list
 from ...core.testruns import create_align_test, list_test_runs, delete_test_run, TestRun
 from ...core.maskstore import MaskStore
-from ...core.images import imread, to_uint8, compose_two_color, downsample
+from ...core.images import imread, to_uint8, compose_two_color
 from ...core.configs import suggest_working_mip
 from ..widgets import PathPicker, ImageView, SectionPicker, ConfigEditor, card, hint, form_row, spin, dspin, combo, labelled
 from ..widgets.steps_panel import StepsPanel

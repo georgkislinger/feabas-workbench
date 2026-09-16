@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal, QObject
+from PySide6.QtCore import QThread, Signal, QObject
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
-                               QListWidget, QMessageBox, QPushButton, QVBoxLayout, QWidget, QPlainTextEdit)
+                               QMessageBox, QPushButton, QPlainTextEdit)
 
 from ...core import tiles as T
 from ...core.project import Project

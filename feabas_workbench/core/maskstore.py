@@ -19,7 +19,7 @@ import numpy as np
 
 from .masks import (TissueParams, detect_tissue, compose_material_mask, resize_mask, read_mask, write_mask,
                     LABEL_WRINKLE, LABEL_DEFAULT, LABEL_EXCLUDE, structure_material_mask, mask_stats,
-                    padding_mask, footprint_mask, roi_from_tform, border_band, montage_extent)
+                    footprint_mask, roi_from_tform, border_band, montage_extent)
 from .images import imread
 
 

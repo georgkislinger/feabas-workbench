@@ -56,7 +56,6 @@ class TileGridWidget(QWidget):
         else:
             self.view.set_image(None)
             if self.tiles:
-                import numpy as np
                 W = max(t.x + t.w for t in self.tiles.values())
                 H = max(t.y + t.h for t in self.tiles.values())
                 self.view._level0_size = (int(W), int(H))

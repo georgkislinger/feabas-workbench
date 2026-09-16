@@ -54,6 +54,16 @@ FEABAS = "https://github.com/YuelongWu/feabas"
 
 # gui-scripts: on Windows the launcher is a windowed exe, so no console window sits behind the GUI.
 # feabas-workbench-cli keeps a console-attached variant for --screenshot and for seeing tracebacks.
+[tool.ruff]
+line-length = 130
+target-version = "py310"
+extend-exclude = ["feabas_workbench/vendor"]
+
+[tool.ruff.lint]
+# pyflakes (unused imports/variables, undefined names) and syntax errors only: the code style
+# (one-line statements, long rows of widget setup) is deliberate and not what CI should police.
+select = ["F", "E9"]
+
 [project.gui-scripts]
 feabas-workbench = "feabas_workbench.app:main"
 

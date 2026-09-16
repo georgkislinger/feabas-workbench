@@ -6,13 +6,13 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
-from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QDockWidget, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
+from PySide6.QtWidgets import (QDockWidget, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
                                QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QProgressBar, QPushButton,
-                               QStackedWidget, QVBoxLayout, QWidget, QSplitter)
+                               QStackedWidget, QVBoxLayout, QWidget)
 
 from .. import APP_NAME, __version__
 from ..core.envs import Settings
-from ..core.steps import STEPS, STEPS_BY_KEY, clear_targets, clear_step, create_snapshot, list_snapshots, restore_snapshot, estimate_snapshot_size
+from ..core.steps import STEPS, clear_targets, clear_step, create_snapshot, list_snapshots, restore_snapshot, estimate_snapshot_size
 from .bridge import AppContext
 from .widgets.log_panel import LogPanel
 from . import theme

@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
                                QTabWidget, QVBoxLayout, QWidget)
 
-from ...core.images import TiledSectionSource, TensorStoreSource, find_precomputed_scales
+from ...core.images import TiledSectionSource
 from ...core.httpserve import VolumeServer
-from ..widgets import PathPicker, ImageView, ConfigEditor, card, hint, form_row, spin, combo
+from ..widgets import PathPicker, ImageView, ConfigEditor, card, hint, spin, combo
 from ..widgets.steps_panel import StepsPanel
 from ..external import open_in_vast, open_in_fiji_folder
 from .base import Page
