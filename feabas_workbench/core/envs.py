@@ -440,6 +440,24 @@ class InstallPlan:
                      f"python={self.python_version}", "pip"])
         return cmds
 
+    def run_prefix(self) -> list[str]:
+        """
+        `<manager> run -n <env> ...`: runs a command inside the environment without knowing where
+        it lives, so the pip steps can be queued before the environment exists. conda buffers the
+        output of `run` unless told not to; micromamba streams it and has no such flag.
+        """
+        if self.conda is None:
+            raise RuntimeError("No conda/mamba/micromamba found. Install Miniforge or let the workbench download micromamba.")
+        exe = str(self.conda)
+        prefix = [exe, "run"]
+        if "micromamba" not in Path(exe).name.lower():
+            prefix.append("--no-capture-output")
+        return prefix + ["-n", self.env_name]
+
+    def pip_commands_in_env(self) -> list[list[str]]:
+        """The pip installs, each run through run_prefix(): no interpreter path needed."""
+        return [self.run_prefix() + cmd for cmd in self.pip_commands("python")]
+
     def pip_commands(self, python: str) -> list[list[str]]:
         base = [python, "-m", "pip", "install", "--index-url", "https://pypi.org/simple"]
         if self.kind == "feabas":

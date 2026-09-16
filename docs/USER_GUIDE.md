@@ -40,6 +40,21 @@ is **not** included.
 
 ### 1.2 Install – pick the row that matches your machine
 
+**A fresh Windows PC with nothing on it** (no Python, no conda) works either way:
+
+* **Without installing anything:** download `FEABAS-Workbench-<version>-windows-x64.zip` from the
+  [Releases page](https://github.com/georgkislinger/feabas-workbench/releases), unpack it anywhere and
+  start `FEABAS-Workbench\FEABAS-Workbench.exe`. It contains its own Python, Qt and image libraries.
+  Windows SmartScreen will warn once about an unsigned program from the internet — *More info → Run
+  anyway*. Then, on the **Setup** page: *Download micromamba* → *Install fw-feabas* → *Install fw-dl*
+  (internet needed; the deep-learning one is several GB). Those two environments are where FEABAS and
+  the models run; the exe is only the workbench.
+* **From the source zip:** double-click `tools\install.bat`. If the PC has no conda, mamba or
+  micromamba at all, it downloads a standalone micromamba (10 MB, using the `curl` and `tar` that are
+  part of Windows 10/11) into `%APPDATA%\FeabasWorkbench\micromamba`, creates the `feabas-workbench`
+  environment, installs the workbench and starts it. FEABAS and deep-learning environments as above.
+
+
 The GUI itself needs Python 3.10 or newer with PySide6 and a few scientific packages. The heavy parts
 (FEABAS, PyTorch) live in *separate* environments that the app creates for you afterwards (§1.3), so
 the choice here only concerns the GUI.

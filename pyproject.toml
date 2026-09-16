@@ -1,6 +1,6 @@
 [project]
 name = "feabas-workbench"
-version = "0.3.0"
+version = "0.3.1"
 description = "Desktop workbench around FEABAS: data prep, preprocessing, stitching, masks, structure-guided alignment and export for serial-section EM"
 readme = "README.md"
 requires-python = ">=3.10"

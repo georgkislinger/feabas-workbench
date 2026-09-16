@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal
@@ -267,33 +266,33 @@ class SetupPage(Page):
         specs = []
         for cmd in plan.commands():
             specs.append(JobSpec(f"create env {name}", cmd, cwd=Path.home(), kind="shell"))
-        # pip commands need the env python: resolve lazily through a small wrapper
-        wrapper = [sys.executable, "-c",
-                   "import subprocess,sys,json;"
-                   "from feabas_workbench.core import envs as E;"
-                   f"d=E.env_dir_for(__import__('pathlib').Path(r'{conda}'), '{name}');"
-                   "py=str(E.env_python(d)) if d else None;"
-                   "assert py, 'environment folder not found after creation';"
-                   f"plan=E.InstallPlan('{kind}','{name}','{pyver}',None,'{idx if kind == 'dl' else ''}');"
-                   "[subprocess.run(c, check=True) for c in plan.pip_commands(py)];"
-                   "print('##RESULT '+json.dumps({'python': py}))"]
-        from ...core.jobs import worker_env
-        specs.append(JobSpec(f"pip install into {name}", wrapper, cwd=Path.home(), kind="shell",
-                             env=worker_env()))
-        self._install_kind = kind
+        # the pip installs run inside the new environment through `<manager> run -n <env>`, so
+        # neither its location nor a helper interpreter is needed - the frozen exe has none to offer
+        pips = plan.pip_commands_in_env()
+        for i, cmd in enumerate(pips, 1):
+            specs.append(JobSpec(f"pip install into {name} ({i}/{len(pips)})", cmd, cwd=Path.home(), kind="shell"))
+        self._install_kind, self._install_plan, self._install_last = kind, plan, specs[-1].name
         self.ctx.jobs.job_finished.connect(self._install_done)
         self.submit(specs)
 
     def _install_done(self, res) -> None:
-        if res.spec.name.startswith("pip install into") and res.ok and res.result.get("python"):
-            py = res.result["python"]
-            (self.feabas_py if self._install_kind == "feabas" else self.dl_py).setText(py)
-            self._save()
-            self.info(f"environment ready: {py}")
-            try:
-                self.ctx.jobs.job_finished.disconnect(self._install_done)
-            except (RuntimeError, TypeError):
-                pass
+        if res.spec.name != getattr(self, "_install_last", None):
+            return
+        try:
+            self.ctx.jobs.job_finished.disconnect(self._install_done)
+        except (RuntimeError, TypeError):
+            pass
+        if not res.ok:
+            return
+        plan = self._install_plan
+        d = E.env_dir_for(plan.conda, plan.env_name)
+        py = E.env_python(d) if d else None
+        if py is None:
+            self.warn(f"environment {plan.env_name} was installed but its python.exe was not found; use 'Detect environments'")
+            return
+        (self.feabas_py if self._install_kind == "feabas" else self.dl_py).setText(str(py))
+        self._save()
+        self.info(f"environment ready: {py}")
 
     def _apply_general(self) -> None:
         if not self.require_project():

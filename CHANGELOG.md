@@ -3,6 +3,17 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] – 2026-09-16
+
+### Fixed
+- Setup → *Install fw-feabas* / *Install fw-dl* failed at the pip step when run from the frozen
+  Windows exe (it tried to use the exe as a Python interpreter). The pip installs now run inside the new
+  environment through `micromamba run -n …` / `conda run --no-capture-output -n …`, with streamed output,
+  and the environment's interpreter is looked up afterwards.
+- `tools\install.bat` on a PC without any conda/mamba/micromamba now downloads a standalone micromamba
+  (with Windows' own `curl` and `tar`) instead of giving up.
+- User guide: what to do on a fresh Windows PC without Python (exe route and installer route).
+
 ## [0.3.0] – 2026-09-16
 
 ### Added

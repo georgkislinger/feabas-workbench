@@ -303,6 +303,20 @@ html { scroll-behavior: smooth; }
 <p>The download is small (about 50 MB, most of it the bundled fold-detection network). The example dataset
 is <strong>not</strong> included.</p>
 <h3 id="12-install-pick-the-row-that-matches-your-machine">1.2 Install – pick the row that matches your machine</h3>
+<p><strong>A fresh Windows PC with nothing on it</strong> (no Python, no conda) works either way:</p>
+<ul>
+<li><strong>Without installing anything:</strong> download <code>FEABAS-Workbench-&lt;version&gt;-windows-x64.zip</code> from the
+  <a href="https://github.com/georgkislinger/feabas-workbench/releases">Releases page</a>, unpack it anywhere and
+  start <code>FEABAS-Workbench\FEABAS-Workbench.exe</code>. It contains its own Python, Qt and image libraries.
+  Windows SmartScreen will warn once about an unsigned program from the internet — <em>More info → Run
+  anyway</em>. Then, on the <strong>Setup</strong> page: <em>Download micromamba</em> → <em>Install fw-feabas</em> → <em>Install fw-dl</em>
+  (internet needed; the deep-learning one is several GB). Those two environments are where FEABAS and
+  the models run; the exe is only the workbench.</li>
+<li><strong>From the source zip:</strong> double-click <code>tools\install.bat</code>. If the PC has no conda, mamba or
+  micromamba at all, it downloads a standalone micromamba (10 MB, using the <code>curl</code> and <code>tar</code> that are
+  part of Windows 10/11) into <code>%APPDATA%\FeabasWorkbench\micromamba</code>, creates the <code>feabas-workbench</code>
+  environment, installs the workbench and starts it. FEABAS and deep-learning environments as above.</li>
+</ul>
 <p>The GUI itself needs Python 3.10 or newer with PySide6 and a few scientific packages. The heavy parts
 (FEABAS, PyTorch) live in <em>separate</em> environments that the app creates for you afterwards (§1.3), so
 the choice here only concerns the GUI.</p>

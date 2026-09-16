@@ -3,7 +3,8 @@ setlocal enabledelayedexpansion
 rem ---------------------------------------------------------------------------
 rem FEABAS Workbench installer (Windows)
 rem
-rem Creates the GUI environment 'feabas-workbench' with micromamba / mamba / conda,
+rem Creates the GUI environment 'feabas-workbench' with micromamba / mamba / conda
+rem (downloading a standalone micromamba if the PC has none - no Python needed),
 rem installs the workbench into it, records that interpreter in start_gui.local.bat
 rem (so start_gui.bat is hard-wired to this installation and only falls back to its
 rem own search if the environment disappears), puts a shortcut on the Desktop and
@@ -47,11 +48,15 @@ for %%b in ("%LOCALAPPDATA%" "%USERPROFILE%" "%ProgramData%" "%ProgramFiles%" "C
   )
 )
 
+rem --- 5. nothing at all (a fresh PC): fetch a standalone micromamba, like the Setup page does ----
+if not defined CONDA call :get_micromamba
+
 if not defined CONDA (
   echo.
   echo No conda, mamba or micromamba found: looked on PATH, in CONDA_EXE / MAMBA_EXE, and in the usual
-  echo install folders on C:, D: and E: ^(set FW_DEBUG=1 to see every path tried^).
-  echo Install Miniforge from https://conda-forge.org/download/ or micromamba, or point this script at one:
+  echo install folders on C:, D: and E: ^(set FW_DEBUG=1 to see every path tried^), and the micromamba
+  echo download failed. Check the internet connection, install Miniforge from
+  echo https://conda-forge.org/download/, or point this script at a package manager:
   echo     set FW_CONDA=C:\path\to\micromamba.exe
   echo.
   pause
@@ -116,6 +121,26 @@ rem Take the first candidate that exists.
 if defined CONDA exit /b
 if defined FW_DEBUG echo [debug] try %~1
 if exist "%~1" set "CONDA=%~1"
+exit /b
+
+rem Download a standalone micromamba (single exe, no installer) into the workbench's settings folder,
+rem where the Setup page looks for it too. Needs curl.exe and tar.exe, both part of Windows 10 1803+.
+:get_micromamba
+set "MMDIR=%APPDATA%\FeabasWorkbench\micromamba"
+if exist "%MMDIR%\Library\bin\micromamba.exe" (
+  set "CONDA=%MMDIR%\Library\bin\micromamba.exe"
+  exit /b
+)
+where curl.exe >nul 2>&1 || exit /b
+where tar.exe >nul 2>&1 || exit /b
+echo No conda/mamba/micromamba found - downloading micromamba to %MMDIR% ...
+if not exist "%MMDIR%" mkdir "%MMDIR%"
+curl.exe -L --fail --silent --show-error "https://micro.mamba.pm/api/micromamba/win-64/latest" -o "%MMDIR%\micromamba.tar.bz2"
+if errorlevel 1 exit /b
+tar.exe -xf "%MMDIR%\micromamba.tar.bz2" -C "%MMDIR%"
+if errorlevel 1 exit /b
+del "%MMDIR%\micromamba.tar.bz2" >nul 2>&1
+if exist "%MMDIR%\Library\bin\micromamba.exe" set "CONDA=%MMDIR%\Library\bin\micromamba.exe"
 exit /b
 
 rem Look a file name up on PATH (%~$PATH:1 does the search).

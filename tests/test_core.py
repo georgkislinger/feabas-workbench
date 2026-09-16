@@ -735,3 +735,16 @@ def test_set_thumbnail_mip_switches_highpass_off_at_mip0(tmp_path):
     assert set_thumbnail_mip(cs, 0) is True and cs.get("thumbnail", "downsample.thumbnail_highpass") is False
     assert set_thumbnail_mip(cs, 0, highpass=False) is False
     assert cs.get("alignment", "meshing.mask_mip_level") == 0
+
+
+def test_install_plan_runs_pip_inside_the_env_without_an_interpreter_path(tmp_path):
+    """The frozen exe cannot act as a helper interpreter, so pip runs through `<manager> run -n <env>`."""
+    from feabas_workbench.core.envs import InstallPlan
+    mm = InstallPlan("feabas", "fw-feabas", "3.12", tmp_path / "micromamba.exe")
+    cmds = mm.pip_commands_in_env()
+    assert len(cmds) == 1 and cmds[0][:4] == [str(tmp_path / "micromamba.exe"), "run", "-n", "fw-feabas"]
+    assert cmds[0][4:8] == ["python", "-m", "pip", "install"] and "feabas==3.0.5" in cmds[0]
+    cd = InstallPlan("dl", "fw-dl", "3.11", tmp_path / "conda.exe", "https://download.pytorch.org/whl/cu126")
+    cmds = cd.pip_commands_in_env()
+    assert len(cmds) == 2 and all(c[:5] == [str(tmp_path / "conda.exe"), "run", "--no-capture-output", "-n", "fw-dl"] for c in cmds)
+    assert "https://download.pytorch.org/whl/cu126" in cmds[0]
