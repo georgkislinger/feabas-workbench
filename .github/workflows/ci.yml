@@ -116,15 +116,19 @@ jobs:
         run: python -m PyInstaller --noconfirm --clean tools/feabas_workbench.spec
 
       # The exe must find its vendored FEABAS scripts, the checkpoint and stage the worker
-      # package from inside the bundle, and render every page on a project.
+      # package from inside the bundle, and render every page on a project. It is a windowed
+      # executable, which PowerShell does not wait for on its own: Start-Process -Wait does.
       - name: Self-check and offscreen render of the frozen app
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
           python -m feabas_workbench.core.synthetic demo_project --sections 3 --tile 256
-          .\dist\FEABAS-Workbench\FEABAS-Workbench.exe --selfcheck selfcheck.json
+          $exe = Resolve-Path .\dist\FEABAS-Workbench\FEABAS-Workbench.exe
+          $p = Start-Process -FilePath $exe -ArgumentList "--selfcheck", "selfcheck.json" -Wait -PassThru -NoNewWindow
           Get-Content selfcheck.json
-          .\dist\FEABAS-Workbench\FEABAS-Workbench.exe --project demo_project --screenshot frozen_screenshots
+          if ($p.ExitCode -ne 0) { throw "selfcheck exit code $($p.ExitCode)" }
+          $p = Start-Process -FilePath $exe -ArgumentList "--project", "demo_project", "--screenshot", "frozen_screenshots" -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "screenshot exit code $($p.ExitCode)" }
           if ((Get-ChildItem frozen_screenshots).Count -ne 7) { throw "expected 7 page screenshots" }
 
       - uses: actions/upload-artifact@v7
