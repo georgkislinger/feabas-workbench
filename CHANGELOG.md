@@ -3,7 +3,7 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] – 2026-09-16
 
 ### Added
 - Synthetic demo dataset and project (`python -m feabas_workbench.core.synthetic DIR`) and an
