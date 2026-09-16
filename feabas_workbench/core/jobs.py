@@ -39,6 +39,10 @@ class JobSpec:
     env: dict[str, str] = field(default_factory=dict)
     count_outputs: Callable[[], int] | None = None     # for file-count progress
     expected: int = 0
+    # True: report count_outputs() as it is (a full run of a step that is already half done starts
+    # the bar half full). False: report only what this job added, for subset runs and workers
+    # whose expected count covers just their own items.
+    progress_absolute: bool = False
     # optional richer progress: () -> (done, expected, message). Takes precedence over
     # count_outputs and reports absolute numbers (a step with several phases can say which one)
     progress_fn: Callable[[], tuple[int, int, str]] | None = None
@@ -200,11 +204,11 @@ class Job:
             if self.spec.count_outputs is None:
                 return
             try:
-                n = self.spec.count_outputs() - self._baseline
+                n = progress_count(self.spec, self.spec.count_outputs(), self._baseline)
             except Exception:
                 continue
             if self.on_progress:
-                self.on_progress(max(0, n), self.spec.expected, "")
+                self.on_progress(n, self.spec.expected, "")
 
     def _finish(self, code: int) -> None:
         self._stop_poll.set()
@@ -219,6 +223,12 @@ class Job:
         res = JobResult(self.spec, code, self.cancelled, secs, self.result_payload, list(self._tail))
         if self.on_finished:
             self.on_finished(res)
+
+
+def progress_count(spec: JobSpec, count: int, baseline: int) -> int:
+    """Outputs to report for a job: everything on disk, or only what appeared since it started."""
+    n = int(count) if spec.progress_absolute else int(count) - int(baseline)
+    return max(0, n)
 
 
 def kill_tree(pid: int) -> None:

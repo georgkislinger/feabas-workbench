@@ -1,0 +1,9 @@
+# Keeps the GitHub Actions used by the workflows current (e.g. the Node-runtime bumps of
+# actions/checkout, setup-python, upload-artifact) through small automatic pull requests.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    labels: ["ci"]

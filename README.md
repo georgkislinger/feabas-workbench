@@ -171,5 +171,5 @@ author attribution; anyone who redistributes the workbench, or substantial parts
 If the workbench was useful in your work, please cite it (GitHub's *Cite this repository* button uses
 [CITATION.cff](CITATION.cff)) and cite FEABAS for the stitching and alignment itself:
 
-> Kislinger, G. (2026). *FEABAS Workbench* (version 0.1.0) [Computer software].
+> Kislinger, G. (2026). *FEABAS Workbench* (version 0.2.0) [Computer software].
 > https://github.com/georgkislinger/feabas-workbench — ORCID 0000-0002-6559-7421

@@ -669,3 +669,31 @@ def test_fine_match_list_restricts_pairs_by_distance(tmp_path):
     assert write_fine_match_list(tmp_path, names, 2) is None and not (tmp_path / "align" / "match_name.txt").exists()
     assert write_fine_match_list(tmp_path, names, None) is None
     assert PipelineScan(tmp_path, 5)["align.matching"].expected == 7
+
+
+# ----------------------------------------------------------------------------- bundled checkpoint, progress
+
+def test_bundled_fold_checkpoint_is_stored_as_a_sentinel(tmp_path):
+    """A project must not pin the bundled checkpoint to one install location."""
+    from feabas_workbench.core.masks import (resolve_fold_checkpoint, store_fold_checkpoint, bundled_fold_checkpoint,
+                                             BUNDLED_FOLD_CKPT, BUNDLED_FOLD_CKPT_NAME)
+    bundled = bundled_fold_checkpoint()
+    assert bundled.is_file()
+    assert store_fold_checkpoint(str(bundled)) == BUNDLED_FOLD_CKPT
+    assert resolve_fold_checkpoint(BUNDLED_FOLD_CKPT) == str(bundled)
+    assert resolve_fold_checkpoint("") == str(bundled) and resolve_fold_checkpoint(None) == str(bundled)
+    stale = tmp_path / "old_install" / "resources" / BUNDLED_FOLD_CKPT_NAME       # written by an older version, gone
+    assert resolve_fold_checkpoint(str(stale)) == str(bundled)
+    own = tmp_path / "best.pt"
+    own.write_bytes(b"")
+    assert store_fold_checkpoint(str(own)) == str(own) and resolve_fold_checkpoint(str(own)) == str(own)
+
+
+def test_full_runs_report_absolute_progress():
+    """A re-run of a half-done step starts half full; subset runs and workers count only what they add."""
+    from feabas_workbench.core.jobs import JobSpec, progress_count
+    full = JobSpec("s", ["x"], Path("."), expected=10, progress_absolute=True)
+    part = JobSpec("s", ["x"], Path("."), expected=3, progress_absolute=False)
+    assert progress_count(full, count=7, baseline=5) == 7
+    assert progress_count(part, count=7, baseline=5) == 2
+    assert progress_count(part, count=4, baseline=5) == 0

@@ -201,8 +201,9 @@ class AppContext(QObject):
             s0 = start or 0
             s1 = stop if stop else expected
             expected = max(0, len(range(s0, min(s1, expected), stride or 1)))
+        full_run = start is None and stop is None
         progress_fn = None
-        if step.key == "thumbnail.downsample" and start is None and stop is None:
+        if step.key == "thumbnail.downsample" and full_run:
             # the slow part of this step is the mip-mapping, which leaves no thumbnail behind
             cfg = ConfigStore(root / "configs") if root != self.project.root else self.configs
             progress_fn = lambda: thumbnail_progress(root, cfg, n)
@@ -210,7 +211,7 @@ class AppContext(QObject):
             name=f"{step.label}" + (f" [{tag}]" if tag else ""),
             argv=argv, cwd=root, kind="feabas", step_key=step.key, tag=tag, env=feabas_env(),
             count_outputs=lambda: count_outputs(root, step), expected=expected, progress_fn=progress_fn,
-            log_file=root / "workbench.log",
+            progress_absolute=full_run, log_file=root / "workbench.log",
         )
 
     def feabas_tool_spec(self, tool: str, args: list[str], name: str, root: Path | None = None) -> JobSpec:

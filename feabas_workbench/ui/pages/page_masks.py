@@ -9,10 +9,10 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
                                QSlider, QSplitter, QVBoxLayout, QWidget, QTabWidget)
 
-from ...core.masks import TissueParams, LABEL_WRINKLE, LABEL_EXCLUDE, LABEL_SOFT
+from ...core.masks import (TissueParams, LABEL_WRINKLE, LABEL_EXCLUDE, LABEL_SOFT, bundled_fold_checkpoint,
+                           resolve_fold_checkpoint, store_fold_checkpoint)
 from ...core.maskstore import MaskStore
 from ...core.images import colorize_labels, to_uint8
-from ...core.jobs import package_root
 from ...core.steps import STEPS_BY_KEY
 from ..widgets import (PathPicker, ImageView, SectionPicker, ConfigEditor, card, hint, form_row, spin, dspin, combo,
                        labelled, row_widget, Collapsible)
@@ -22,8 +22,9 @@ from .base import Page
 
 # fp16 weights only (49 MB): identical detections to the 280 MB Lightning checkpoint it was exported
 # from, fine-tunable, but with no optimizer state - the original training run cannot resume from it.
-# Lives inside the package (resources/ is package data) so a wheel install ships it too.
-DEFAULT_FOLD_CKPT = package_root() / "feabas_workbench" / "resources" / "fold_unet_resnet34_inference_only_fp16.ckpt"
+# Lives inside the package (resources/ is package data) so a wheel install ships it too. Projects
+# store it as the sentinel "bundled" (core.masks.resolve_fold_checkpoint), never as this path.
+DEFAULT_FOLD_CKPT = bundled_fold_checkpoint()
 
 
 class MasksPage(Page):
@@ -448,8 +449,7 @@ class MasksPage(Page):
         self.th_hp.setChecked(bool(cs.get("thumbnail", "downsample.thumbnail_highpass", True)))
         self.th_workers.setValue(int(cs.get("thumbnail", "downsample.num_workers", 10)))
         ms = project.state.masks
-        ck = ms.get("fold_ckpt") or (str(DEFAULT_FOLD_CKPT) if DEFAULT_FOLD_CKPT.is_file() else "")
-        self.fold_ckpt.setText(ck)
+        self.fold_ckpt.setText(resolve_fold_checkpoint(ms.get("fold_ckpt")))
         tp = TissueParams.from_dict(ms.get("tissue"))
         self.ti_method.setCurrentIndex(max(0, self.ti_method.findData(tp.method)))
         self.ti_window.setValue(tp.window); self.ti_min.setValue(tp.min_component_px); self.ti_holes.setValue(tp.fill_holes_px)
@@ -729,7 +729,7 @@ class MasksPage(Page):
             return
         ms = self.project.state.masks
         ms["tissue"] = self._tissue_params().to_dict()
-        ms["fold_ckpt"] = self.fold_ckpt.text()
+        ms["fold_ckpt"] = store_fold_checkpoint(self.fold_ckpt.text())
         ms["fold_threshold"] = self.fold_thr.value(); ms["fold_min_area"] = self.fold_min.value(); ms["fold_dilate"] = self.fold_dil.value()
         ms["fold_method"] = self.fold_method.currentData(); ms["fold_dark_max"] = self.fold_dark_max.value()
         ms["use_folds"] = self.use_folds.isChecked(); ms["fold_label"] = int(self.fold_label.currentData()); ms["hires"] = self.hires.isChecked()

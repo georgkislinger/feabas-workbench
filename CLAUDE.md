@@ -24,7 +24,8 @@
   worker in the right env via `AppContext.worker_spec` / `feabas_step_spec`.
 - Test data: `Example_data_to_stitch_and_align_and_export` (Thermo Maps tiles, 10 sections, 8×5 grid, 10 nm px;
   gitignored). The bundled fold U-Net is `feabas_workbench/resources/fold_unet_resnet34_inference_only_fp16.ckpt`
-  (smp Unet, resnet34, fp16 weights only, 49 MB; `page_masks.DEFAULT_FOLD_CKPT`; inside the package so wheels ship
+  (smp Unet, resnet34, fp16 weights only, 49 MB; `core.masks.bundled_fold_checkpoint()`, stored in project files as
+  the sentinel `"bundled"` so a project survives a move or a different install location; inside the package so wheels ship
   it). It was exported from the 280 MB Lightning checkpoint `Fold_model_ckpt/lightning_logs/version_0/checkpoints/
   best-epoch=25-val_iou=0.6638.ckpt` (gitignored, optimizer state included) and gives identical detections;
   `workers/fold_train` fine-tunes from either, since it only ever reads the weights. `_test_projects/` and `_scratch/`

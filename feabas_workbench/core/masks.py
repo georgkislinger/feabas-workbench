@@ -29,6 +29,47 @@ import numpy as np
 
 LABEL_DEFAULT = 0
 LABEL_EXCLUDE = 255
+
+# The fold U-Net that ships inside the package (fp16 weights only, 49 MB). Projects record it as
+# the sentinel BUNDLED_FOLD_CKPT rather than as an absolute path: the path changes with every
+# install location (development checkout, wheel in site-packages, frozen build) and a project
+# file is often opened on another machine.
+BUNDLED_FOLD_CKPT = "bundled"
+BUNDLED_FOLD_CKPT_NAME = "fold_unet_resnet34_inference_only_fp16.ckpt"
+
+
+def bundled_fold_checkpoint() -> Path:
+    from .jobs import package_root
+    return package_root() / "feabas_workbench" / "resources" / BUNDLED_FOLD_CKPT_NAME
+
+
+def resolve_fold_checkpoint(stored: str | None) -> str:
+    """
+    The checkpoint path to use for a value read from a project file: the sentinel, an empty
+    value, or a stale absolute path to the bundled file (written by older versions) all mean
+    the bundled checkpoint of *this* installation; anything else is taken as it is.
+    """
+    bundled = bundled_fold_checkpoint()
+    v = (stored or "").strip()
+    if not v or v == BUNDLED_FOLD_CKPT:
+        return str(bundled) if bundled.is_file() else ""
+    p = Path(v)
+    if not p.is_file() and p.name == BUNDLED_FOLD_CKPT_NAME:
+        return str(bundled) if bundled.is_file() else ""
+    return v
+
+
+def store_fold_checkpoint(path: str | None) -> str:
+    """What to write into the project file for a checkpoint path chosen in the GUI."""
+    v = (path or "").strip()
+    if not v:
+        return ""
+    try:
+        if Path(v).resolve() == bundled_fold_checkpoint().resolve():
+            return BUNDLED_FOLD_CKPT
+    except OSError:
+        pass
+    return v
 LABEL_WRINKLE = 50
 LABEL_SOFT = 100
 LABEL_SPLIT = 200
