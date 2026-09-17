@@ -66,20 +66,23 @@ The example dataset used during development: 10 serial sections, 8 × 5 tiles of
 
 ## Install
 
-Get the code (**Code → Download ZIP**, or `git clone`), unpack it, then pick the row that matches your
-machine. The heavy parts – FEABAS and PyTorch – go into separate environments that the app creates for you
-afterwards, so this only concerns the GUI.
+The heavy parts – FEABAS and PyTorch – go into separate environments that the app creates for you from
+its **Setup** page afterwards (internet needed; the deep-learning one is several GB; without conda the
+Setup page downloads micromamba for that). So this only concerns the GUI. Pick the row that matches your
+machine:
 
-| You already have | Do this |
+| You have | Do this |
 |---|---|
-| **nothing** | install [Miniforge](https://conda-forge.org/download/) (defaults are fine), then the next row |
-| **micromamba / Miniforge / Miniconda / Anaconda** | Windows: double-click `tools\install.bat` · Linux/macOS: `bash tools/install.sh` — finds the package manager, creates the `feabas-workbench` env, installs the app and hard-wires `start_gui.bat` / `start_gui.sh` to it |
-| **plain Python ≥ 3.10**, no conda | `python -m venv .venv` then `.venv\Scripts\python -m pip install -e .` (Linux: `.venv/bin/python`) |
+| **a Windows PC with nothing on it** (no Python, no conda) | Download `FEABAS-Workbench-<version>-windows-x64.zip` from the [Releases page](https://github.com/georgkislinger/feabas-workbench/releases), unpack it, start `FEABAS-Workbench\FEABAS-Workbench.exe` (SmartScreen warns once: *More info → Run anyway*). Or get the source (below) and double-click `tools\install.bat`: with no package manager on the PC it downloads a standalone micromamba and continues. |
+| **micromamba / Miniforge / Miniconda / Anaconda** | Get the source (**Code → Download ZIP**, or `git clone`), unpack, then Windows: double-click `tools\install.bat` · Linux/macOS: `bash tools/install.sh`. The script finds the package manager, creates the `feabas-workbench` env, installs the app and hard-wires `start_gui.bat` / `start_gui.sh` to it. |
+| **plain Python ≥ 3.10**, no conda | In the unpacked source: `python -m venv .venv` then `.venv\Scripts\python -m pip install -e .` (Linux: `.venv/bin/python`); or, into any environment of yours, `pip install feabas_workbench-<version>-py3-none-any.whl` downloaded from the Releases page. |
 
-Start with **`start_gui.bat`** (Windows) or **`./start_gui.sh`** (Linux/macOS); both find the `.venv` or
-the conda environment on their own. In the app, open **Setup**: *Detect environments* finds existing
-FEABAS / PyTorch environments; otherwise *Install fw-feabas* and *Install fw-dl* create them (internet
-needed; several GB for the deep-learning one). Without conda, the Setup page can download micromamba for that.
+The package is not on PyPI (yet), so `pip install feabas-workbench` does not work; use the wheel from the
+Releases page as in the last row. Start with **`start_gui.bat`** (Windows) or **`./start_gui.sh`**
+(Linux/macOS) – both find the environment on their own – or, after a pip install, with `feabas-workbench`
+(`feabas-workbench-cli` keeps a console window, for tracebacks). Then open **Setup**: *Detect
+environments* finds existing FEABAS / PyTorch environments, otherwise *Install fw-feabas* and *Install
+fw-dl* create them.
 
 > [!TIP]
 > Linux desktops have the Qt libraries already. On a minimal server install add
@@ -152,11 +155,17 @@ python -m build                                              # wheel + sdist
 pyinstaller tools/feabas_workbench.spec                      # GUI-only executable (environments stay external)
 ```
 
-CI runs the tests, the offscreen render and the package build on Ubuntu and Windows for Python 3.11
-and 3.12, and checks that the FEABAS run-time patch applies on Linux.
+`feabas-workbench --selfcheck report.json` verifies an installation (vendored FEABAS, checkpoint, worker
+staging) without opening a window.
 
-Code map: `feabas_workbench/core` (Qt-free: project, tiles, configs, steps, jobs, masks, images, test runs,
-environments), `feabas_workbench/workers` (subprocess workers: histogram matching, N2V, fold U-Net, YOLO,
+CI, on every commit: lint (ruff, pyflakes level), the tests, the offscreen render of every window on a
+synthetic project and the wheel build on Ubuntu and Windows for Python 3.11 and 3.12; the **whole
+FEABAS pipeline** on a synthetic 4-section dataset on Linux (`tools/run_demo_pipeline.py`, and once more
+through the GUI's job queue with `tools/run_demo_pipeline_gui.py`); and the frozen Windows build with
+its self-check. A `v*` tag builds the wheel, sdist and Windows zip and publishes the GitHub Release.
+
+Code map: `feabas_workbench/core` (Qt-free: project, tiles, configs, steps, jobs, pipeline, masks, images,
+test runs, environments, synthetic data), `feabas_workbench/workers` (subprocess workers: histogram matching, N2V, fold U-Net, YOLO,
 structure matching, match re-weighting, export), `feabas_workbench/ui` (PySide6 pages and widgets),
 `feabas_workbench/vendor/feabas_3_0_5` (FEABAS driver scripts, tools and default configs),
 `feabas_workbench/resources` (the bundled fold U-Net weights: an fp16 export with every model weight, so it

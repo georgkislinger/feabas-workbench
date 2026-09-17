@@ -291,17 +291,21 @@ html { scroll-behavior: smooth; }
     <div class="doc" id="doc">
 <h2 id="1-installing-and-starting-the-workbench">1. Installing and starting the workbench</h2>
 <h3 id="11-get-the-code">1.1 Get the code</h3>
-<p>The workbench is distributed from GitHub for now (a PyPI package will follow). Either</p>
+<p>The workbench is distributed from GitHub, <a href="https://github.com/georgkislinger/feabas-workbench">https://github.com/georgkislinger/feabas-workbench</a>; it is
+not on PyPI (so <code>pip install feabas-workbench</code> does not work). Three forms, all on the repository's
+<strong>Releases</strong> page or under the green <strong>Code</strong> button:</p>
 <ul>
-<li><strong>Download a ZIP</strong>: open the repository page, click the green <strong>Code</strong> button → <strong>Download ZIP</strong>, and
-  unpack it somewhere permanent – the folder you unpack is the one you will start the app from. Avoid
-  paths with spaces or non-ASCII characters; they still work, but they make every later command harder
-  to type.</li>
-<li><strong>Clone it</strong> if you have git: <code>git clone https://github.com/&lt;owner&gt;/&lt;repo&gt;.git</code>. Cloning makes later
-  updates a single <code>git pull</code>.</li>
+<li><strong><code>FEABAS-Workbench-&lt;version&gt;-windows-x64.zip</code></strong> (Releases) – the Windows app with its own Python
+  inside; nothing to install (§1.2, first paragraph).</li>
+<li><strong><code>feabas_workbench-&lt;version&gt;-py3-none-any.whl</code></strong> (Releases) – for <code>pip install &lt;the file&gt;</code> into a
+  Python ≥ 3.10 environment of yours; gives the <code>feabas-workbench</code> command.</li>
+<li><strong>The source</strong> – <strong>Code → Download ZIP</strong>, or <code>git clone https://github.com/georgkislinger/feabas-workbench.git</code>
+  (cloning makes later updates a single <code>git pull</code>). Unpack it somewhere permanent – that folder is the
+  one you start the app from with <code>start_gui.bat</code> / <code>./start_gui.sh</code>. Avoid paths with spaces or
+  non-ASCII characters; they work, but make every later command harder to type.</li>
 </ul>
 <p>The download is small (about 50 MB, most of it the bundled fold-detection network). The example dataset
-is <strong>not</strong> included.</p>
+is <strong>not</strong> included; §10 shows how to make a synthetic one.</p>
 <h3 id="12-install-pick-the-row-that-matches-your-machine">1.2 Install – pick the row that matches your machine</h3>
 <p><strong>A fresh Windows PC with nothing on it</strong> (no Python, no conda) works either way:</p>
 <ul>
@@ -330,7 +334,7 @@ the choice here only concerns the GUI.</p>
 <tbody>
 <tr>
 <td><strong>Nothing</strong> – no Python, no conda</td>
-<td>Install <strong>Miniforge</strong> from <a href="https://conda-forge.org/download/">https://conda-forge.org/download/</a> (accept the defaults; on Windows tick <em>Add to PATH</em> if offered, it is not required). Then follow the <em>conda</em> row. Miniforge is the recommended starting point because the FEABAS and deep-learning environments are conda environments too.</td>
+<td>Windows: the two routes above (the exe, or <code>tools\install.bat</code>, which downloads micromamba). Linux/macOS: install <strong>Miniforge</strong> from <a href="https://conda-forge.org/download/">https://conda-forge.org/download/</a> (accept the defaults), then follow the next row.</td>
 </tr>
 <tr>
 <td><strong>micromamba, Miniforge, Miniconda or Anaconda</strong></td>
@@ -360,7 +364,18 @@ already have FEABAS or PyTorch installed somewhere, it finds them. Otherwise:</p
   U-Net, N2V denoising, YOLO structure detection. Pick the PyTorch build for your GPU driver in the
   drop-down, or <em>cpu</em> if you have no NVIDIA card – everything still works, just slower.</li>
 </ul>
-<p>Both need internet and 10–30 minutes. They can also be created by hand; the commands are in the README.</p>
+<p>Both need internet and 10–30 minutes. They can also be created by hand, which is exactly what the
+buttons run (<code>micromamba</code> can be <code>conda</code> or <code>mamba</code>; for conda add <code>--no-capture-output</code> after <code>run</code>):</p>
+<pre><code class="language-bat">micromamba create -y -n fw-feabas --override-channels -c conda-forge python=3.12 pip
+micromamba run -n fw-feabas python -m pip install --index-url https://pypi.org/simple feabas==3.0.5 tifffile imagecodecs
+
+micromamba create -y -n fw-dl --override-channels -c conda-forge python=3.11 pip
+micromamba run -n fw-dl python -m pip install --index-url https://download.pytorch.org/whl/cu126 &quot;torch&lt;2.10&quot; &quot;torchvision&lt;=0.25&quot;
+micromamba run -n fw-dl python -m pip install --index-url https://pypi.org/simple segmentation-models-pytorch ultralytics careamics==0.3.2 tifffile imagecodecs scikit-image opencv-python-headless h5py psutil pyyaml scipy
+</code></pre>
+<p>(<code>cu126</code> is the PyTorch build for drivers ≥ 528; use <code>cu118</code> for older drivers or <code>cpu</code> without an
+NVIDIA card.) Afterwards point the two interpreter fields on the Setup page at the environments'
+<code>python.exe</code> and press <strong>Save</strong>.</p>
 <h3 id="14-starting">1.4 Starting</h3>
 <p>Double-click <strong><code>start_gui.bat</code></strong> (Windows) or run <strong><code>./start_gui.sh</code></strong> (Linux/macOS) in the unpacked
 folder. The script first reads <code>start_gui.local.bat</code> / <code>start_gui.local.sh</code> next to it — the interpreter
@@ -409,6 +424,10 @@ and tracebacks), or <code>python -m feabas_workbench</code>.</p>
 <tr>
 <td><code>--offscreen</code></td>
 <td>use the offscreen Qt platform (no window)</td>
+</tr>
+<tr>
+<td><code>--selfcheck REPORT.json</code></td>
+<td>verify the installation without opening a window – vendored FEABAS scripts and configs, the bundled checkpoint, worker-package staging, settings – write a JSON report and exit 0/1 (works for the exe too)</td>
 </tr>
 </tbody>
 </table></div>
@@ -1967,7 +1986,9 @@ whole pipeline run unattended — the same check CI performs on every commit:</p
 <li><strong>Export &amp; view</strong> – render PNG tiles + mipmaps → <strong>Export</strong> (VAST) → <strong>Open in VASTlite</strong>; or render
    the precomputed volume and open it in Neuroglancer.</li>
 </ol>
-<p>At every stage: run the test-subset variant first on a new dataset. It costs minutes and saves hours.</p>
+<p>At every stage: run the test-subset variant first on a new dataset. It costs minutes and saves hours.
+Once the coordinate files exist and the defaults suit the data, steps 4–6 are also one action:
+<em>Pipeline → Run the standard pipeline…</em> (§2.3).</p>
 <hr />
 <h2 id="11-changing-your-mind-stale-clear-snapshots">11. Changing your mind: stale, clear, snapshots</h2>
 <p><strong>Snapshots</strong> (Pipeline → <em>Create snapshot of current state…</em>) copy the small, expensive things —
@@ -2117,10 +2138,6 @@ survive the re-run.</p>
 </table></div>
 <hr />
 <h2 id="13-where-every-setting-is-stored">13. Where every setting is stored</h2>
-<p>New in this version: the fine-alignment compare distance is kept as <code>alignment.fine_compare_distance</code>
-in <code>workbench_project.json</code> and materialised as <code>align/match_name.txt</code>; the tissue method with its frame
-and margin settings is under <code>masks.tissue</code>; the <em>show structure-guided tab</em> switch is global, in
-<code>%APPDATA%/FeabasWorkbench/settings.json</code>.</p>
 <div class="table-wrap"><table>
 <thead>
 <tr>
@@ -2132,7 +2149,7 @@ and margin settings is under <code>masks.tissue</code>; the <em>show structure-g
 <tbody>
 <tr>
 <td>0 Setup</td>
-<td>interpreters, Fiji, VAST, conda, PyTorch index</td>
+<td>interpreters, Fiji, VAST, conda, PyTorch index, <em>show structure-guided tab</em></td>
 <td><code>%APPDATA%\FeabasWorkbench\settings.json</code></td>
 </tr>
 <tr>
@@ -2172,8 +2189,8 @@ and margin settings is under <code>masks.tissue</code>; the <em>show structure-g
 </tr>
 <tr>
 <td>4 Masks</td>
-<td>tissue/fold parameters, checkpoint, compose options</td>
-<td><code>workbench_project.json</code></td>
+<td>tissue method with its frame/margin settings, fold parameters, checkpoint (the bundled one as <code>"bundled"</code>), compose options</td>
+<td><code>workbench_project.json</code> (<code>masks</code>)</td>
 </tr>
 <tr>
 <td>4 Masks</td>
@@ -2189,6 +2206,11 @@ and margin settings is under <code>masks.tissue</code>; the <em>show structure-g
 <td>5 Alignment</td>
 <td>fine settings, render settings</td>
 <td><code>configs/alignment_configs.yaml</code></td>
+</tr>
+<tr>
+<td>5 Alignment</td>
+<td>fine compare distance</td>
+<td><code>workbench_project.json</code> (<code>alignment.fine_compare_distance</code>), materialised as <code>align/match_name.txt</code></td>
 </tr>
 <tr>
 <td>5 Alignment</td>

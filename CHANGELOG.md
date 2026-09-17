@@ -3,6 +3,14 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- README and user guide brought in line: how to obtain the workbench (Windows exe, wheel from the
+  Releases page, source; not on PyPI), the fresh-PC routes in both, the manual environment commands in
+  the guide instead of a dangling reference to the README, `--selfcheck` in the flag table, current CI
+  description, and where the fine compare distance / tissue settings / interface switch are stored.
+
 ## [0.3.1] – 2026-09-16
 
 ### Fixed

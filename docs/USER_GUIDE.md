@@ -26,17 +26,21 @@ If you only want the short version, read [Installing and starting the workbench]
 
 ### 1.1 Get the code
 
-The workbench is distributed from GitHub for now (a PyPI package will follow). Either
+The workbench is distributed from GitHub, <https://github.com/georgkislinger/feabas-workbench>; it is
+not on PyPI (so `pip install feabas-workbench` does not work). Three forms, all on the repository's
+**Releases** page or under the green **Code** button:
 
-* **Download a ZIP**: open the repository page, click the green **Code** button → **Download ZIP**, and
-  unpack it somewhere permanent – the folder you unpack is the one you will start the app from. Avoid
-  paths with spaces or non-ASCII characters; they still work, but they make every later command harder
-  to type.
-* **Clone it** if you have git: `git clone https://github.com/<owner>/<repo>.git`. Cloning makes later
-  updates a single `git pull`.
+* **`FEABAS-Workbench-<version>-windows-x64.zip`** (Releases) – the Windows app with its own Python
+  inside; nothing to install (§1.2, first paragraph).
+* **`feabas_workbench-<version>-py3-none-any.whl`** (Releases) – for `pip install <the file>` into a
+  Python ≥ 3.10 environment of yours; gives the `feabas-workbench` command.
+* **The source** – **Code → Download ZIP**, or `git clone https://github.com/georgkislinger/feabas-workbench.git`
+  (cloning makes later updates a single `git pull`). Unpack it somewhere permanent – that folder is the
+  one you start the app from with `start_gui.bat` / `./start_gui.sh`. Avoid paths with spaces or
+  non-ASCII characters; they work, but make every later command harder to type.
 
 The download is small (about 50 MB, most of it the bundled fold-detection network). The example dataset
-is **not** included.
+is **not** included; §10 shows how to make a synthetic one.
 
 ### 1.2 Install – pick the row that matches your machine
 
@@ -61,7 +65,7 @@ the choice here only concerns the GUI.
 
 | You already have | Do this |
 |---|---|
-| **Nothing** – no Python, no conda | Install **Miniforge** from <https://conda-forge.org/download/> (accept the defaults; on Windows tick *Add to PATH* if offered, it is not required). Then follow the *conda* row. Miniforge is the recommended starting point because the FEABAS and deep-learning environments are conda environments too. |
+| **Nothing** – no Python, no conda | Windows: the two routes above (the exe, or `tools\install.bat`, which downloads micromamba). Linux/macOS: install **Miniforge** from <https://conda-forge.org/download/> (accept the defaults), then follow the next row. |
 | **micromamba, Miniforge, Miniconda or Anaconda** | Windows: double-click **`tools\install.bat`**. Linux/macOS: `bash tools/install.sh`. The script finds a package manager (micromamba and mamba first, then conda: on `PATH`, in `CONDA_EXE` / `MAMBA_EXE`, and in the usual install folders on `C:`, `D:` and `E:`; `set FW_CONDA=…` forces one, `set FW_DEBUG=1` shows the search), creates an environment called `feabas-workbench` unless it exists, installs the app into it, **records that interpreter in `start_gui.local.bat`** so the launcher is hard-wired to this installation, puts a shortcut on the Windows Desktop and starts the GUI. Later, start it with `start_gui.bat` / `./start_gui.sh`. |
 | **Plain Python 3.10+** (python.org, Microsoft Store, your distribution) but no conda | In the unpacked folder: <br>Windows: `python -m venv .venv` then `.venv\Scripts\python.exe -m pip install -e .` <br>Linux/macOS: `python3 -m venv .venv` then `.venv/bin/python -m pip install -e .` <br>Afterwards `start_gui.bat` / `./start_gui.sh` finds the `.venv` automatically. The Setup page will offer to **download micromamba** – a single-file conda – when it needs to create the FEABAS and deep-learning environments, so you never have to install conda yourself. |
 
@@ -88,7 +92,21 @@ already have FEABAS or PyTorch installed somewhere, it finds them. Otherwise:
   U-Net, N2V denoising, YOLO structure detection. Pick the PyTorch build for your GPU driver in the
   drop-down, or *cpu* if you have no NVIDIA card – everything still works, just slower.
 
-Both need internet and 10–30 minutes. They can also be created by hand; the commands are in the README.
+Both need internet and 10–30 minutes. They can also be created by hand, which is exactly what the
+buttons run (`micromamba` can be `conda` or `mamba`; for conda add `--no-capture-output` after `run`):
+
+```bat
+micromamba create -y -n fw-feabas --override-channels -c conda-forge python=3.12 pip
+micromamba run -n fw-feabas python -m pip install --index-url https://pypi.org/simple feabas==3.0.5 tifffile imagecodecs
+
+micromamba create -y -n fw-dl --override-channels -c conda-forge python=3.11 pip
+micromamba run -n fw-dl python -m pip install --index-url https://download.pytorch.org/whl/cu126 "torch<2.10" "torchvision<=0.25"
+micromamba run -n fw-dl python -m pip install --index-url https://pypi.org/simple segmentation-models-pytorch ultralytics careamics==0.3.2 tifffile imagecodecs scikit-image opencv-python-headless h5py psutil pyyaml scipy
+```
+
+(`cu126` is the PyTorch build for drivers ≥ 528; use `cu118` for older drivers or `cpu` without an
+NVIDIA card.) Afterwards point the two interpreter fields on the Setup page at the environments'
+`python.exe` and press **Save**.
 
 ### 1.4 Starting
 
@@ -133,6 +151,7 @@ and tracebacks), or `python -m feabas_workbench`.
 | `--page N` | jump to window N (0 = Setup … 6 = Export) |
 | `--screenshot DIR` | render every window to PNG offscreen and exit (for checking layouts) |
 | `--offscreen` | use the offscreen Qt platform (no window) |
+| `--selfcheck REPORT.json` | verify the installation without opening a window – vendored FEABAS scripts and configs, the bundled checkpoint, worker-package staging, settings – write a JSON report and exit 0/1 (works for the exe too) |
 
 On Windows set `QT_QPA_FONTDIR=C:/Windows/Fonts` when using `--screenshot`, otherwise the offscreen
 platform has no fonts.
@@ -945,6 +964,8 @@ python tools\run_demo_pipeline.py D:\demo --feabas-python C:\path\to\fw-feabas\p
    the precomputed volume and open it in Neuroglancer.
 
 At every stage: run the test-subset variant first on a new dataset. It costs minutes and saves hours.
+Once the coordinate files exist and the defaults suit the data, steps 4–6 are also one action:
+*Pipeline → Run the standard pipeline…* (§2.3).
 
 ---
 
@@ -1007,14 +1028,9 @@ Typical sequences:
 
 ## 13. Where every setting is stored
 
-New in this version: the fine-alignment compare distance is kept as `alignment.fine_compare_distance`
-in `workbench_project.json` and materialised as `align/match_name.txt`; the tissue method with its frame
-and margin settings is under `masks.tissue`; the *show structure-guided tab* switch is global, in
-`%APPDATA%/FeabasWorkbench/settings.json`.
-
 | Window | Setting group | Written to |
 |---|---|---|
-| 0 Setup | interpreters, Fiji, VAST, conda, PyTorch index | `%APPDATA%\FeabasWorkbench\settings.json` |
+| 0 Setup | interpreters, Fiji, VAST, conda, PyTorch index, *show structure-guided tab* | `%APPDATA%\FeabasWorkbench\settings.json` |
 | 0 Setup | CPU budget, parallel framework, log level | `configs/general_configs.yaml` |
 | 1 Project | tile folder, naming rule, layout, voxel size, path mode | `workbench_project.json` |
 | 1 Project | working directory, full resolution, section thickness | `configs/general_configs.yaml` |
@@ -1022,10 +1038,11 @@ and margin settings is under `masks.tissue`; the *show structure-guided tab* swi
 | 2 Preprocessing | template, ignore black/white, workers, N2V settings, active source | `workbench_project.json` |
 | 3 Stitching | everything | `configs/stitching_configs.yaml` |
 | 4 Masks | thumbnail mip, high-pass, workers | `configs/thumbnail_configs.yaml` |
-| 4 Masks | tissue/fold parameters, checkpoint, compose options | `workbench_project.json` |
+| 4 Masks | tissue method with its frame/margin settings, fold parameters, checkpoint (the bundled one as `"bundled"`), compose options | `workbench_project.json` (`masks`) |
 | 4 Masks | composed masks | `thumbnail_align/material_masks/`, optionally `align/material_masks/` |
 | 5 Alignment | coarse settings | `configs/thumbnail_configs.yaml` |
 | 5 Alignment | fine settings, render settings | `configs/alignment_configs.yaml` |
+| 5 Alignment | fine compare distance | `workbench_project.json` (`alignment.fine_compare_distance`), materialised as `align/match_name.txt` |
 | 5 Alignment | YOLO model, classes, modes, weights | `workbench_project.json` |
 | 5 Alignment | `background_lowweight` material | `configs/material_table.yaml` |
 | 6 Export | render settings | `configs/alignment_configs.yaml` |
