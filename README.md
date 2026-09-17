@@ -196,5 +196,5 @@ Cite FEABAS for the stitching and alignment – that is where the science is:
 and, if the workbench was useful in your work, the workbench too (GitHub's *Cite this repository*
 button uses [CITATION.cff](CITATION.cff)):
 
-> Kislinger, G. (2026). *FEABAS Workbench* (version 0.3.2) [Computer software].
+> Kislinger, G. (2026). *FEABAS Workbench* (version 0.3.3) [Computer software].
 > https://github.com/georgkislinger/feabas-workbench — ORCID 0000-0002-6559-7421

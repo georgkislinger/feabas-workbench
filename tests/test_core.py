@@ -769,3 +769,12 @@ def test_absolutize_readme_rewrites_only_relative_targets():
     # the real README, rewritten, keeps no relative target behind
     real = mod.absolutize(mod.README.read_text(encoding="utf-8"), "v9.9.9")
     assert not re.search(r'(src|href)="(?!https?:)', real) and not re.search(r"\]\((?!https?:|#)", real)
+
+
+def test_bundled_guide_matches_docs_copy():
+    """tools/build_guide_html.py writes docs/user_guide.html and the copy that ships in the package."""
+    root = Path(__file__).resolve().parents[1]
+    docs = (root / "docs" / "user_guide.html").read_bytes()
+    bundled = (root / "feabas_workbench" / "resources" / "user_guide.html").read_bytes()
+    assert docs == bundled, "run python tools/build_guide_html.py"
+    assert b"<!doctype html>" in docs[:20]

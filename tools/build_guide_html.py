@@ -2,6 +2,7 @@
 Render docs/USER_GUIDE.md into the browsable HTML guide (docs/user_guide.html).
 
     python tools/build_guide_html.py                      # -> docs/user_guide.html (standalone)
+                                                          #    + feabas_workbench/resources/user_guide.html (bundled copy)
     python tools/build_guide_html.py --artifact out.html  # -> body-only copy for publishing
 
 Needs the ``markdown`` package (any environment: ``pip install markdown``). The page shell –
@@ -23,6 +24,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 SHELL = Path(__file__).with_name("guide_shell.html")
+# the copy that ships in the wheel and the frozen build (pyproject package-data "resources/*")
+BUNDLED = REPO / "feabas_workbench" / "resources" / "user_guide.html"
 
 # step states -> the chip classes in the shell, coloured like the app's own badges
 CHIPS = {
@@ -95,6 +98,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--md", type=Path, default=REPO / "docs" / "USER_GUIDE.md", help="source Markdown")
     ap.add_argument("--out", type=Path, default=REPO / "docs" / "user_guide.html", help="standalone HTML page")
+    ap.add_argument("--bundled", type=Path, default=BUNDLED,
+                    help="second copy of the standalone page inside the package, for Help > Workbench manual")
     ap.add_argument("--artifact", type=Path, default=None, help="also write a body-only copy for publishing")
     args = ap.parse_args(argv)
 
@@ -105,10 +110,11 @@ def main(argv: list[str] | None = None) -> int:
     head, body = shell.split("<!--BODY-->", 1)
     body = body.replace("<!--CONTENT-->", render(args.md))
 
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(STANDALONE_HEAD + head + "</head>\n<body>\n" + body + "\n</body>\n</html>\n",
-                        encoding="utf-8")
-    print(f"wrote {args.out}")
+    page = STANDALONE_HEAD + head + "</head>\n<body>\n" + body + "\n</body>\n</html>\n"
+    for out in (args.out, args.bundled):
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(page, encoding="utf-8")
+        print(f"wrote {out}")
     if args.artifact:
         args.artifact.parent.mkdir(parents=True, exist_ok=True)
         args.artifact.write_text(head + body, encoding="utf-8")

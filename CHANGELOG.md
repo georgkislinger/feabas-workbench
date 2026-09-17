@@ -3,7 +3,24 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.3] – 2026-09-17
+
+### Added
+- Log dock: a three-level detail switch instead of the *only warnings/errors* box — *messages only*
+  (the workbench's own lines plus every process error), *messages + warnings*, *full log*. The choice
+  is remembered in the settings.
+- *Help → Workbench manual* (F1) opens the user guide; the HTML guide is now bundled in the package
+  (`feabas_workbench/resources/user_guide.html`, written by `tools/build_guide_html.py` alongside
+  `docs/user_guide.html`), so it opens offline from a wheel or the frozen build; the online guide is
+  the fallback. *Help* is now: Workbench manual, Workbench on GitHub · FEABAS on GitHub, FEABAS paper
+  · About.
+- The first log line and the About box name the folder the app runs from, so an old checkout
+  shadowing a newer install (`python -m feabas_workbench` from inside it) is visible at once.
+
+### Changed
+- Every process the workbench starts gets `OPENCV_LOG_LEVEL=ERROR` unless the environment sets it:
+  OpenCV's WARN lines about unknown private TIFF tags (34682/34683 in Thermo Maps tiles) were printed
+  once per tile per step and drowned the log.
 
 ### Fixed
 - `tools\install.bat`: the micromamba download on a PC without any package manager now calls Windows'

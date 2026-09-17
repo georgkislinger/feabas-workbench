@@ -235,9 +235,19 @@ Press **F5** (Pipeline → Re-read pipeline state) after changing files outside 
 
 Only one job runs at a time; further submissions queue. The status bar shows progress and a **Cancel
 job** button. The log dock opens on its own while a job runs (or when an error is logged); **View →
-Log** (Ctrl+L) shows or hides it, and it carries FEABAS's own messages. Untick **autoscroll** to read
+Log** (Ctrl+L) shows or hides it, and it carries FEABAS's own output. Untick **autoscroll** to read
 while a job keeps writing: the view then stays on the lines you are looking at (it keeps the last 5000
-lines; *only warnings/errors* and the filter box narrow it down).
+lines). The drop-down next to the filter box sets how much of it you see — the workbench's own lines
+(started, finished, wrote N files, its warnings and errors) are always there, the levels differ in how
+much of what FEABAS and the workers print gets through: **messages only** adds just process errors
+(tracebacks, "failed …"); **messages + warnings** adds their warning lines too; **full log** shows
+everything, progress lines included. The choice is remembered. (OpenCV's one-line-per-tile notices
+about unknown TIFF tags in Thermo/Zeiss files are switched off at the source, in every process the
+workbench starts; an `OPENCV_LOG_LEVEL` set in your environment wins.)
+
+*Help → Workbench manual* (F1) opens this guide as a page (the copy shipped with the app, so it works
+offline); *Help → About* shows the version and the folder the app runs from — useful when an old copy
+of the source has been left lying around, see §12.
 
 **One click for the plain case.** *Pipeline → Run the standard pipeline…* (Ctrl+R) lists every step
 of a plain run — stitching, thumbnails, coarse and fine alignment, optionally the PNG render and its
@@ -1010,6 +1020,13 @@ Typical sequences:
 ---
 
 ## 12. Troubleshooting
+
+**The log's first line says an older version than the one you installed** (the About box too). You are
+running a different copy: `python -m feabas_workbench` or `start_gui.bat` from inside an old source
+folder imports *that* folder's package, whatever pip has installed elsewhere. The first log line names
+the folder the app runs from. Start with the `feabas-workbench` command of the environment you
+installed into (or `python -m feabas_workbench` from any *other* folder), and delete or rename the old
+checkout.
 
 | Symptom | Likely cause and fix |
 |---|---|

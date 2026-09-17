@@ -10,8 +10,9 @@ from PySide6.QtWidgets import (QDialog, QDockWidget, QFileDialog, QHBoxLayout, Q
                                QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QProgressBar, QPushButton,
                                QStackedWidget, QVBoxLayout, QWidget)
 
-from .. import APP_NAME, __version__, WORKBENCH_REPO, FEABAS_REPO, FEABAS_PAPER
+from .. import APP_NAME, __version__, WORKBENCH_REPO, FEABAS_REPO, FEABAS_PAPER, MANUAL_URL
 from ..core.envs import Settings
+from ..core.jobs import package_root
 from ..core.steps import STEPS, clear_targets, clear_step, create_snapshot, list_snapshots, restore_snapshot, estimate_snapshot_size
 from .bridge import AppContext
 from .widgets.log_panel import LogPanel
@@ -26,7 +27,8 @@ class MainWindow(QMainWindow):
         self._pages = []
         self._build()
         self._wire()
-        self.ctx.log(f"{APP_NAME} {__version__} started")
+        # the folder matters when an old checkout shadows a newer install (python -m … from inside it)
+        self.ctx.log(f"{APP_NAME} {__version__} started from {package_root()}")
         QTimer.singleShot(200, self._first_run)
 
     # ------------------------------------------------------------------
@@ -76,7 +78,8 @@ class MainWindow(QMainWindow):
         # log dock: hidden until something worth reading arrives, so the workflow pages
         # keep the whole window. View > Log (Ctrl+L) toggles it; it also opens on its
         # own for errors and while a job runs, and the status bar mirrors the last line.
-        self.log_panel = LogPanel()
+        self.log_panel = LogPanel(detail=getattr(self.ctx.settings, "log_detail", "full"))
+        self.log_panel.detail_changed.connect(self._log_detail_changed)
         self.ctx.add_log_sink(self.log_panel.append)
         self.ctx.add_log_sink(self._on_log)
         dock = QDockWidget("Log", self)
@@ -134,9 +137,12 @@ class MainWindow(QMainWindow):
         v.addAction(self.log_action)
 
         h = mb.addMenu("&Help")
+        a = QAction("Workbench &manual", self); a.setShortcut(QKeySequence.HelpContents); a.triggered.connect(self.open_manual); h.addAction(a)
+        a.setToolTip("The long-form user guide: every window and setting (bundled copy; the online version if it is missing)")
+        a = QAction("Workbench on GitHub", self); a.triggered.connect(lambda: self._open_url(WORKBENCH_REPO)); h.addAction(a)
+        h.addSeparator()
         a = QAction("FEABAS on GitHub", self); a.triggered.connect(lambda: self._open_url(FEABAS_REPO)); h.addAction(a)
         a = QAction("FEABAS paper (Wu && Lichtman, 2026)", self); a.triggered.connect(lambda: self._open_url(FEABAS_PAPER)); h.addAction(a)
-        a = QAction("Workbench on GitHub", self); a.triggered.connect(lambda: self._open_url(WORKBENCH_REPO)); h.addAction(a)
         h.addSeparator()
         a = QAction("About", self); a.triggered.connect(self._about); h.addAction(a)
         self._refresh_recent()
@@ -237,9 +243,24 @@ class MainWindow(QMainWindow):
         from PySide6.QtCore import QUrl
         QDesktopServices.openUrl(QUrl(url))
 
+    @staticmethod
+    def manual_path() -> Path:
+        """The HTML user guide shipped inside the package (wheel, frozen build and checkout alike)."""
+        return package_root() / "feabas_workbench" / "resources" / "user_guide.html"
+
+    def open_manual(self) -> None:
+        p = self.manual_path()
+        self._open_url(p.as_uri() if p.is_file() else MANUAL_URL)
+
+    def _log_detail_changed(self, key: str) -> None:
+        self.ctx.settings.log_detail = key
+        self.ctx.settings.save()
+
     def _about(self) -> None:
+        import sys
         QMessageBox.about(self, "About", f"<b>{APP_NAME} {__version__}</b> – Georg Kislinger, Apache-2.0<br>"
-                                         f"<a href='{WORKBENCH_REPO}'>{WORKBENCH_REPO}</a><br><br>"
+                                         f"<a href='{WORKBENCH_REPO}'>{WORKBENCH_REPO}</a><br>"
+                                         f"<small>running from {package_root()}<br>{sys.executable}</small><br><br>"
                                          f"A desktop workbench around <a href='{FEABAS_REPO}'>FEABAS</a> (Yuelong Wu, MIT licence) "
                                          f"for stitching and alignment of serial-section EM. Vendored FEABAS 3.0.5 scripts; "
                                          f"steps run in your own FEABAS environment.<br><br>"

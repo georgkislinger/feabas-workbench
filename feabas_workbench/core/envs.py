@@ -151,6 +151,7 @@ class Settings:
     last_project: str = ""
     theme: str = "dark"
     show_structure_tab: bool = False   # the experimental structure-guided alignment tab (YOLO-seg)
+    log_detail: str = "full"           # log dock: "messages" | "warnings" | "full" (ui.widgets.log_panel.DETAIL_LEVELS)
 
     @classmethod
     def load(cls) -> "Settings":

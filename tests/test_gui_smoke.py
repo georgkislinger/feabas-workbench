@@ -272,14 +272,44 @@ def test_help_menu_and_about_cite_feabas(app, window, monkeypatch):
     from PySide6.QtWidgets import QMenu, QMessageBox
     from feabas_workbench import FEABAS_REPO, FEABAS_PAPER, WORKBENCH_REPO
     help_menu = next(m for m in window.menuBar().findChildren(QMenu) if m.title() == "&Help")
-    titles = [a.text() for a in help_menu.actions() if not a.isSeparator()]
-    assert titles[:3] == ["FEABAS on GitHub", "FEABAS paper (Wu && Lichtman, 2026)", "Workbench on GitHub"]
+    actions = [a for a in help_menu.actions() if not a.isSeparator()]
+    assert [a.text() for a in actions] == ["Workbench &manual", "Workbench on GitHub", "FEABAS on GitHub",
+                                           "FEABAS paper (Wu && Lichtman, 2026)", "About"]
     opened: list[str] = []
     monkeypatch.setattr(type(window), "_open_url", staticmethod(opened.append))
-    for a in help_menu.actions()[:3]:
+    for a in actions[:4]:
         a.trigger()
-    assert opened == [FEABAS_REPO, FEABAS_PAPER, WORKBENCH_REPO]
+    manual = window.manual_path()
+    assert manual.is_file() and manual.read_text(encoding="utf-8").startswith("<!doctype html>")
+    assert opened == [manual.as_uri(), WORKBENCH_REPO, FEABAS_REPO, FEABAS_PAPER]
     shown: list[str] = []
     monkeypatch.setattr(QMessageBox, "about", staticmethod(lambda parent, title, text: shown.append(text)))
     window._about()
     assert "10.64898/2026.06.07.730510" in shown[0] and "Lichtman" in shown[0] and WORKBENCH_REPO in shown[0]
+
+
+def test_log_detail_levels(app, window):
+    """Workbench lines always; process lines by level: errors < warnings < everything. Remembered."""
+    from feabas_workbench.ui.widgets.log_panel import LogPanel, severity
+    assert severity("job", "[ WARN:0@1.3] global grfmt_tiff.cpp:123 cv::TIFF_Warning ...") == "warn"
+    assert severity("job", "2026-09-17 13:39:01-INFO: starting matching for s0001") == "job"
+    assert severity("job", "Traceback (most recent call last):") == "error"
+    assert severity("warn", "[13:00:00] thumbnail mip 0: highpass off") == "warn"
+    lines = [("info", "[13:00:00] started: Match tiles\n"), ("job", "$ python stitch_main.py --mode matching\n"),
+             ("job", "2026-09-17 13:39:01-INFO: starting matching for s0001\n"),
+             ("job", "[ WARN:0@1.3] global grfmt_tiff.cpp:123 cv::TIFF_Warning TIFFReadDirectory: Unknown field\n"),
+             ("warn", "[13:00:05] no fold masks yet\n"), ("job", "RuntimeError: failed\n"),
+             ("error", "[13:00:09] failed: Match tiles\n")]
+    panel = LogPanel(detail="messages")
+    for level, text in lines:
+        panel.append(level, text)
+    shown = lambda: [ln for ln in panel.view.toPlainText().splitlines() if ln]  # noqa: E731
+    assert [s[:11] for s in shown()] == ["[13:00:00] ", "[13:00:05] ", "RuntimeErro", "[13:00:09] "]
+    assert not any("WARN:0" in s or "INFO: starting" in s or s.startswith("$") for s in shown())
+    panel.set_detail("warnings")
+    assert len(shown()) == 5 and any("WARN:0" in s for s in shown()) and not any("INFO: starting" in s for s in shown())
+    panel.set_detail("full")
+    assert len(shown()) == 7
+    # the main window's panel writes the choice to the settings
+    window.log_panel.set_detail("warnings")
+    assert window.ctx.settings.log_detail == "warnings"

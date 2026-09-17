@@ -98,6 +98,10 @@ class Job:
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUTF8"] = "1"          # libraries that open text files without an encoding (Windows cp1252)
+        # OpenCV's WARN chatter - one line per private TIFF tag per tile ("Unknown field with tag
+        # 34682"), thousands of them for a Thermo/Zeiss dataset - carries nothing to act on; errors
+        # still print. An explicit setting in the user's environment wins.
+        env.setdefault("OPENCV_LOG_LEVEL", "ERROR")
         if os.name == "posix" and "MALLOC_ARENA_MAX" not in env:
             env["MALLOC_ARENA_MAX"] = "2"   # documented mitigation for TensorStore RAM growth
         env.update(spec.env)
