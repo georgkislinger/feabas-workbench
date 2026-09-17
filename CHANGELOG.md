@@ -6,6 +6,7 @@ versions follow [Semantic Versioning](https://semver.org/).
 ## [0.3.3] – 2026-09-17
 
 ### Added
+- CI tests Python 3.13 and 3.14 as well (lint, tests, offscreen render, wheel), on Ubuntu and Windows.
 - Log dock: a three-level detail switch instead of the *only warnings/errors* box — *messages only*
   (the workbench's own lines plus every process error), *messages + warnings*, *full log*. The choice
   is remembered in the settings.

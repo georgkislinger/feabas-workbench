@@ -160,7 +160,7 @@ pyinstaller tools/feabas_workbench.spec                      # GUI-only executab
 staging) without opening a window.
 
 CI, on every commit: lint (ruff, pyflakes level), the tests, the offscreen render of every window on a
-synthetic project and the wheel build on Ubuntu and Windows for Python 3.11 and 3.12; the **whole
+synthetic project and the wheel build on Ubuntu and Windows for Python 3.11 to 3.14; the **whole
 FEABAS pipeline** on a synthetic 4-section dataset on Linux (`tools/run_demo_pipeline.py`, and once more
 through the GUI's job queue with `tools/run_demo_pipeline_gui.py`); and the frozen Windows build with
 its self-check. A `v*` tag builds the wheel, sdist and Windows zip, publishes the GitHub Release and
