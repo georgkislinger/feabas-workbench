@@ -3,6 +3,13 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- `tools\install.bat`: the micromamba download on a PC without any package manager now calls Windows'
+  own `curl.exe` and `tar.exe` in `System32` by full path. With a GNU `tar` earlier on `PATH` (Git Bash,
+  MSYS2, Cygwin) the extraction failed with "Cannot connect to C: resolve failed".
+
 ## [0.3.2] – 2026-09-17
 
 ### Added

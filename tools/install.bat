@@ -124,20 +124,24 @@ if exist "%~1" set "CONDA=%~1"
 exit /b
 
 rem Download a standalone micromamba (single exe, no installer) into the workbench's settings folder,
-rem where the Setup page looks for it too. Needs curl.exe and tar.exe, both part of Windows 10 1803+.
+rem where the Setup page looks for it too. Uses Windows' own curl.exe and tar.exe from System32
+rem (Windows 10 1803+) by full path: a GNU tar earlier on PATH (Git Bash, MSYS2, Cygwin) would read
+rem "C:\..." as host:path and fail with "Cannot connect to C".
 :get_micromamba
 set "MMDIR=%APPDATA%\FeabasWorkbench\micromamba"
 if exist "%MMDIR%\Library\bin\micromamba.exe" (
   set "CONDA=%MMDIR%\Library\bin\micromamba.exe"
   exit /b
 )
-where curl.exe >nul 2>&1 || exit /b
-where tar.exe >nul 2>&1 || exit /b
+set "CURL=%SystemRoot%\System32\curl.exe"
+set "TAR=%SystemRoot%\System32\tar.exe"
+if not exist "%CURL%" exit /b
+if not exist "%TAR%" exit /b
 echo No conda/mamba/micromamba found - downloading micromamba to %MMDIR% ...
 if not exist "%MMDIR%" mkdir "%MMDIR%"
-curl.exe -L --fail --silent --show-error "https://micro.mamba.pm/api/micromamba/win-64/latest" -o "%MMDIR%\micromamba.tar.bz2"
+"%CURL%" -L --fail --silent --show-error "https://micro.mamba.pm/api/micromamba/win-64/latest" -o "%MMDIR%\micromamba.tar.bz2"
 if errorlevel 1 exit /b
-tar.exe -xf "%MMDIR%\micromamba.tar.bz2" -C "%MMDIR%"
+"%TAR%" -xf "%MMDIR%\micromamba.tar.bz2" -C "%MMDIR%"
 if errorlevel 1 exit /b
 del "%MMDIR%\micromamba.tar.bz2" >nul 2>&1
 if exist "%MMDIR%\Library\bin\micromamba.exe" set "CONDA=%MMDIR%\Library\bin\micromamba.exe"
