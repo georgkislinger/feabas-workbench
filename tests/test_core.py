@@ -748,3 +748,24 @@ def test_install_plan_runs_pip_inside_the_env_without_an_interpreter_path(tmp_pa
     cmds = cd.pip_commands_in_env()
     assert len(cmds) == 2 and all(c[:5] == [str(tmp_path / "conda.exe"), "run", "--no-capture-output", "-n", "fw-dl"] for c in cmds)
     assert "https://download.pytorch.org/whl/cu126" in cmds[0]
+
+
+# ---------------------------------------------------------------- README for PyPI
+def test_absolutize_readme_rewrites_only_relative_targets():
+    import importlib.util
+    import re
+    spec = importlib.util.spec_from_file_location("absolutize_readme", Path(__file__).resolve().parents[1] / "tools" / "absolutize_readme.py")
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    src = ('<img src="docs/img/a.png"> <a href="LICENSE">L</a> <a href="https://x.org/">x</a>\n'
+           '[guide](docs/USER_GUIDE.md) ![shot](docs/b.png) [same page](#a-typical-run) [ext](https://y.org/p)\n'
+           '> [!TIP]\n> Linux desktops have the Qt libraries already.\n')
+    out = mod.absolutize(src, "v9.9.9", repo="o/r")
+    assert 'src="https://raw.githubusercontent.com/o/r/v9.9.9/docs/img/a.png"' in out
+    assert 'href="https://github.com/o/r/blob/v9.9.9/LICENSE"' in out
+    assert '(https://github.com/o/r/blob/v9.9.9/docs/USER_GUIDE.md)' in out
+    assert '![shot](https://raw.githubusercontent.com/o/r/v9.9.9/docs/b.png)' in out
+    assert 'href="https://x.org/"' in out and '(https://y.org/p)' in out and '(#a-typical-run)' in out
+    assert '> **Tip:** Linux desktops' in out and "[!TIP]" not in out
+    # the real README, rewritten, keeps no relative target behind
+    real = mod.absolutize(mod.README.read_text(encoding="utf-8"), "v9.9.9")
+    assert not re.search(r'(src|href)="(?!https?:)', real) and not re.search(r"\]\((?!https?:|#)", real)

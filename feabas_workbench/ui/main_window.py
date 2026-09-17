@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (QDialog, QDockWidget, QFileDialog, QHBoxLayout, Q
                                QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QProgressBar, QPushButton,
                                QStackedWidget, QVBoxLayout, QWidget)
 
-from .. import APP_NAME, __version__
+from .. import APP_NAME, __version__, WORKBENCH_REPO, FEABAS_REPO, FEABAS_PAPER
 from ..core.envs import Settings
 from ..core.steps import STEPS, clear_targets, clear_step, create_snapshot, list_snapshots, restore_snapshot, estimate_snapshot_size
 from .bridge import AppContext
@@ -134,7 +134,10 @@ class MainWindow(QMainWindow):
         v.addAction(self.log_action)
 
         h = mb.addMenu("&Help")
-        a = QAction("FEABAS on GitHub", self); a.triggered.connect(lambda: self._open_url("https://github.com/YuelongWu/feabas")); h.addAction(a)
+        a = QAction("FEABAS on GitHub", self); a.triggered.connect(lambda: self._open_url(FEABAS_REPO)); h.addAction(a)
+        a = QAction("FEABAS paper (Wu && Lichtman, 2026)", self); a.triggered.connect(lambda: self._open_url(FEABAS_PAPER)); h.addAction(a)
+        a = QAction("Workbench on GitHub", self); a.triggered.connect(lambda: self._open_url(WORKBENCH_REPO)); h.addAction(a)
+        h.addSeparator()
         a = QAction("About", self); a.triggered.connect(self._about); h.addAction(a)
         self._refresh_recent()
 
@@ -235,9 +238,14 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl(url))
 
     def _about(self) -> None:
-        QMessageBox.about(self, "About", f"<b>{APP_NAME} {__version__}</b><br>A desktop workbench around FEABAS "
-                                         f"(Yuelong Wu, MIT licence) for stitching and alignment of serial-section EM.<br>"
-                                         f"Vendored FEABAS 3.0.5 scripts; steps run in your own FEABAS environment.")
+        QMessageBox.about(self, "About", f"<b>{APP_NAME} {__version__}</b> – Georg Kislinger, Apache-2.0<br>"
+                                         f"<a href='{WORKBENCH_REPO}'>{WORKBENCH_REPO}</a><br><br>"
+                                         f"A desktop workbench around <a href='{FEABAS_REPO}'>FEABAS</a> (Yuelong Wu, MIT licence) "
+                                         f"for stitching and alignment of serial-section EM. Vendored FEABAS 3.0.5 scripts; "
+                                         f"steps run in your own FEABAS environment.<br><br>"
+                                         f"Please cite FEABAS for the stitching and alignment:<br>"
+                                         f"Wu, Y. &amp; Lichtman, J. W. (2026). <i>FEABAS: A Stitching and Alignment Tool for "
+                                         f"Serial EM Data.</i> bioRxiv. <a href='{FEABAS_PAPER}'>{FEABAS_PAPER}</a>")
 
     # -- jobs ----------------------------------------------------------
     def _on_log(self, level: str, text: str) -> None:

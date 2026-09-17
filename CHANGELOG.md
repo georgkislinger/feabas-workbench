@@ -3,7 +3,15 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.2] – 2026-09-17
+
+### Added
+- Published on PyPI: `pip install feabas-workbench`. The release workflow uploads the wheel and sdist
+  through PyPI trusted publishing after the GitHub Release; README links are made absolute for the
+  PyPI page (`tools/absolutize_readme.py`).
+- The FEABAS paper (Wu & Lichtman, 2026, bioRxiv, doi:10.64898/2026.06.07.730510) is cited in the
+  README, the user guide, `CITATION.cff`, the third-party notices and the app's About box; *Help* has
+  links to the FEABAS repository, the paper and the workbench repository.
 
 ### Changed
 - README and user guide brought in line: how to obtain the workbench (Windows exe, wheel from the

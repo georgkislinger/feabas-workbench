@@ -285,20 +285,24 @@ html { scroll-behavior: smooth; }
       <p class="standfirst">Every window, every setting: what it does, when to touch it, and what it makes
       stale if you change it later. Written against the seven windows of the app, in the order the pipeline
       runs.</p>
+      <p class="standfirst">The workbench is a front end for <a href="https://github.com/YuelongWu/feabas">FEABAS</a> (Yuelong Wu and
+      Jeff&nbsp;W. Lichtman, Harvard), which does the stitching and alignment; the method is described in
+      <a href="https://doi.org/10.64898/2026.06.07.730510">Wu &amp; Lichtman, 2026, bioRxiv</a> – cite that paper for any result you publish.</p>
       <ol class="pipeline" id="pipeline" aria-label="The seven windows, in pipeline order"></ol>
     </header>
 
     <div class="doc" id="doc">
 <h2 id="1-installing-and-starting-the-workbench">1. Installing and starting the workbench</h2>
 <h3 id="11-get-the-code">1.1 Get the code</h3>
-<p>The workbench is distributed from GitHub, <a href="https://github.com/georgkislinger/feabas-workbench">https://github.com/georgkislinger/feabas-workbench</a>; it is
-not on PyPI (so <code>pip install feabas-workbench</code> does not work). Three forms, all on the repository's
-<strong>Releases</strong> page or under the green <strong>Code</strong> button:</p>
+<p>The workbench comes from GitHub, <a href="https://github.com/georgkislinger/feabas-workbench">https://github.com/georgkislinger/feabas-workbench</a>, in three
+forms – on the repository's <strong>Releases</strong> page, under the green <strong>Code</strong> button, or from PyPI:</p>
 <ul>
 <li><strong><code>FEABAS-Workbench-&lt;version&gt;-windows-x64.zip</code></strong> (Releases) – the Windows app with its own Python
   inside; nothing to install (§1.2, first paragraph).</li>
-<li><strong><code>feabas_workbench-&lt;version&gt;-py3-none-any.whl</code></strong> (Releases) – for <code>pip install &lt;the file&gt;</code> into a
-  Python ≥ 3.10 environment of yours; gives the <code>feabas-workbench</code> command.</li>
+<li><strong>The Python package</strong> – <code>pip install feabas-workbench</code> into a Python ≥ 3.10 environment of yours
+  (<a href="https://pypi.org/project/feabas-workbench/">PyPI</a>; the same wheel,
+  <code>feabas_workbench-&lt;version&gt;-py3-none-any.whl</code>, is attached to every release); gives the
+  <code>feabas-workbench</code> command.</li>
 <li><strong>The source</strong> – <strong>Code → Download ZIP</strong>, or <code>git clone https://github.com/georgkislinger/feabas-workbench.git</code>
   (cloning makes later updates a single <code>git pull</code>). Unpack it somewhere permanent – that folder is the
   one you start the app from with <code>start_gui.bat</code> / <code>./start_gui.sh</code>. Avoid paths with spaces or
@@ -342,7 +346,7 @@ the choice here only concerns the GUI.</p>
 </tr>
 <tr>
 <td><strong>Plain Python 3.10+</strong> (python.org, Microsoft Store, your distribution) but no conda</td>
-<td>In the unpacked folder: <br>Windows: <code>python -m venv .venv</code> then <code>.venv\Scripts\python.exe -m pip install -e .</code> <br>Linux/macOS: <code>python3 -m venv .venv</code> then <code>.venv/bin/python -m pip install -e .</code> <br>Afterwards <code>start_gui.bat</code> / <code>./start_gui.sh</code> finds the <code>.venv</code> automatically. The Setup page will offer to <strong>download micromamba</strong> – a single-file conda – when it needs to create the FEABAS and deep-learning environments, so you never have to install conda yourself.</td>
+<td>Either <code>python -m pip install feabas-workbench</code> into any environment of yours and start with <code>feabas-workbench</code>; or, in the unpacked folder: <br>Windows: <code>python -m venv .venv</code> then <code>.venv\Scripts\python.exe -m pip install -e .</code> <br>Linux/macOS: <code>python3 -m venv .venv</code> then <code>.venv/bin/python -m pip install -e .</code> <br>Afterwards <code>start_gui.bat</code> / <code>./start_gui.sh</code> finds the <code>.venv</code> automatically. In both cases the Setup page will offer to <strong>download micromamba</strong> – a single-file conda – when it needs to create the FEABAS and deep-learning environments, so you never have to install conda yourself.</td>
 </tr>
 </tbody>
 </table></div>
@@ -1989,6 +1993,10 @@ whole pipeline run unattended — the same check CI performs on every commit:</p
 <p>At every stage: run the test-subset variant first on a new dataset. It costs minutes and saves hours.
 Once the coordinate files exist and the defaults suit the data, steps 4–6 are also one action:
 <em>Pipeline → Run the standard pipeline…</em> (§2.3).</p>
+<p>When the volume ends up in a paper, cite FEABAS for the stitching and alignment: Wu, Y. &amp; Lichtman,
+J. W. (2026), <em>FEABAS: A Stitching and Alignment Tool for Serial EM Data</em>, bioRxiv,
+<a href="https://doi.org/10.64898/2026.06.07.730510">doi:10.64898/2026.06.07.730510</a> – and, if you like, the workbench (README, <em>How to cite</em>;
+<em>Help → About</em> in the app has both links).</p>
 <hr />
 <h2 id="11-changing-your-mind-stale-clear-snapshots">11. Changing your mind: stale, clear, snapshots</h2>
 <p><strong>Snapshots</strong> (Pipeline → <em>Create snapshot of current state…</em>) copy the small, expensive things —

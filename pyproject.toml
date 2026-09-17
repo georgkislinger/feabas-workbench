@@ -1,6 +1,6 @@
 [project]
 name = "feabas-workbench"
-version = "0.3.1"
+version = "0.3.2"
 description = "Desktop workbench around FEABAS: data prep, preprocessing, stitching, masks, structure-guided alignment and export for serial-section EM"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -51,6 +51,8 @@ Homepage = "https://github.com/georgkislinger/feabas-workbench"
 "User guide" = "https://github.com/georgkislinger/feabas-workbench/blob/main/docs/USER_GUIDE.md"
 Issues = "https://github.com/georgkislinger/feabas-workbench/issues"
 FEABAS = "https://github.com/YuelongWu/feabas"
+"FEABAS paper" = "https://doi.org/10.64898/2026.06.07.730510"
+Changelog = "https://github.com/georgkislinger/feabas-workbench/blob/main/CHANGELOG.md"
 
 # gui-scripts: on Windows the launcher is a windowed exe, so no console window sits behind the GUI.
 # feabas-workbench-cli keeps a console-attached variant for --screenshot and for seeing tracebacks.
@@ -71,7 +73,8 @@ feabas-workbench = "feabas_workbench.app:main"
 feabas-workbench-cli = "feabas_workbench.app:main"
 
 [build-system]
-requires = ["setuptools>=68"]
+# >= 77 for the PEP 639 license expression / license-files above
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]

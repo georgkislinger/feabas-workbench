@@ -17,8 +17,10 @@
   <img src="docs/img/window3_stitching.png" alt="Stitching window" width="880">
 </p>
 
-FEABAS (Yuelong Wu, MIT) is a state-of-the-art pipeline for stitching and elastically aligning
-serial-section electron-microscopy data. It is driven from the command line by YAML files. The workbench
+[FEABAS](https://github.com/YuelongWu/feabas) – *Finite-Element Assisted Brain Assembly System*, by Yuelong Wu and Jeff W. Lichtman
+(Harvard; MIT licence) and described in [Wu & Lichtman, 2026](https://doi.org/10.64898/2026.06.07.730510) – is a state-of-the-art
+pipeline for stitching and elastically aligning serial-section electron-microscopy data. It is driven
+from the command line by YAML files. The workbench
 wraps it in seven windows, one per stage, and adds the parts the command line leaves to you: reading tile
 positions out of microscope metadata, building the masks, test runs on subsets, quality overlays, rolling
 back, and exporting to a viewer.
@@ -75,12 +77,11 @@ machine:
 |---|---|
 | **a Windows PC with nothing on it** (no Python, no conda) | Download `FEABAS-Workbench-<version>-windows-x64.zip` from the [Releases page](https://github.com/georgkislinger/feabas-workbench/releases), unpack it, start `FEABAS-Workbench\FEABAS-Workbench.exe` (SmartScreen warns once: *More info → Run anyway*). Or get the source (below) and double-click `tools\install.bat`: with no package manager on the PC it downloads a standalone micromamba and continues. |
 | **micromamba / Miniforge / Miniconda / Anaconda** | Get the source (**Code → Download ZIP**, or `git clone`), unpack, then Windows: double-click `tools\install.bat` · Linux/macOS: `bash tools/install.sh`. The script finds the package manager, creates the `feabas-workbench` env, installs the app and hard-wires `start_gui.bat` / `start_gui.sh` to it. |
-| **plain Python ≥ 3.10**, no conda | In the unpacked source: `python -m venv .venv` then `.venv\Scripts\python -m pip install -e .` (Linux: `.venv/bin/python`); or, into any environment of yours, `pip install feabas_workbench-<version>-py3-none-any.whl` downloaded from the Releases page. |
+| **plain Python ≥ 3.10**, no conda | `pip install feabas-workbench` into any environment of yours ([PyPI](https://pypi.org/project/feabas-workbench/); the same wheel is attached to every GitHub release). Or, in the unpacked source: `python -m venv .venv` then `.venv\Scripts\python -m pip install -e .` (Linux: `.venv/bin/python`). |
 
-The package is not on PyPI (yet), so `pip install feabas-workbench` does not work; use the wheel from the
-Releases page as in the last row. Start with **`start_gui.bat`** (Windows) or **`./start_gui.sh`**
-(Linux/macOS) – both find the environment on their own – or, after a pip install, with `feabas-workbench`
-(`feabas-workbench-cli` keeps a console window, for tracebacks). Then open **Setup**: *Detect
+Start with **`start_gui.bat`** (Windows) or **`./start_gui.sh`** (Linux/macOS) – both find the
+environment on their own – or, after a pip install, with `feabas-workbench` (`feabas-workbench-cli`
+keeps a console window, for tracebacks). Then open **Setup**: *Detect
 environments* finds existing FEABAS / PyTorch environments, otherwise *Install fw-feabas* and *Install
 fw-dl* create them.
 
@@ -162,7 +163,9 @@ CI, on every commit: lint (ruff, pyflakes level), the tests, the offscreen rende
 synthetic project and the wheel build on Ubuntu and Windows for Python 3.11 and 3.12; the **whole
 FEABAS pipeline** on a synthetic 4-section dataset on Linux (`tools/run_demo_pipeline.py`, and once more
 through the GUI's job queue with `tools/run_demo_pipeline_gui.py`); and the frozen Windows build with
-its self-check. A `v*` tag builds the wheel, sdist and Windows zip and publishes the GitHub Release.
+its self-check. A `v*` tag builds the wheel, sdist and Windows zip, publishes the GitHub Release and
+uploads the wheel and sdist to PyPI (trusted publishing, no stored token; the README goes through
+`tools/absolutize_readme.py` first because PyPI does not resolve relative links).
 
 Code map: `feabas_workbench/core` (Qt-free: project, tiles, configs, steps, jobs, pipeline, masks, images,
 test runs, environments, synthetic data), `feabas_workbench/workers` (subprocess workers: histogram matching, N2V, fold U-Net, YOLO,
@@ -175,7 +178,8 @@ only matters for resuming that run — the full 280 MB checkpoint is not bundled
 ## Credits and license
 
 This is a front end for **[FEABAS](https://github.com/YuelongWu/feabas)** by Yuelong Wu (Center for
-Brain Science, Harvard University), which does the actual stitching and alignment. FEABAS is MIT-licensed;
+Brain Science, Harvard University), which does the actual stitching and alignment; the method is
+described in Wu & Lichtman (2026), [doi:10.64898/2026.06.07.730510](https://doi.org/10.64898/2026.06.07.730510). FEABAS is MIT-licensed;
 its driver scripts and default configuration files are vendored here unchanged, with their license, under
 `feabas_workbench/vendor/feabas_3_0_5/` (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 
@@ -184,8 +188,13 @@ author attribution; anyone who redistributes the workbench, or substantial parts
 
 ## How to cite
 
-If the workbench was useful in your work, please cite it (GitHub's *Cite this repository* button uses
-[CITATION.cff](CITATION.cff)) and cite FEABAS for the stitching and alignment itself:
+Cite FEABAS for the stitching and alignment – that is where the science is:
 
-> Kislinger, G. (2026). *FEABAS Workbench* (version 0.3.1) [Computer software].
+> Wu, Y. & Lichtman, J. W. (2026). *FEABAS: A Stitching and Alignment Tool for Serial EM Data.*
+> bioRxiv. https://doi.org/10.64898/2026.06.07.730510
+
+and, if the workbench was useful in your work, the workbench too (GitHub's *Cite this repository*
+button uses [CITATION.cff](CITATION.cff)):
+
+> Kislinger, G. (2026). *FEABAS Workbench* (version 0.3.2) [Computer software].
 > https://github.com/georgkislinger/feabas-workbench — ORCID 0000-0002-6559-7421

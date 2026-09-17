@@ -35,4 +35,6 @@
 - Workers in other interpreters get `core/jobs.worker_env()` on PYTHONPATH, a staged copy of the package under
   `%APPDATA%/FeabasWorkbench/worker_pkg` holding only `core/`, `workers/`, `vendor/`. Never put `package_root()`
   itself there: for a wheel install that is site-packages (for a frozen build the bundle), and its compiled numpy/cv2
-  would shadow the other interpreter's own. Release: `python -m build` → `pip install dist/*.whl` in a clean venv.
+  would shadow the other interpreter's own. Release: bump `pyproject.toml`, `__init__.py`, `CITATION.cff`, README
+  "How to cite", CHANGELOG; `python -m build` → `pip install dist/*.whl` in a clean venv; push tag `vX.Y.Z` → GitHub
+  Release + PyPI (trusted publishing from `.github/workflows/release.yml`, environment `pypi`, no token).

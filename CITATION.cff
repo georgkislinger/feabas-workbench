@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-message: "If you use FEABAS Workbench in your work, please cite it as below, and cite FEABAS (Yuelong Wu) for the stitching and alignment itself."
+message: "If you use FEABAS Workbench in your work, please cite it as below, and cite FEABAS (Wu & Lichtman, 2026, doi:10.64898/2026.06.07.730510) for the stitching and alignment itself."
 type: software
 title: "FEABAS Workbench"
 abstract: "A desktop workbench around FEABAS: data preparation, preprocessing, stitching, masks, alignment and export for serial-section electron microscopy."
@@ -10,8 +10,8 @@ authors:
     affiliation: "German Center for Neurodegenerative Diseases (DZNE); Technical University of Munich (TUM)"
 repository-code: "https://github.com/georgkislinger/feabas-workbench"
 license: Apache-2.0
-version: 0.3.1
-date-released: "2026-09-16"
+version: 0.3.2
+date-released: "2026-09-17"
 keywords:
   - electron microscopy
   - connectomics
@@ -19,6 +19,17 @@ keywords:
   - alignment
   - FEABAS
 references:
+  - type: article
+    title: "FEABAS: A Stitching and Alignment Tool for Serial EM Data"
+    authors:
+      - family-names: Wu
+        given-names: Yuelong
+      - family-names: Lichtman
+        given-names: Jeff W.
+    journal: bioRxiv
+    year: 2026
+    doi: 10.64898/2026.06.07.730510
+    url: "https://doi.org/10.64898/2026.06.07.730510"
   - type: software
     title: "FEABAS"
     authors:

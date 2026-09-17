@@ -11,6 +11,8 @@ This repository vendors the driver scripts, tools and default configuration file
 stitching and alignment; the workbench is a front end for it.
 
 * Project: <https://github.com/YuelongWu/feabas>
+* Paper: Wu, Y. & Lichtman, J. W. (2026). *FEABAS: A Stitching and Alignment Tool for Serial EM Data.*
+  bioRxiv, <https://doi.org/10.64898/2026.06.07.730510>
 * Copyright (c) 2022 Yuelong Wu, Center for Brain Science, Harvard University
 * License: MIT – see [`feabas_workbench/vendor/feabas_3_0_5/LICENSE`](feabas_workbench/vendor/feabas_3_0_5/LICENSE)
 

@@ -4,6 +4,11 @@ Every window, every setting: what it does, when to touch it, and what it breaks 
 If you only want the short version, read [Installing and starting the workbench](#1-installing-and-starting-the-workbench) and
 [A first dataset, end to end](#10-a-first-dataset-end-to-end).
 
+The workbench is a front end for **[FEABAS](https://github.com/YuelongWu/feabas)** (*Finite-Element Assisted Brain Assembly
+System*, Yuelong Wu and Jeff W. Lichtman, Harvard), which does the stitching and alignment; the
+method is described in [Wu & Lichtman, 2026, bioRxiv](https://doi.org/10.64898/2026.06.07.730510) – cite that paper for any result you
+publish, and see the README's *How to cite* for the workbench itself.
+
 **Contents**
 
 1. [Installing and starting the workbench](#1-installing-and-starting-the-workbench)
@@ -26,14 +31,15 @@ If you only want the short version, read [Installing and starting the workbench]
 
 ### 1.1 Get the code
 
-The workbench is distributed from GitHub, <https://github.com/georgkislinger/feabas-workbench>; it is
-not on PyPI (so `pip install feabas-workbench` does not work). Three forms, all on the repository's
-**Releases** page or under the green **Code** button:
+The workbench comes from GitHub, <https://github.com/georgkislinger/feabas-workbench>, in three
+forms – on the repository's **Releases** page, under the green **Code** button, or from PyPI:
 
 * **`FEABAS-Workbench-<version>-windows-x64.zip`** (Releases) – the Windows app with its own Python
   inside; nothing to install (§1.2, first paragraph).
-* **`feabas_workbench-<version>-py3-none-any.whl`** (Releases) – for `pip install <the file>` into a
-  Python ≥ 3.10 environment of yours; gives the `feabas-workbench` command.
+* **The Python package** – `pip install feabas-workbench` into a Python ≥ 3.10 environment of yours
+  ([PyPI](https://pypi.org/project/feabas-workbench/); the same wheel,
+  `feabas_workbench-<version>-py3-none-any.whl`, is attached to every release); gives the
+  `feabas-workbench` command.
 * **The source** – **Code → Download ZIP**, or `git clone https://github.com/georgkislinger/feabas-workbench.git`
   (cloning makes later updates a single `git pull`). Unpack it somewhere permanent – that folder is the
   one you start the app from with `start_gui.bat` / `./start_gui.sh`. Avoid paths with spaces or
@@ -67,7 +73,7 @@ the choice here only concerns the GUI.
 |---|---|
 | **Nothing** – no Python, no conda | Windows: the two routes above (the exe, or `tools\install.bat`, which downloads micromamba). Linux/macOS: install **Miniforge** from <https://conda-forge.org/download/> (accept the defaults), then follow the next row. |
 | **micromamba, Miniforge, Miniconda or Anaconda** | Windows: double-click **`tools\install.bat`**. Linux/macOS: `bash tools/install.sh`. The script finds a package manager (micromamba and mamba first, then conda: on `PATH`, in `CONDA_EXE` / `MAMBA_EXE`, and in the usual install folders on `C:`, `D:` and `E:`; `set FW_CONDA=…` forces one, `set FW_DEBUG=1` shows the search), creates an environment called `feabas-workbench` unless it exists, installs the app into it, **records that interpreter in `start_gui.local.bat`** so the launcher is hard-wired to this installation, puts a shortcut on the Windows Desktop and starts the GUI. Later, start it with `start_gui.bat` / `./start_gui.sh`. |
-| **Plain Python 3.10+** (python.org, Microsoft Store, your distribution) but no conda | In the unpacked folder: <br>Windows: `python -m venv .venv` then `.venv\Scripts\python.exe -m pip install -e .` <br>Linux/macOS: `python3 -m venv .venv` then `.venv/bin/python -m pip install -e .` <br>Afterwards `start_gui.bat` / `./start_gui.sh` finds the `.venv` automatically. The Setup page will offer to **download micromamba** – a single-file conda – when it needs to create the FEABAS and deep-learning environments, so you never have to install conda yourself. |
+| **Plain Python 3.10+** (python.org, Microsoft Store, your distribution) but no conda | Either `python -m pip install feabas-workbench` into any environment of yours and start with `feabas-workbench`; or, in the unpacked folder: <br>Windows: `python -m venv .venv` then `.venv\Scripts\python.exe -m pip install -e .` <br>Linux/macOS: `python3 -m venv .venv` then `.venv/bin/python -m pip install -e .` <br>Afterwards `start_gui.bat` / `./start_gui.sh` finds the `.venv` automatically. In both cases the Setup page will offer to **download micromamba** – a single-file conda – when it needs to create the FEABAS and deep-learning environments, so you never have to install conda yourself. |
 
 Linux only: PySide6 needs a handful of system libraries that minimal server installs lack. On
 Debian/Ubuntu: `sudo apt install libegl1 libopengl0 libxkbcommon0 libdbus-1-3 libxcb-cursor0 libfontconfig1`.
@@ -966,6 +972,11 @@ python tools\run_demo_pipeline.py D:\demo --feabas-python C:\path\to\fw-feabas\p
 At every stage: run the test-subset variant first on a new dataset. It costs minutes and saves hours.
 Once the coordinate files exist and the defaults suit the data, steps 4–6 are also one action:
 *Pipeline → Run the standard pipeline…* (§2.3).
+
+When the volume ends up in a paper, cite FEABAS for the stitching and alignment: Wu, Y. & Lichtman,
+J. W. (2026), *FEABAS: A Stitching and Alignment Tool for Serial EM Data*, bioRxiv,
+[doi:10.64898/2026.06.07.730510](https://doi.org/10.64898/2026.06.07.730510) – and, if you like, the workbench (README, *How to cite*;
+*Help → About* in the app has both links).
 
 ---
 

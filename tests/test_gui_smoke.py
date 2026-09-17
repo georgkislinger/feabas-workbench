@@ -265,3 +265,21 @@ def test_standard_pipeline_dialog_lists_what_is_left(app, window, tmp_path):
     assert [s.key for s in dlg.steps_to_run()][0] == "stitch.optimization" and "stale" in dlg.summary.text()
     dlg.close()
     assert not window.errors, window.errors
+
+
+def test_help_menu_and_about_cite_feabas(app, window, monkeypatch):
+    """Help links to the FEABAS repository, the FEABAS paper and the workbench; About cites the paper."""
+    from PySide6.QtWidgets import QMenu, QMessageBox
+    from feabas_workbench import FEABAS_REPO, FEABAS_PAPER, WORKBENCH_REPO
+    help_menu = next(m for m in window.menuBar().findChildren(QMenu) if m.title() == "&Help")
+    titles = [a.text() for a in help_menu.actions() if not a.isSeparator()]
+    assert titles[:3] == ["FEABAS on GitHub", "FEABAS paper (Wu && Lichtman, 2026)", "Workbench on GitHub"]
+    opened: list[str] = []
+    monkeypatch.setattr(type(window), "_open_url", staticmethod(opened.append))
+    for a in help_menu.actions()[:3]:
+        a.trigger()
+    assert opened == [FEABAS_REPO, FEABAS_PAPER, WORKBENCH_REPO]
+    shown: list[str] = []
+    monkeypatch.setattr(QMessageBox, "about", staticmethod(lambda parent, title, text: shown.append(text)))
+    window._about()
+    assert "10.64898/2026.06.07.730510" in shown[0] and "Lichtman" in shown[0] and WORKBENCH_REPO in shown[0]
