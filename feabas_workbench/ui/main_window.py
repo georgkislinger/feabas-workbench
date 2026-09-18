@@ -121,6 +121,7 @@ class MainWindow(QMainWindow):
 
         p = mb.addMenu("&Pipeline")
         a = QAction("Run the &standard pipeline…", self); a.setShortcut("Ctrl+R"); a.triggered.connect(self.run_standard_pipeline); p.addAction(a)
+        a = QAction("Run on &cluster…", self); a.triggered.connect(self.run_on_cluster); p.addAction(a)
         p.addSeparator()
         a = QAction("Create &snapshot of current state…", self); a.triggered.connect(self.make_snapshot); p.addAction(a)
         a = QAction("&Restore snapshot…", self); a.triggered.connect(self.restore_snapshot_dialog); p.addAction(a)
@@ -154,6 +155,42 @@ class MainWindow(QMainWindow):
         self.ctx.jobs.job_finished.connect(self._job_finished)
         self.ctx.jobs.running_changed.connect(self._running)
         self.cancel_btn.clicked.connect(self._cancel)
+
+    def run_on_cluster(self) -> None:
+        if self.ctx.project is None:
+            QMessageBox.information(self, "Open a project", "Open or create a project first.")
+            return
+        if self.ctx.jobs.running:
+            QMessageBox.information(self, "Local job running", "Let the local job finish before snapshotting cluster inputs.")
+            return
+        try:
+            from .cluster_dialog import ClusterDialog
+        except (ImportError, OSError) as e:
+            import shlex
+            import subprocess
+            import sys
+            if getattr(sys, "frozen", False):
+                repair = "Re-extract the complete Windows app, including its _internal folder."
+            else:
+                argv = [sys.executable, "-m", "pip", "install", "paramiko>=3.4,<6"]
+                command = subprocess.list2cmdline(argv) if sys.platform == "win32" else shlex.join(argv)
+                # cmd.exe treats < and > as redirections unless quoted.
+                if sys.platform == "win32":
+                    command = command.replace("paramiko>=3.4,<6", '"paramiko>=3.4,<6"')
+                repair = "Run this command in a terminal, then restart Workbench:\n\n" + command
+            QMessageBox.warning(self, "Cluster support needs setup",
+                                "The SSH components could not be loaded in this Workbench environment.\n\n"
+                                + repair + "\n\nDetails: " + str(e))
+            self.ctx.log(f"Cluster support unavailable: {e}", "warn")
+            return
+        dialog = ClusterDialog(self.ctx, self)
+        self._cluster_dialog = dialog
+        try:
+            dialog.exec()
+        finally:
+            dialog.shutdown()
+            self._cluster_dialog = None
+            dialog.deleteLater()
 
     # ------------------------------------------------------------------
     def page_count(self) -> int:
@@ -413,6 +450,8 @@ class MainWindow(QMainWindow):
         if getattr(self, "_shut_down", False):
             return
         self._shut_down = True
+        if getattr(self, "_cluster_dialog", None) is not None:
+            self._cluster_dialog.shutdown()
         self.ctx.jobs.cancel_all()
         for page in self._pages:
             try:

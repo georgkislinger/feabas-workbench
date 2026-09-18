@@ -12,12 +12,13 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .jobs import feabas_env
+from .jobs import feabas_env, kill_tree
 from .steps import (STEPS_BY_KEY, STANDARD_PIPELINE, RENDER_PIPELINE, Step, count_outputs, expected_outputs,
                     step_argv)
 
@@ -46,8 +47,19 @@ def run_step(root: Path, step: Step, python: str = sys.executable, log: Callable
     argv = step_argv(python, step)
     t0 = time.time()
     log(f"== {step.label}: {' '.join(argv[1:])}")
+    options = ({"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP}
+               if os.name == "nt" else {"start_new_session": True})
     proc = subprocess.Popen(argv, cwd=str(root), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, encoding="utf-8", errors="replace")
+                            text=True, encoding="utf-8", errors="replace", **options)
+    timed_out = threading.Event()
+    def expire():
+        if proc.poll() is None:
+            timed_out.set()
+            kill_tree(proc.pid)
+    timer = threading.Timer(timeout, expire) if timeout and timeout > 0 else None
+    if timer:
+        timer.daemon = True
+        timer.start()
     tail: list[str] = []
     try:
         for line in proc.stdout:            # type: ignore[union-attr]
@@ -56,12 +68,19 @@ def run_step(root: Path, step: Step, python: str = sys.executable, log: Callable
             if len(tail) > 40:
                 del tail[:-40]
             log("   " + line)
-            if timeout and time.time() - t0 > timeout:
-                proc.kill()
-                log(f"   killed after {timeout:.0f} s")
-                break
     finally:
-        code = proc.wait()
+        try:
+            # EOF does not guarantee process exit: keep the watchdog active
+            # when a child closes its output stream before finishing.
+            code = proc.wait()
+        finally:
+            if timer:
+                timer.cancel()
+            if proc.stdout:
+                proc.stdout.close()
+    if timed_out.is_set():
+        log(f"   process tree stopped after {timeout:.0f} s")
+        code = code or 124
     done, expected = count_outputs(root, step), expected_outputs(root, step)
     run = StepRun(step, code, time.time() - t0, done, expected)
     log(f"== {step.label}: exit {code}, {done}/{expected} outputs, {run.seconds:.0f} s")

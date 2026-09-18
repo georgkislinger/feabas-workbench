@@ -1,6 +1,6 @@
 """FEABAS Workbench: a desktop front end around FEABAS for serial-section EM."""
 
-__version__ = "0.3.3"
+__version__ = "0.3.3+cluster.1"
 APP_NAME = "FEABAS Workbench"
 ORG_NAME = "FeabasWorkbench"
 WORKBENCH_REPO = "https://github.com/georgkislinger/feabas-workbench"

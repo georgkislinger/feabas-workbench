@@ -112,13 +112,13 @@ class Job:
             popen_kwargs["creationflags"] = creation
         else:
             popen_kwargs["start_new_session"] = True
-        if spec.log_file:
-            spec.log_file.parent.mkdir(parents=True, exist_ok=True)
-            self._logfh = open(spec.log_file, "a", encoding="utf-8")
-            self._logfh.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')}  {spec.name}\n$ {spec.cmdline()}\n")
         self.started_at = time.time()
-        self._emit("out", f"$ {spec.cmdline()}\n")
         try:
+            if spec.log_file:
+                spec.log_file.parent.mkdir(parents=True, exist_ok=True)
+                self._logfh = open(spec.log_file, "a", encoding="utf-8")
+                self._logfh.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')}  {spec.name}\n$ {spec.cmdline()}\n")
+            self._emit("out", f"$ {spec.cmdline()}\n")
             self.proc = subprocess.Popen(
                 spec.argv, cwd=str(spec.cwd), env=env,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -126,8 +126,13 @@ class Job:
                 **popen_kwargs)
         except OSError as e:
             self._emit("err", f"could not start process: {e}\n")
-            self._finish(127)
+            # start() is called while JobQueue holds its lock. Finish on a reader
+            # thread, just like a normally exiting process, to avoid re-entering it.
+            self._thread = threading.Thread(target=self._finish, args=(127,), daemon=True)
+            self._thread.start()
             return
+        if self.cancelled:
+            kill_tree(self.proc.pid)
         if spec.progress_fn is not None or spec.count_outputs is not None:
             if spec.count_outputs is not None:
                 try:

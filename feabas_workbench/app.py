@@ -39,6 +39,14 @@ def selfcheck(out: Path) -> int:
     from .core.envs import Settings, settings_dir
     rep: dict = {"version": __version__, "frozen": bool(getattr(sys, "frozen", False)), "python": sys.executable,
                  "package_root": str(package_root()), "settings_dir": str(settings_dir()), "problems": []}
+    try:
+        from .core.cluster_transport import ClusterClient
+        from .core.cluster_bundle import ClusterResources
+        from .ui.cluster_dialog import ClusterDialog
+        ClusterResources().validate()
+        rep["cluster_support"] = bool(ClusterClient and ClusterDialog)
+    except Exception as e:  # noqa: BLE001
+        rep["problems"].append(f"cluster support unavailable: {e}")
     for name in ("scripts/stitch_main.py", "scripts/thumbnail_main.py", "scripts/align_main.py"):
         if not (VENDOR_DIR / name).is_file():
             rep["problems"].append(f"vendored FEABAS script missing: {VENDOR_DIR / name}")
