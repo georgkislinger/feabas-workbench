@@ -107,6 +107,9 @@ class StepsPanel(QWidget):
             w.confirm_clear(step)
 
     def _clear_errors(self, step: Step) -> None:
+        if self.ctx.cluster_enabled:
+            self._clear(step)
+            return
         root = self.root_override or self.ctx.project.root
         n = len(clear_error_files(root, step))
         self.ctx.log(f"removed {n} error file(s) of '{step.label}'; re-run the step to retry those sections")

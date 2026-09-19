@@ -16,6 +16,8 @@ def main() -> int:
     template = Path(spec["template"])
     ext = spec.get("ext", "tif")
     files = [Path(p) for p in spec.get("files", [])] or list_image_files(in_root, ext, spec.get("recursive", True))
+    if not files:
+        raise ValueError(f"No input images found in {in_root}. Check the source folder and finish synchronization first.")
     log(f"{len(files)} files, template {template.name}")
     failures = histmatch.match_folder(
         files, in_root, out_root, template,

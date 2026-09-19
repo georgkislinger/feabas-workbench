@@ -51,7 +51,7 @@ class JobRecord:
 
 
 def _job(job_id: str, cluster: str) -> None:
-    if not re.fullmatch(r"[1-9][0-9]*", job_id) or cluster not in {"cm4", "serial"}:
+    if not re.fullmatch(r"[1-9][0-9]*", job_id) or cluster not in {"cm4", "serial", "inter"}:
         raise ValueError("Invalid Slurm job or cluster.")
 
 
@@ -167,6 +167,73 @@ class ClusterClient:
         command += "command -v sbatch >/dev/null; " + " ".join(map(shlex.quote, [python, "-c", code, rp, rt]))
         return self.execute(command)
 
+    def discover(self) -> dict:
+        """Small read-only account/storage checks, no workload on the login node."""
+        info = self.execute("python3 -c " + shlex.quote(
+            "import os,json,sys,shutil; print(json.dumps(dict(home=os.path.expanduser('~'), "
+            "python=sys.executable, version=list(sys.version_info[:3]), user=os.environ.get('USER',''))))"))
+        result = json.loads(info.splitlines()[-1])
+        try:
+            result["storage"] = self.execute("dssusrinfo all")
+        except ClusterError as e:
+            result["storage"] = str(e)
+        result["directories"] = sorted(set(re.findall(r"/dss/[A-Za-z0-9_./+-]+", result["storage"])))
+        return result
+
+    def prepare_workspace(self, profile: dict) -> str:
+        rp, rt = map(remote_path, (profile["remote_project"], profile["remote_tiles"]))
+        if rp == rt or rp.startswith(rt + "/") or rt.startswith(rp + "/"):
+            raise ValueError("Keep raw images and the remote work folder separate.")
+        identifier = profile["project_id"]
+        if not re.fullmatch(r"[0-9a-f]{32}", identifier):
+            raise ValueError("Invalid project identity.")
+        with self._sftp() as sftp:
+            self._mkdirs(sftp, rp)
+            control = rp + "/.workbench-cluster"
+            try:
+                with sftp.open(control + "/owner.json") as f:
+                    existing = json.loads(f.read())
+                if existing.get("project_id") != identifier:
+                    raise ClusterError("This remote directory belongs to another project. Choose a new folder.")
+            except FileNotFoundError:
+                if sftp.listdir(rp):
+                    raise ClusterError("Choose an empty remote work folder for the first setup.")
+                self._mkdirs(sftp, control)
+                with sftp.open(control + "/owner.json", "w") as f:
+                    f.write(json.dumps({"project_id": identifier}))
+            self._mkdirs(sftp, rt)
+            with sftp.open(control + "/connection-" + identifier + ".txt", "w") as f:
+                f.write(identifier)
+            with sftp.open(rt + "/.workbench-connection-" + identifier + ".txt", "w") as f:
+                f.write(identifier)
+        return "Remote workspace is writable and belongs to this project."
+
+    def install_environment(self, python_path: str, modules: str = "") -> str:
+        dest = remote_path(python_path)
+        if not dest.endswith("/bin/python"):
+            raise ValueError("The environment Python should end in /bin/python.")
+        env = dest[:-len("/bin/python")]
+        mods = module_names(modules)
+        prefix = "set -e; "
+        if mods:
+            prefix += "module load " + " ".join(map(shlex.quote, mods)) + "; "
+        command = (prefix + "python3 -c " + shlex.quote("import sys; assert sys.version_info >= (3,10), 'Select a Python >= 3.10 module in Advanced'")
+                   + "; if ! test -x " + shlex.quote(dest) + "; then python3 -m venv " + shlex.quote(env) + "; fi; "
+                   + shlex.quote(dest) + " -m pip install --only-binary=:all: 'feabas==3.0.5' psutil tifffile imagecodecs "
+                   "opencv-python-headless h5py PyYAML scikit-image; "
+                   + shlex.quote(dest) + " -c " + shlex.quote("import feabas,cv2,numpy,h5py,psutil,tensorstore; print('FEABAS environment ready')"))
+        return self.execute(command, timeout=1200)
+
+    def read_remote_json(self, path: str, missing=None):
+        try:
+            with self._sftp() as sftp, sftp.open(remote_path(path), "rb") as f:
+                data = f.read(2 * 1024 * 1024 + 1)
+                if len(data) > 2 * 1024 * 1024:
+                    raise ClusterError("Remote status document exceeds 2 MiB.")
+                return json.loads(data)
+        except FileNotFoundError:
+            return missing
+
     def _sftp(self):
         if not self.connected:
             raise ClusterError("Connect first.")
@@ -226,7 +293,7 @@ class ClusterClient:
 
     def submit(self, remote_bundle: str, cluster: str) -> JobRecord:
         rb = remote_path(remote_bundle)
-        if cluster not in {"cm4", "serial"}:
+        if cluster not in {"cm4", "serial", "inter"}:
             raise ValueError("Invalid cluster.")
         # Lock remains after ambiguous failures; repeating submission cannot create a duplicate.
         cmd = ("set -e; module load slurm_setup; cd -- " + shlex.quote(rb) + "; test -f READY; "
@@ -262,7 +329,8 @@ class ClusterClient:
         return "Cancellation requested. Refresh later to confirm."
 
     def tail_log(self, path: str) -> str:
-        return self.execute("tail -c 65536 -- " + shlex.quote(remote_path(path)))
+        p = shlex.quote(remote_path(path))
+        return self.execute("if test -f " + p + "; then tail -c 65536 -- " + p + "; fi")
 
     def download_file(self, remote: str, destination: Path) -> int:
         """Explicit single regular file, maximum 64 MiB. Bulk results use Globus."""

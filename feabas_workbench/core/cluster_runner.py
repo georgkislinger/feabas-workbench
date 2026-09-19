@@ -50,6 +50,9 @@ def run(bundle: Path) -> None:
     if version("feabas") != "3.0.5":
         raise RuntimeError("This bundle requires feabas==3.0.5 in the remote Python environment.")
     manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("workspace"):
+        from .cluster_remote import run as run_workspace
+        return run_workspace(bundle)
     root = Path(manifest["remote_project"])
     root.mkdir(parents=True, exist_ok=True)
     control = root / ".workbench-cluster"

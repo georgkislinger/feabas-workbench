@@ -398,7 +398,7 @@ class PreprocessPage(Page):
             QMessageBox.information(self, "Model", "Train a model first.")
             return
         p = self.project
-        src_root = p.preprocessed_dir / "histmatch" if self.src_hm.isChecked() and (p.preprocessed_dir / "histmatch").is_dir() else Path(p.state.source.root_dir)
+        src_root = p.preprocessed_dir / "histmatch" if self.src_hm.isChecked() and (self.ctx.cluster_enabled or (p.preprocessed_dir / "histmatch").is_dir()) else Path(p.state.source.root_dir)
         rule = p.state.source.naming_rule()
         out = p.preprocessed_dir / "denoised"
         payload = {"checkpoint": ck, "in_root": str(src_root), "out_root": str(out), "ext": rule.ext, "recursive": rule.recursive,
@@ -446,6 +446,9 @@ class PreprocessPage(Page):
         dn = p.preprocessed_dir / "denoised"
         n_hm = sum(1 for _ in hm.rglob("*.*")) if hm.is_dir() else 0
         n_dn = sum(1 for _ in dn.rglob("*.*")) if dn.is_dir() else 0
+        if self.ctx.cluster_enabled:
+            counts = self.ctx.cluster.snapshot.get("preprocessing", {})
+            n_hm, n_dn = counts.get("histmatch", 0), counts.get("denoised", 0)
         self.src_hm.setEnabled(n_hm > 0); self.src_dn.setEnabled(n_dn > 0)
         cur = p.state.preprocessing.active_source
         self.src_info.setText(f"raw: {p.state.volume.n_tiles} tiles · histogram-matched: {n_hm} files · denoised: {n_dn} files · "
@@ -458,7 +461,7 @@ class PreprocessPage(Page):
         choice = "histmatch" if self.src_hm.isChecked() else ("denoise" if self.src_dn.isChecked() else "raw")
         p.state.preprocessing.active_source = choice
         root = p.active_tile_root()
-        if root is None or not root.is_dir():
+        if root is None or (not self.ctx.cluster_enabled and not root.is_dir()):
             self.error(f"tile folder not found: {root}")
             return
         n = retarget_stitch_coords(p, root)

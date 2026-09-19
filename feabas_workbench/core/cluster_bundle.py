@@ -15,10 +15,30 @@ from .project import Project, VENDOR_DIR
 from .steps import STEPS, STEPS_BY_KEY
 
 MAX_BUNDLE_BYTES = 64 * 1024 * 1024
+
+
+def file_hash(path):
+    h = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def stage_input(source, target, bundle, external):
+    """Keep the SSH package small; immutable large inputs are staged by Globus."""
+    used = sum(p.stat().st_size for p in bundle.rglob("*") if p.is_file())
+    if used + source.stat().st_size > MAX_BUNDLE_BYTES - 6 * 1024 * 1024:
+        rel = target.relative_to(bundle / "inputs").as_posix()
+        external[rel] = dict(source=str(source), size=source.stat().st_size, sha256=file_hash(source))
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, target)
 PARTITIONS = {
     "cm4_tiny": ("cm4", 17, 112, 244, 24, "cm4_tiny"),
     "serial_std": ("serial", 1, 16, 100, 24, ""),
     "serial_long": ("serial", 1, 16, 100, 168, "cm4_serial_long"),
+    "teramem_inter": ("inter", 1, 96, 2900, 240, ""),
 }
 
 
@@ -45,6 +65,7 @@ class ClusterResources:
     memory_gib: int = 128
     hours: int = 4
     workers: int = 16
+    section_concurrency: int = 1
 
     @property
     def cluster(self) -> str:
@@ -54,7 +75,7 @@ class ClusterResources:
         if self.partition not in PARTITIONS:
             raise ValueError("Choose a supported LRZ batch partition.")
         _, low, high, mem, hours, _ = PARTITIONS[self.partition]
-        if any(type(x) is not int for x in (self.cpus, self.memory_gib, self.hours, self.workers)):
+        if any(type(x) is not int for x in (self.cpus, self.memory_gib, self.hours, self.workers, self.section_concurrency)):
             raise ValueError("Resources must be whole numbers.")
         if not low <= self.cpus <= high:
             raise ValueError(f"{self.partition}: choose {low}–{high} physical CPU cores.")
@@ -62,9 +83,11 @@ class ClusterResources:
             raise ValueError(f"{self.partition}: maximum {mem} GiB and {hours} hours in this preset.")
         if not 1 <= self.workers <= self.cpus:
             raise ValueError("Workers must be between 1 and the allocated CPU count.")
+        if not 1 <= self.section_concurrency <= self.cpus or self.section_concurrency * self.workers > self.cpus:
+            raise ValueError("Simultaneous sections × workers per section must fit within the allocated CPU count.")
 
 
-def _rewrite_coordinates(text: str, local_tiles: Path, remote_tiles: str) -> str:
+def _rewrite_coordinates(text: str, local_tiles: Path, remote_tiles: str, verify_files: bool = True) -> str:
     base = local_tiles.resolve()
     rows = [f"{{ROOT_DIR}}\t{remote_tiles}"]
     count = 0
@@ -87,7 +110,7 @@ def _rewrite_coordinates(text: str, local_tiles: Path, remote_tiles: str) -> str
                 rel = tile.relative_to(local_tiles.resolve()).as_posix()
             except ValueError as e:
                 raise ValueError(f"Tile outside the active tile folder: {tile}") from e
-            if not tile.is_file():
+            if verify_files and not tile.is_file():
                 raise ValueError(f"Tile is missing: {tile}")
             float(parts[1]); float(parts[2])
             rows.append("\t".join([rel, *parts[1:]]))
@@ -117,11 +140,11 @@ def _portable_config(value, cpus: int, key: str = ""):
 
 def export_bundle(project: Project, destination: Path, remote_project: str, remote_tiles: str,
                   remote_python: str, resources: ClusterResources, step_keys: list[str],
-                  modules: str = "") -> Path:
+                  modules: str = "", workspace: bool = False) -> Path:
     """Snapshot small inputs only. Existing local project and images are never changed."""
     resources.validate()
     rp, rt, python = map(remote_path, (remote_project, remote_tiles, remote_python))
-    if (PurePosixPath(rp) == PurePosixPath(rt) or PurePosixPath(rp) in PurePosixPath(rt).parents
+    if not workspace and (PurePosixPath(rp) == PurePosixPath(rt) or PurePosixPath(rp) in PurePosixPath(rt).parents
             or PurePosixPath(rt) in PurePosixPath(rp).parents):
         raise ValueError("Keep the tile folder outside the dedicated remote work folder.")
     if not step_keys or any(k not in STEPS_BY_KEY or not STEPS_BY_KEY[k].script for k in step_keys):
@@ -129,22 +152,23 @@ def export_bundle(project: Project, destination: Path, remote_project: str, remo
     ordered = [s.key for s in STEPS if s.key in step_keys]
     module_list = module_names(modules)
     coords = sorted(project.stitch_coord_dir.glob("*.txt"))
-    if not coords:
+    if not coords and not workspace:
         raise ValueError("First write the stitch coordinates on the Project page.")
     local_tiles = project.active_tile_root()
-    if local_tiles is None or not local_tiles.is_dir():
+    if local_tiles is None or (not workspace and not local_tiles.is_dir()):
         raise ValueError("The project's active tile folder is missing.")
     run_id = uuid.uuid4().hex
     out = Path(destination) / run_id
     out.mkdir(parents=True, exist_ok=False)
     remote_bundle = f"{rp}/.workbench-cluster/{run_id}"
     try:
+        external = {}
         inputs = out / "inputs"
         (inputs / "stitch" / "stitch_coord").mkdir(parents=True)
         for src in coords:
             if src.is_symlink():
                 raise ValueError("Coordinate files must not be symbolic links.")
-            rewritten = _rewrite_coordinates(src.read_text(encoding="utf-8"), local_tiles, rt)
+            rewritten = _rewrite_coordinates(src.read_text(encoding="utf-8"), local_tiles, rt, verify_files=not workspace)
             (inputs / "stitch" / "stitch_coord" / src.name).write_text(rewritten, encoding="utf-8", newline="\n")
         config = ConfigStore(project.configs_dir)
         for kind, name in CONFIG_FILES.items():
@@ -166,6 +190,9 @@ def export_bundle(project: Project, destination: Path, remote_project: str, remo
                 if f.is_file():
                     target = inputs / f.relative_to(project.root)
                     target.parent.mkdir(parents=True, exist_ok=True)
+                    if workspace:
+                        stage_input(f, target, out, external)
+                        continue
                     if sum(p.stat().st_size for p in inputs.rglob("*") if p.is_file()) + f.stat().st_size > MAX_BUNDLE_BYTES:
                         raise ValueError("Job inputs exceed 64 MiB. Stage large masks separately or use a smaller project.")
                     shutil.copyfile(f, target)
@@ -182,6 +209,8 @@ def export_bundle(project: Project, destination: Path, remote_project: str, remo
         manifest = dict(format=1, run_id=run_id, remote_project=rp, remote_tiles=rt, remote_python=python,
                         resources=asdict(resources), steps=ordered, modules=module_list, input_hashes=hashes,
                         sections=project.section_names(), fine_compare_distance=project.state.alignment.get("fine_compare_distance", 0))
+        if workspace:
+            manifest["external_inputs"] = external
         (out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         lines = ["#!/bin/bash", "# Generated by FEABAS Workbench; inspect before submission.",
                  "#SBATCH --job-name=feabas", f"#SBATCH --clusters={resources.cluster}",

@@ -50,6 +50,7 @@ class JobSpec:
     step_key: str | None = None
     tag: str = ""                                       # free-form (e.g. test-run name)
     log_file: Path | None = None
+    remote: dict | None = None                         # portable command for the cluster execution backend
 
     def cmdline(self) -> str:
         return " ".join(shlex.quote(a) for a in self.argv)
