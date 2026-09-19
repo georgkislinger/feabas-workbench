@@ -1,5 +1,11 @@
 <h1 align="center">FEABAS Workbench</h1>
 
+> **Local build 0.3.3+cluster.2:** adds persistent LRZ execution through the usual Run buttons,
+> guided SSH/Globus setup, image synchronization, remote previews and export downloads.
+> See [cluster setup and data transfer](docs/CLUSTER_GUIDE.md). Cluster mode is explicit and green;
+> switching to **This PC** restores workstation execution.
+> This is a local modification, not an upstream release; live LRZ execution remains unverified.
+
 <p align="center">
   A desktop app for stitching and aligning serial-section EM volumes with
   <a href="https://github.com/YuelongWu/feabas">FEABAS</a> – for people who do not want to touch YAML files or a terminal.

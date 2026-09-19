@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFormLayout, QHBox
                               QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
 from ..core.cluster_bundle import PARTITIONS, remote_path
+from ..core.cluster_storage import project_storage_path, storage_message
 from ..core.cluster_workspace import local_globus_path, resources_for, save_profile, sync_scope, write_json
 
 LRZ_COLLECTION = "c3f32bba-797e-11e6-8435-22000b97daec"
@@ -204,17 +205,16 @@ class ClusterSetupDialog(QDialog):
                 def discovered(info):
                     self.storage.clear(); self.storage.addItems(info["directories"])
                     self.output.setPlainText(info["storage"])
-                    self.backend.status("Signed in · select your DSS project folder" if info["directories"] else
-                                        "Signed in · no DSS folder found; request project storage")
+                    message = storage_message(info)
+                    self.paths.setText(message)
+                    self.backend.status(message)
                 self.backend._work("Checking your LRZ account and DSS storage…", self.backend.client.discover, discovered)
             self.backend.connect(connected)
         self._safe(start)
 
     def _choose_storage(self):
         def choose():
-            base = remote_path(self.storage.currentText().strip())
-            if not base.startswith("/dss/") or "/dsshome" in base:
-                raise ValueError("Choose DSS project storage, not your 100 GB home directory.")
+            base = project_storage_path(self.storage.currentText())
             name = re.sub(r"[^A-Za-z0-9_-]", "-", self.ctx.local_project.state.name)[:40] or "project"
             root = base + "/feabas-" + name + "-" + self.backend.profile["project_id"][:8]
             for key, value in {"remote_project": root + "/work", "remote_tiles": root + "/images",

@@ -1,5 +1,11 @@
 # FEABAS Workbench – user guide
 
+This local build adds **Pipeline → Run on cluster…**. It opens a separate window for
+SSH/MFA login, Slurm resource requests, job preview/submission, status, logs and results.
+The normal page-level Run buttons still use the workstation. The cluster window's
+**Data & setup guide** explains DSS storage, Linux environment preparation and large
+transfers. Read [the cluster guide](CLUSTER_GUIDE.md) for the complete setup procedure.
+
 Every window, every setting: what it does, when to touch it, and what it breaks if you change it later.
 If you only want the short version, read [Installing and starting the workbench](#1-installing-and-starting-the-workbench) and
 [A first dataset, end to end](#10-a-first-dataset-end-to-end).

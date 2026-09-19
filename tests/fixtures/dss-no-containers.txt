@@ -1,0 +1,34 @@
+*******************************************************************************
+* LRZ DSS User Info Script *
+* ATTENTION: This script may block if node is not healthy. *
+*******************************************************************************
+* This node has access to the following DSS file systems: *
+* dssfidsfs01 on /dss/dssfidsfs01 *
+* dssfidsfs02 on /dss/dssfidsfs02 *
+* dssfs02 on /dss/dssfs02 *
+* dssfs03 on /dss/dssfs03 *
+* dssfs04 on /dss/dssfs04 *
+* dssfs05 on /dss/dssfs05 *
+* dsshome1 on /dss/dsshome1 *
+* dsslegfs01 on /dss/dsslegfs01 *
+* dsslegfs02 on /dss/dsslegfs02 *
+* dssmcmlfs01 on /dss/dssmcmlfs01 *
+* dsstbyfs01 on /dss/dsstbyfs01 *
+* dsstbyfs02 on /dss/dsstbyfs02 *
+*******************************************************************************
+* You have access to the following DSS Containers: *
+* *
+* *
+*******************************************************************************
+* DSS Container usage and limits: *
+* *
+*******************************************************************************
+* DSS usage and limits for testuser: *
+* *
+*******************************************************************************
+* DSS Homedir info for testuser: *
+* Your DSS based home directory is at /dss/dsshome1/04/testuser *
+* Quota and usage information of your DSS based home directory: *
+* 0 of 100 GB used *
+* 123 of Unlimited Files used *
+*******************************************************************************

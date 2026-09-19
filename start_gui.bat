@@ -85,6 +85,16 @@ if not defined PY (
 )
 
 echo Starting FEABAS Workbench with "%PY%"
+rem Source updates can add dependencies to an otherwise working GUI environment.
+rem Keep workstation use available, but show how to repair cluster support.
+"%PY%" -c "import paramiko" >nul 2>&1
+if errorlevel 1 (
+  echo.
+  echo Cluster support is unavailable in this Python environment.
+  echo To enable it, run this command and restart Workbench:
+  echo     "%PY%" -m pip install "paramiko>=3.4,<6"
+  echo.
+)
 "%PY%" -m feabas_workbench %*
 set "RC=!errorlevel!"
 if not "!RC!"=="0" (

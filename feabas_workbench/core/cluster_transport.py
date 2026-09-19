@@ -16,6 +16,7 @@ from typing import Callable
 import paramiko
 
 from .cluster_bundle import MAX_BUNDLE_BYTES, module_names, remote_path
+from .cluster_storage import parse_dss_storage
 
 
 class ClusterError(RuntimeError):
@@ -177,7 +178,9 @@ class ClusterClient:
             result["storage"] = self.execute("dssusrinfo all")
         except ClusterError as e:
             result["storage"] = str(e)
-        result["directories"] = sorted(set(re.findall(r"/dss/[A-Za-z0-9_./+-]+", result["storage"])))
+            result.update(directories=[], storage_state="error")
+        else:
+            result.update(parse_dss_storage(result["storage"]))
         return result
 
     def prepare_workspace(self, profile: dict) -> str:

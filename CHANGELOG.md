@@ -3,6 +3,66 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.3+cluster.3] – 2026-09-19 (local build)
+
+### Fixed
+- DSS discovery only offers assigned container paths, excluding mounted filesystem
+  roots and home directories. An empty container list is distinguished from an
+  unrecognized or failed discovery report.
+- The guided storage selector rejects filesystem roots, home and scratch paths.
+
+### Validation
+- All 133 automated tests passed, including 17 storage regression cases based on
+  the reported empty-container output. See the separate live LRZ access report
+  for account-specific results; this test does not run FEABAS or upload images.
+
+## [0.3.3+cluster.2] – 2026-09-19 (local build)
+
+### Added
+- Persistent per-project cluster mode: the normal Run buttons use LRZ; green accents
+  and an execution banner identify the selected backend.
+- Guided SSH/MFA, DSS discovery, private FEABAS environment setup, official Globus
+  browser login, verified synchronization, transfer recovery and return downloads.
+- Bounded section concurrency combined with workers inside each section, Teramem
+  resource support and observed memory reporting.
+- Remote preprocessing, mask workers, shared settings, previews, models, logs and
+  versioned exports; active jobs survive closing and reopening the interface.
+
+### Fixed
+- Missing transfer dependency in source launch environments and the packaged Windows app.
+- Portable paths for mirrored Windows results, stale downstream results after settings
+  changes, large input staging, and preservation of local edits during preview refresh.
+- Empty preprocessing inputs now fail clearly; remote preprocessing selection does
+  not fall back to raw data because its outputs are absent from the PC.
+
+### Validation
+- 116 tests passed; the full 13-command synthetic FEABAS pipeline passed with two
+  simultaneous sections and two workers per section. Live LRZ verification is pending.
+
+## [0.3.3+cluster.1] – 2026-09-18 (local build)
+
+### Added
+- Separate **Pipeline → Run on cluster…** window: LRZ SSH/MFA, portable input snapshots,
+  single-node Slurm resource presets, preview, submission receipts, job history, status,
+  cancellation, logs and explicit small-file result downloads. Workstation controls remain local.
+- Cluster setup/data-transfer guide. Raw image data stays out of small job uploads.
+- Offline tests including a local SSH server exercising password/key plus MFA.
+
+### Fixed
+- Source launchers now report missing cluster dependencies in their selected environment.
+  Opening the cluster window without Paramiko shows a repair command for that exact Python
+  instead of an unhandled import error; workstation pages remain usable.
+- A missing executable could deadlock the local job queue. Log-file creation failures now also
+  finish the job and let queue error handling run.
+- Headless pipeline timeouts now stop silent subprocess trees as well as processes that print output.
+- Windows packaging isolates DLL discovery from unrelated programs on PATH; an incompatible
+  Poppler ICU library could otherwise make the bundled Qt interface fail to start.
+- The module/frozen entry point now returns failures to the caller, so a failed self-check
+  no longer reports process exit code zero.
+
+This is a local modification of upstream 0.3.3, not an upstream release. Live LRZ execution
+requires the user's account, DSS allocation and FEABAS environment and has not been verified.
+
 ## [0.3.3] – 2026-09-17
 
 ### Added

@@ -28,6 +28,7 @@ selfcheck.json
 .venv/
 
 # app state
+.workbench-cluster/
 _scratch/
 _test_projects/
 *.log
