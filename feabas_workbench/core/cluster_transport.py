@@ -101,9 +101,13 @@ class ClusterClient:
                 allowed = t.auth_publickey(s.username, private_key)
             else:
                 try:
-                    allowed = t.auth_password(s.username, self.prompt("LRZ cluster password", True), fallback=False)
+                    allowed = t.auth_none(s.username)
                 except paramiko.BadAuthenticationType as e:
                     allowed = e.allowed_types
+                # LRZ can offer password + MFA entirely through interactive
+                # challenges. Do not ask for an unused password before those.
+                if not t.is_authenticated() and "password" in allowed:
+                    allowed = t.auth_password(s.username, self.prompt("LRZ cluster password", True), fallback=False)
             if not t.is_authenticated() and "keyboard-interactive" in allowed:
                 def answer(title, instructions, prompts):
                     return [self.prompt("\n".join(x for x in (title, instructions, question) if x), not echo)

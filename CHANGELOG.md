@@ -3,6 +3,19 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.3+cluster.4] – 2026-09-22 (local build)
+
+### Fixed
+- Query supported SSH authentication methods after verifying the host, before
+  asking for credentials. Interactive password/MFA login no longer asks for an
+  unused extra password before the server's own challenges.
+
+### Validation
+- Added a real local SSH server test for interactive-only password/MFA; password
+  plus MFA, encrypted-key plus MFA, and changed-host-key rejection still pass.
+- 134 regression tests passed. Live LRZ evidence is recorded separately in
+  LRZ_TEST_RESULTS.json; local tests do not establish account access.
+
 ## [0.3.3+cluster.3] – 2026-09-19 (local build)
 
 ### Fixed

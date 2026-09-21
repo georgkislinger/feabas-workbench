@@ -238,8 +238,8 @@ def test_silent_pipeline_process_obeys_timeout(tmp_path, monkeypatch, close_stre
     assert result.exit_code != 0
 
 
-@pytest.mark.parametrize("key_auth", [False, True])
-def test_real_ssh_password_or_encrypted_key_then_mfa(tmp_path, key_auth):
+@pytest.mark.parametrize("auth_mode", ["password", "key", "interactive"])
+def test_real_ssh_password_or_encrypted_key_then_mfa(tmp_path, auth_mode):
     """Local SSH server verifies partial auth, MFA callbacks and channel output."""
     host_key = paramiko.RSAKey.generate(2048)
     user_key = paramiko.RSAKey.generate(2048)
@@ -250,16 +250,23 @@ def test_real_ssh_password_or_encrypted_key_then_mfa(tmp_path, key_auth):
     class Server(paramiko.ServerInterface):
         partial = False
         def get_allowed_auths(self, username):
-            return "keyboard-interactive" if self.partial else ("publickey" if key_auth else "password")
+            return "keyboard-interactive" if self.partial or auth_mode == "interactive" else ("publickey" if auth_mode == "key" else "password")
         def check_auth_password(self, username, password):
+            assert auth_mode == "password"
             assert username == "tester" and password == "test-password"
             self.partial = True; return paramiko.AUTH_PARTIALLY_SUCCESSFUL
         def check_auth_publickey(self, username, key):
             assert username == "tester" and key == user_key
             self.partial = True; return paramiko.AUTH_PARTIALLY_SUCCESSFUL
         def check_auth_interactive(self, username, submethods):
+            if auth_mode == "interactive" and not self.partial:
+                return paramiko.InteractiveQuery("LRZ", "", ("Password:", False))
             return paramiko.InteractiveQuery("MFA", "Enter token", ("Code:", False))
         def check_auth_interactive_response(self, responses):
+            if auth_mode == "interactive" and not self.partial:
+                assert responses == ["test-password"]
+                self.partial = True
+                return paramiko.InteractiveQuery("MFA", "Enter token", ("Code:", False))
             assert responses == ["123456"]
             return paramiko.AUTH_SUCCESSFUL
         def check_channel_request(self, kind, chanid): return paramiko.OPEN_SUCCEEDED
@@ -282,7 +289,7 @@ def test_real_ssh_password_or_encrypted_key_then_mfa(tmp_path, key_auth):
     def prompt(text, secret):
         prompts.append(text); assert secret
         return "test-passphrase" if "passphrase" in text else "123456" if "Code:" in text else "test-password"
-    c = ClusterClient(ConnectionSettings("127.0.0.1", "tester", port, str(private) if key_auth else ""),
+    c = ClusterClient(ConnectionSettings("127.0.0.1", "tester", port, str(private) if auth_mode == "key" else ""),
                       prompt, lambda host, fp: fp.startswith("ssh-rsa SHA256:"), tmp_path / "hosts")
     try:
         c.connect(); assert c.connected

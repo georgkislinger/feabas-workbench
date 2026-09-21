@@ -1,11 +1,11 @@
 # Use your normal Workbench workflow at LRZ
 
-Local build **0.3.3+cluster.3**. Open your project on your PC, choose **Use cluster…**,
+Local build **0.3.3+cluster.4**. Open your project on your PC, choose **Use cluster…**,
 complete setup, save cluster settings, then use **Sync project & images**. The normal
 Run buttons now submit work to LRZ. The green accents and the **Execution: LRZ cluster**
 banner show which computer will do the computation. **Use this PC** restores local execution.
 
-This build passed 133 automated tests. The preceding build also passed a real
+This build passed 134 automated tests. The earlier cluster.2 build also passed a real
 13-command synthetic FEABAS pipeline, including rendering, mipmaps and VAST export.
 See the accompanying live test report for account-specific checks. Image transfer
 and full FEABAS execution at LRZ still require an assigned workspace and environment.
@@ -13,13 +13,15 @@ This is a local modification, not an upstream release.
 
 ## First live check: sign in and find storage
 
-1. Restart Workbench after updating. Confirm **0.3.3+cluster.3** in the title/About dialog.
+1. Restart Workbench after updating. Confirm **0.3.3+cluster.4** in the title/About dialog.
    The supplied Windows app includes SSH and the Globus CLI. The existing
    `start_gui.bat` environment has also been updated with Globus support.
 2. Open the tutorial project. Click **Use cluster…** (also available as
    **Pipeline → Run on cluster…**).
 3. In **1 Cluster setup**, enter your LRZ username and click **1. Sign in and find my storage**.
    Passwords and MFA are entered in private prompts; never paste them into chat.
+   The login first checks which authentication methods LRZ accepts, so interactive
+   password/MFA login no longer asks for an unused extra password.
    Check a new host fingerprint against [LRZ's published fingerprints](https://doku.lrz.de/access-and-login-to-the-linux-cluster-10745974.html).
 4. If DSS folders appear, choose the allocation your institute permits you to use and
    click **2. Use this storage folder**. Workbench creates separate images and work
