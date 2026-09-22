@@ -45,7 +45,7 @@ def profile_for(project: Project) -> dict:
                     host="cool.hpc.lrz.de", username="", port=22, key_filename="",
                     remote_project="", remote_tiles="", remote_python="", remote_dl_python="", modules="",
                     partition="serial_std", cpus=4, memory_gib=16, hours=1, workers=4, section_concurrency=1,
-                    source_collection="", computer_collection="", destination_collection="",
+                    transfer="ssh", source_collection="", computer_collection="", destination_collection="",
                     source_path="", destination_tiles="", destination_project="",
                     include_existing=True, download_after_export=True, export_destination="", globus_cli="")
     # Migrate only connection/settings from the previous advanced batch dialog.
@@ -209,9 +209,10 @@ def build_workspace_bundle(project, local, profile, commands, destination):
 
 
 def sync_scope(profile):
-    keys = ("host", "username", "port", "remote_project", "remote_tiles", "source_collection", "source_path",
-            "destination_collection", "destination_project", "destination_tiles")
-    return hashlib.sha256(json.dumps({k: profile[k] for k in keys}, sort_keys=True).encode()).hexdigest()
+    keys = ["host", "username", "port", "remote_project", "remote_tiles", "transfer"]
+    if profile.get("transfer") == "globus":
+        keys += ["source_collection", "source_path", "destination_collection", "destination_project", "destination_tiles"]
+    return hashlib.sha256(json.dumps({k: profile.get(k) for k in keys}, sort_keys=True).encode()).hexdigest()
 
 
 def remote_scan(project, configs, snapshot):

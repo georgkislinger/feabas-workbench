@@ -1,56 +1,71 @@
 # Use your normal Workbench workflow at LRZ
 
-Local build **0.3.3+cluster.4**. Open your project on your PC, choose **Use cluster…**,
+Local build **0.3.3+cluster.5**. Open your project on your PC, choose **Use cluster…**,
 complete setup, save cluster settings, then use **Sync project & images**. The normal
 Run buttons now submit work to LRZ. The green accents and the **Execution: LRZ cluster**
-banner show which computer will do the computation. **Use this PC** restores local execution.
+banner show which computer will do the computation. **Leave cluster mode** (top bar,
+Pipeline menu or the setup window) switches back to this PC at any time.
 
-This build passed 134 automated tests. The earlier cluster.2 build also passed a real
-13-command synthetic FEABAS pipeline, including rendering, mipmaps and VAST export.
-See the accompanying live test report for account-specific checks. Image transfer
-and full FEABAS execution at LRZ still require an assigned workspace and environment.
-This is a local modification, not an upstream release.
+The cluster.2 build passed a real 13-command synthetic FEABAS pipeline, including
+rendering, mipmaps and VAST export. A live LRZ check (job 5610645) confirmed SSH/MFA
+sign-in, Slurm submission, file round trips and download for this account; FEABAS
+itself has not run at LRZ yet. This is a local modification, not an upstream release.
 
-## First live check: sign in and find storage
+## First live check: sign in, choose storage, prepare FEABAS
 
-1. Restart Workbench after updating. Confirm **0.3.3+cluster.4** in the title/About dialog.
-   The supplied Windows app includes SSH and the Globus CLI. The existing
-   `start_gui.bat` environment has also been updated with Globus support.
+1. Restart Workbench after updating. Confirm **0.3.3+cluster.5** in the title/About dialog.
 2. Open the tutorial project. Click **Use cluster…** (also available as
    **Pipeline → Run on cluster…**).
 3. In **1 Cluster setup**, enter your LRZ username and click **1. Sign in and find my storage**.
    Passwords and MFA are entered in private prompts; never paste them into chat.
-   The login first checks which authentication methods LRZ accepts, so interactive
-   password/MFA login no longer asks for an unused extra password.
    Check a new host fingerprint against [LRZ's published fingerprints](https://doku.lrz.de/access-and-login-to-the-linux-cluster-10745974.html).
-4. If DSS folders appear, choose the allocation your institute permits you to use and
-   click **2. Use this storage folder**. Workbench creates separate images and work
-   folders belonging to this project. It verifies that the SSH and Globus paths agree.
-5. Click **3. Prepare FEABAS at LRZ**. This creates a private Linux Python environment
-   under the chosen allocation and installs FEABAS 3.0.5 and its CPU dependencies.
-   If LRZ's default Python is too old, the message asks for a Python module in Advanced;
-   we can resolve the available module after signing in.
+4. **Storage folder** lists your assigned DSS containers and your **home folder**. Below it,
+   Workbench estimates what the project will need at LRZ: about **5× the raw images**
+   (the uploaded copy, stitched sections, aligned stack and VAST export with their image
+   pyramids), one more copy per preprocessing variant, plus ~3 GB for the FEABAS
+   environment. For the home folder it compares that with the free quota from
+   `dssusrinfo` and warns before you commit to a folder that is too small.
+   Click **2. Use this storage folder**. In the home folder, Workbench keeps everything in
+   `~/feabas-workbench/` (one folder per project, plus the shared environment).
+5. Click **3. Prepare FEABAS at LRZ** (5–15 minutes). LRZ's `python` modules stop at 3.8,
+   so Workbench loads LRZ's recommended **Miniforge** module, creates a private
+   Python 3.11 environment next to the project folders and installs FEABAS 3.0.5 with
+   headless OpenCV (compute nodes may lack the graphics libraries of the default OpenCV).
+   Jobs call that environment's Python directly; nothing needs activating.
 
-If sign-in succeeds but there is no DSS allocation, stop at this point. Ask the institute's
-LRZ project administrator for Linux Cluster access and DSS project storage with enough
-quota for source images, intermediate data, outputs and retained previous results.
-Creating an MFA token does not itself grant cluster or storage access.
+The home folder (100 GB, backed up nightly) is enough for the tutorial and projects up
+to roughly 15–20 GB of raw images. The proposed 1 TB dataset needs a DSS container: ask
+the institute's LRZ project administrator for Linux Cluster DSS project storage with
+enough quota for source images, intermediate data, outputs and retained previous results.
+Scratch has a 14-day retention policy and no backup, so it is not offered.
+See [LRZ storage instructions](https://doku.lrz.de/file-systems-and-io-on-linux-cluster-10745972.html).
 
 The filesystem list in `dssusrinfo all` describes what the login node has mounted;
-it does not grant you those directories. Workbench now lists only paths from the
-**You have access to the following DSS Containers** section. If that section is
-empty, no project container is listed for your account. A failed or unrecognized
-report is shown as a discovery problem, rather than proof of no allocation.
-Mounted roots such as `/dss/dssfs02` cannot be selected as project storage.
-A separate tiny access test can use home without enabling production image uploads.
-
-LRZ documents a 100 GB home quota; the proposed 1 TB dataset belongs in an appropriate
-DSS allocation. Scratch has a 14-day retention policy and no backup.
-See [LRZ storage instructions](https://doku.lrz.de/file-systems-and-io-on-linux-cluster-10745972.html).
+it does not grant you those directories. Workbench lists only paths from the
+**You have access to the following DSS Containers** section, plus your own home folder.
+A failed or unrecognized report is shown as a discovery problem, rather than proof of no
+allocation. Mounted roots such as `/dss/dssfs02` and other users' homes cannot be selected.
 
 ## Connect the dataset and local result destination
 
-1. In **2 Data transfer**, install and run **Globus Connect Personal** on this PC using
+**2 Data transfer** offers two ways for images, results and exports to travel:
+
+- **Directly over SSH** (default for the home folder and for datasets below ~200 GB): no
+  extra software. Files go through your existing SSH login, encrypted, and are renamed
+  into place only after their size is confirmed. Unchanged files are skipped and nothing
+  is deleted at either end, so an interrupted upload continues with the next **Sync**.
+  Workbench must stay open while it copies; meanwhile the Sync button reads **Stop transfer**.
+- **Globus** (large datasets, institute NAS): transfers run without Workbench and survive
+  disconnections, but need Globus Connect Personal on this PC (or a NAS collection).
+  LRZ serves DSS containers through Globus, not home folders.
+
+For SSH: save cluster settings, click **Sync project & images** in the top bar and wait for
+**Images synchronized over SSH · ready to run**. Keep **Include existing project results**
+checked to resume a local project, or clear it for a fresh run.
+
+For Globus:
+
+1. Install and run **Globus Connect Personal** on this PC using
    the linked [official Windows instructions](https://docs.globus.org/globus-connect-personal/install/windows/).
    Allow access to the tutorial images, project folder and intended export destination.
 2. Click **Sign in / grant Globus access in browser** and complete the browser flow.
@@ -64,12 +79,11 @@ See [LRZ storage instructions](https://doku.lrz.de/file-systems-and-io-on-linux-
    turn a NAS into a Globus server. A mapped Windows path and a Globus path can differ.
 5. The LRZ collection is prefilled. Remote folders are filled by the storage step.
    Check the selected paths in **Open these locations in Globus**.
-6. Leave **Automatically download after Export** enabled. Keep **Include existing
-   project results** checked to resume a local project, or clear it for a fresh run.
+6. Leave **Automatically download after Export** enabled.
 7. Save cluster settings, then click **Sync project & images** in the top bar.
    Wait until the verified uploads finish and the banner says the images are synchronized.
 
-Transfers use encryption and checksum verification. They copy changed files without
+Globus transfers use encryption and checksum verification. They copy changed files without
 deleting extra destination files. Keep the source NAS/server and the local Globus service
 available. The PC can disconnect after receiving the Slurm job ID; jobs keep running.
 Globus transfers can continue independently of Workbench, provided their endpoints remain online.
@@ -79,6 +93,16 @@ If Globus requests collection permissions, click **Sign in / grant access** agai
 interface remembers the required consent scopes for that session. Failed transfers can
 be retried under Advanced. If a request's outcome is unknown, recover its task UUID from
 Globus Activity using the exact label; Workbench does not automatically duplicate it.
+
+## Leaving cluster mode
+
+**Leave cluster mode** is in the top bar, in the **Pipeline** menu and at the bottom of the
+setup window. The Run buttons then compute on this PC again and the colours return to blue.
+Jobs already submitted to LRZ and running Globus transfers keep going; Workbench stops
+monitoring them (the banner says so) until you choose **Use cluster…** and save again.
+Only an operation that is talking to LRZ at that moment (sign-in, an SSH copy, a
+submission) has to finish first; an SSH copy can be stopped with **Stop transfer**.
+Workstation results and the cluster preview cache stay separate either way.
 
 ## Which LRZ resource to use
 
@@ -120,13 +144,14 @@ application. A cluster job is not automatically faster than your 64-core/512 GB 
 
 Use the same preprocessing, stitching, masking, alignment and export pages. Batch workers
 run at LRZ; interactive previews and editing remain on the PC. Settings and authored
-masks are uploaded with each request. Large masks/checkpoints use Globus before computation
-is submitted. Changing scientific settings archives affected remote outputs so FEABAS
-does not silently reuse stale results. These archives consume DSS space.
+masks are uploaded with each request. Large masks/checkpoints travel with the chosen
+transfer method before computation is submitted. Changing scientific settings archives
+affected remote outputs so FEABAS does not silently reuse stale results. These archives
+consume storage space.
 
 Pipeline state, progress, logs and memory estimates return to the GUI. Small previews
-arrive over SSH. Larger preview/model caches download through Globus; wait for that
-transfer before editing or selecting those files. Local edits made during a job are
+arrive over SSH. Larger preview/model caches follow over SSH or through Globus; wait for
+that transfer before editing or selecting those files. Local edits made during a job are
 preserved when incoming previews conflict with them.
 
 Export writes a new remote folder for each run, then downloads it into a matching local
@@ -157,6 +182,6 @@ Globus transfers are checked more often. Queued-job status may therefore be dela
 - Synthetic Zeiss-like data still uses filename/grid settings and explicit calibration.
   No changes were made to Zeiss microscope metadata parsing.
 
-The next shared check is deliberately small: sign in, verify DSS, prepare the environment,
-transfer the tutorial, run one stage, inspect its log, then check export/download before
-attempting a production-sized dataset.
+The next shared check is deliberately small: sign in, choose the home folder, prepare the
+environment, sync the tutorial over SSH, run one stage, inspect its log, then check
+export/download before attempting a production-sized dataset.

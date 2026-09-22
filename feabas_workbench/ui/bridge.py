@@ -168,9 +168,12 @@ class AppContext(QObject):
         self.execution_changed.emit()
 
     def use_local(self):
+        """Back to This PC. Submitted LRZ jobs and Globus transfers keep running; the backend
+        pauses monitoring until cluster mode is chosen again."""
         from ..core.cluster_workspace import save_profile
-        if self.cluster and (self.cluster.running or self.cluster.busy or self.cluster.transferring):
-            raise RuntimeError("Finish the current job/transfer before switching this project back to local execution.")
+        if self.cluster and self.cluster.busy:
+            raise RuntimeError("Workbench is still busy with LRZ (" + self.cluster.message.rstrip("…") + "). "
+                               "Switch when that has finished, or stop a copy with 'Stop transfer'.")
         if self.cluster:
             self.cluster.profile["mode"] = "local"
             save_profile(self.local_project, self.cluster.profile)

@@ -1,10 +1,11 @@
 <h1 align="center">FEABAS Workbench</h1>
 
-> **Local build 0.3.3+cluster.2:** adds persistent LRZ execution through the usual Run buttons,
-> guided SSH/Globus setup, image synchronization, remote previews and export downloads.
+> **Local build 0.3.3+cluster.5:** adds persistent LRZ execution through the usual Run buttons,
+> guided SSH setup with home-folder or DSS storage (with a storage estimate), image synchronization
+> over SSH or Globus, remote previews and export downloads.
 > See [cluster setup and data transfer](docs/CLUSTER_GUIDE.md). Cluster mode is explicit and green;
-> switching to **This PC** restores workstation execution.
-> This is a local modification, not an upstream release; live LRZ execution remains unverified.
+> **Leave cluster mode** restores workstation execution.
+> This is a local modification, not an upstream release; FEABAS has not yet run at LRZ.
 
 <p align="center">
   A desktop app for stitching and aligning serial-section EM volumes with

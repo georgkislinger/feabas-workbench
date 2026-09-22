@@ -103,6 +103,7 @@ class ClusterBackend(QObject):
         self.timer.timeout.connect(self.refresh)
         self.timer.start()
         self._closed = False
+        self._cancellable = False
 
     @property
     def running(self):
@@ -144,13 +145,24 @@ class ClusterBackend(QObject):
         self.questions.remove(r)
         return r["answer"]
 
-    def _work(self, text, function, done=None):
+    def _work(self, text, function, done=None, *, progress=False):
+        """Run function in the background thread. With progress=True it is called as
+        function(report, cancelled), where report(bytes_done, bytes_total) updates the status."""
         if self.busy:
             return False
-        self.status(text)
-        def run(progress, cancelled):
-            return function()
+        self._cancellable = progress
+        def run(report, cancelled):
+            if not progress:
+                return function()
+            last = [0.0]
+            def moved(sent, total):
+                # Throttled, and in megabytes: the progress signal carries 32-bit ints.
+                if sent >= total or time.monotonic() - last[0] > .5:
+                    last[0] = time.monotonic()
+                    report(sent // 10**6, total // 10**6, text)
+            return function(moved, cancelled)
         def finished(result, error):
+            self._cancellable = False
             if self._closed:
                 return
             if error:
@@ -170,7 +182,37 @@ class ClusterBackend(QObject):
             if not error and not self._closed:
                 self.timer.start()
             self.changed.emit()
-        return self.runner.start(run, on_done=finished)
+        started = self.runner.start(run, on_done=finished, on_progress=self._progressed if progress else None)
+        self.status(text)   # after starting, so listeners already see busy (and a stoppable copy)
+        return started
+
+    @property
+    def copying(self):
+        """An SSH copy is running and can be stopped (files already copied stay)."""
+        return self.busy and self._cancellable
+
+    def _progressed(self, done_mb, total_mb, text):
+        self.status(f"{text.rstrip('…')} · {done_mb / 1000:.2f} of {total_mb / 1000:.2f} GB" if total_mb else text)
+
+    def _require_folders(self, p):
+        if not p.get("remote_project") or not p.get("remote_tiles"):
+            raise RuntimeError("Choose a storage folder first: Cluster settings → 1 Cluster setup → steps 1 and 2.")
+
+    def _ssh_copy(self, purpose, copy, source, target, report=None, cancelled=None, *, exclude=(),
+                  fingerprint="", metadata=None):
+        """A completed SSH copy, recorded like a finished Globus transfer (it never stays open)."""
+        kwargs = dict(progress=report, cancelled=cancelled)
+        if exclude:
+            kwargs["exclude"] = exclude
+        result = copy(source, target, **kwargs)
+        entry = dict(method="ssh", state="SUCCEEDED", task_id="", purpose=purpose, label="SSH " + purpose,
+                     source="ssh", source_path=str(source), target="ssh", target_path=str(target),
+                     fingerprint=fingerprint, created=time.time(), bytes=result["bytes"], files=result["files"],
+                     details=f"{result['copied']} of {result['files']} files copied")
+        entry.update(metadata or {})
+        self.transfers.append(entry)
+        self.persist()
+        return entry
 
     def connect(self, done=None):
         if self.client and self.client.connected:
@@ -223,7 +265,12 @@ class ClusterBackend(QObject):
             return
         def connected(_):
             p = dict(self.profile)
+            if p.get("transfer") != "globus":
+                self._work("Uploading images over SSH…", lambda report, cancelled: self._sync_ssh(p, report, cancelled),
+                           progress=True)
+                return
             def stage():
+                self._require_folders(p)
                 self.globus().command()
                 self.client.prepare_workspace(p)
                 fp = source_signature(self.ctx.project)
@@ -251,6 +298,22 @@ class ClusterBackend(QObject):
             self._work("Checking folders and starting synchronization…", stage)
         self.connect(connected)
 
+    def _sync_ssh(self, p, report, cancelled):
+        """Upload raw tiles (and, the first time, the existing project) straight over SSH."""
+        self._require_folders(p)
+        self.client.prepare_workspace(p)
+        fp = source_signature(self.ctx.project)
+        initial = p.get("include_existing") and not self.synced
+        meta = dict(batch=uuid.uuid4().hex, scope=sync_scope(p), batch_size=2 if initial else 1)
+        self._ssh_copy("raw images", self.client.upload_tree, Path(self.ctx.project.state.source.root_dir),
+                       p["remote_tiles"], report, cancelled, fingerprint=fp, metadata=meta)
+        if initial:
+            self._ssh_copy("initial project", self.client.upload_tree, self.local.root, p["remote_project"], report,
+                           cancelled, exclude=(CONTROL, ".git", "snapshots", "workbench.log"), metadata=meta)
+        self.synced = dict(source_signature=fp, timestamp=time.time(), scope=meta["scope"])
+        write_json(self.directory / "synchronized.json", self.synced)
+        return "Images synchronized over SSH · ready to run"
+
     def submit(self, specs):
         specs = specs if isinstance(specs, list) else [specs]
         if self.running or self.transferring or self.busy:
@@ -269,7 +332,9 @@ class ClusterBackend(QObject):
                 if source_signature(self.ctx.project) != self.synced.get("source_signature"):
                     raise RuntimeError("The source images have changed. Sync project & images before running.")
                 if self.synced.get("scope") != sync_scope(p):
-                    raise RuntimeError("Cluster folders or Globus settings have changed. Synchronize again before running.")
+                    raise RuntimeError("Cluster folders or transfer settings have changed. Synchronize again before running.")
+                if not p.get("remote_python"):
+                    raise RuntimeError("Prepare FEABAS at LRZ first: Cluster settings → 1 Cluster setup → step 3.")
                 self.client.check_environment(p["remote_python"], p["remote_project"], p["remote_tiles"], p["modules"])
                 self.ctx.configs.save()
                 shutil.copytree(self.local.configs_dir, self.ctx.project.configs_dir, dirs_exist_ok=True)
@@ -310,7 +375,11 @@ class ClusterBackend(QObject):
         for rel, asset in entry.get("input_plan", {}).items():
             key = entry["run_id"] + "/" + rel
             existing = next((t for t in self.transfers if t.get("job_input_key") == key and not t.get("replaced")), None)
-            if existing is None:
+            if existing is None and p.get("transfer") != "globus":
+                self._ssh_copy("job input", lambda src, dst, **kw: self.client.upload_file(src, dst, kw["cancelled"]),
+                               Path(asset["source"]), p["remote_project"].rstrip("/") + "/.workbench-cluster/"
+                               + entry["run_id"] + "/external_inputs/" + rel, metadata=dict(job_input_key=key))
+            elif existing is None:
                 self._transfer(p["computer_collection"], local_globus_path(Path(asset["source"])),
                                p["destination_collection"], p["destination_project"].rstrip("/") +
                                "/.workbench-cluster/" + entry["run_id"] + "/external_inputs/" + rel,
@@ -326,7 +395,9 @@ class ClusterBackend(QObject):
         self.persist()
 
     def refresh(self):
-        if self._closed or self.busy:
+        # Monitoring writes into the cluster view and reports through the shared job signals,
+        # so it pauses while the project computes on this PC; jobs keep running at LRZ.
+        if self._closed or self.busy or not self.ctx.cluster_enabled:
             return
         awaiting_notice = any(j.get("state") in TERMINAL and not j.get("notified") for j in self.journal)
         if not self.transferring and not self.running and not awaiting_notice:
@@ -379,6 +450,7 @@ class ClusterBackend(QObject):
                 state = self.client.read_remote_json(entry["remote_bundle"] + "/status.json", {})
                 if state and (state.get("run_id") != entry["run_id"] or state.get("project_id") != self.profile["project_id"]):
                     raise RuntimeError("Remote status belongs to a different project or job.")
+                previous_manifest = self.snapshot.get("preview_manifest", {})   # before this state replaces it
                 if state and state.get("timestamp", 0) > entry["preview_stamp"]:
                     archive = self.directory / (entry["run_id"] + "-previews.zip")
                     archive.unlink(missing_ok=True)
@@ -401,11 +473,20 @@ class ClusterBackend(QObject):
                         incoming.mkdir(parents=True, exist_ok=True)
                         if shutil.disk_usage(incoming).free < 2 * state.get("preview_bytes", 0):
                             raise RuntimeError("Not enough local disk space for the complete preview cache.")
-                        self._transfer(self.profile["destination_collection"], self.profile["destination_project"].rstrip("/") +
-                                       "/.workbench-cluster/" + entry["run_id"] + "/preview-cache",
-                                       self.profile["computer_collection"], local_globus_path(incoming), "download previews",
-                                       metadata=dict(preview_run=entry["run_id"], local_destination=str(incoming),
-                                                     preview_manifest=state["preview_manifest"], previous_previews=self.snapshot.get("preview_manifest", {})))
+                        meta = dict(preview_run=entry["run_id"], local_destination=str(incoming),
+                                    preview_manifest=state["preview_manifest"], previous_previews=previous_manifest)
+                        cache = "/.workbench-cluster/" + entry["run_id"] + "/preview-cache"
+                        if self.profile.get("transfer") != "globus":
+                            t = self._ssh_copy("download previews", self.client.download_tree,
+                                               self.profile["remote_project"].rstrip("/") + cache, incoming, metadata=meta)
+                            conflicts = apply_preview_directory(incoming, self.ctx.project.root, t["preview_manifest"],
+                                                                t["previous_previews"])
+                            t["applied"] = True
+                            notices.append("All previews downloaded" + (f"; preserved {len(conflicts)} local edits" if conflicts else ""))
+                        else:
+                            self._transfer(self.profile["destination_collection"], self.profile["destination_project"].rstrip("/")
+                                           + cache, self.profile["computer_collection"], local_globus_path(incoming),
+                                           "download previews", metadata=meta)
                 elif time.time() - entry["last_scheduler_check"] >= 600:
                     entry["last_scheduler_check"] = time.time()
                     self.persist()
@@ -500,11 +581,25 @@ class ClusterBackend(QObject):
         if dest.name != run_id:
             dest = dest / run_id
         p = self.profile
-        def download():
+        def check_space():
             dest.mkdir(parents=True, exist_ok=True)
             required = self.snapshot.get("export_bytes", {}).get(run_id, 0)
             if shutil.disk_usage(dest).free < required:
                 raise RuntimeError(f"Not enough local disk space for this export ({required / 2**30:.1f} GiB). Choose another export folder.")
+        if p.get("transfer") != "globus":
+            def fetch(report, cancelled):
+                check_space()
+                return self._ssh_copy("download export", self.client.download_tree,
+                                      p["remote_project"].rstrip("/") + "/exports/" + run_id, dest, report, cancelled,
+                                      metadata=dict(local_destination=str(dest), export_run=run_id, notified=True))
+            def fetched(entry):
+                self.ctx.log("Export downloaded over SSH (sizes verified): " + str(dest))
+                self.ctx.export_downloaded.emit(str(dest))
+                self.status("Export downloaded")
+            self.connect(lambda _: self._work("Downloading the export over SSH…", fetch, fetched, progress=True))
+            return
+        def download():
+            check_space()
             entry = self._transfer(p["destination_collection"], p["destination_project"].rstrip("/") + "/exports/" + run_id,
                                   p["computer_collection"], local_globus_path(dest), "download export",
                                   metadata=dict(local_destination=str(dest), export_run=run_id))
@@ -524,6 +619,17 @@ class ClusterBackend(QObject):
                 f"Download {total / 2**30:.1f} GiB to this project's cluster cache for local inspection?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
+        if self.profile.get("transfer") != "globus":
+            root = self.ctx.project.root
+            def fetch(report, cancelled):
+                if shutil.disk_usage(root).free < total:
+                    raise RuntimeError("Not enough local disk space for the rendered stack.")
+                for name in folders:
+                    self._ssh_copy("download rendered stack", self.client.download_tree,
+                                   self.profile["remote_project"].rstrip("/") + "/" + name, root / name, report, cancelled)
+                return "Rendered stack downloaded for local viewers"
+            self.connect(lambda _: self._work("Downloading the rendered stack over SSH…", fetch, progress=True))
+            return
         def download():
             if shutil.disk_usage(self.ctx.project.root).free < total:
                 raise RuntimeError("Not enough local disk space for the rendered stack.")
@@ -534,6 +640,10 @@ class ClusterBackend(QObject):
         self._work("Starting rendered-stack download…", download)
 
     def cancel_all(self):
+        if self.copying:
+            self.runner.cancel()
+            self.status("Stopping the transfer; files copied so far are kept…")
+            return
         if self.busy:
             self.status("Wait for the current connection operation, then cancel the cluster job.")
             return

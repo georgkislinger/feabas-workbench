@@ -3,6 +3,32 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.3+cluster.5] – 2026-09-23 (local build)
+
+### Added
+- The home folder is offered as project storage next to assigned DSS containers; its quota
+  is read from `dssusrinfo`. Setup estimates the project's storage need (about 5× the raw
+  images, plus one copy per preprocessing variant and the FEABAS environment) and warns
+  before a folder that is too small is used.
+- Images, job inputs, previews, exports and rendered stacks can travel directly over SSH:
+  resumable, size-checked, never deleting at either end, no Globus Connect Personal needed.
+  Default for home-folder projects and datasets below ~200 GB; Globus stays available.
+- **Leave cluster mode** in the top bar, the Pipeline menu and the setup window. Submitted
+  jobs keep running at LRZ; monitoring pauses until cluster mode is chosen again.
+- The Sync button becomes **Stop transfer** while an SSH copy runs.
+
+### Fixed
+- **Prepare FEABAS at LRZ** creates a Miniforge Python 3.11 environment (LRZ's python modules
+  stop at 3.8, its default python3 is 3.6) with headless OpenCV for compute nodes.
+- Leaving cluster mode no longer refuses while a job or Globus transfer is active, including
+  a transfer left unconfirmed; only an operation in progress has to finish.
+- After signing in, the first storage entry is selected; before, the list stayed unselected
+  and "Use this storage folder" received an empty path.
+- "Sync project & images" and "Save cluster settings & use cluster" showed an underlined
+  letter instead of "&".
+- Bulk preview downloads compared local files with the new remote manifest instead of the
+  previous one, so previews updated by a later run were kept as if they were local edits.
+
 ## [0.3.3+cluster.4] – 2026-09-22 (local build)
 
 ### Fixed

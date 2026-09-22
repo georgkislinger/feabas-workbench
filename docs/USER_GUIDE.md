@@ -1,10 +1,10 @@
 # FEABAS Workbench – user guide
 
-This local build adds **Pipeline → Run on cluster…**. It opens a separate window for
-SSH/MFA login, Slurm resource requests, job preview/submission, status, logs and results.
-The normal page-level Run buttons still use the workstation. The cluster window's
-**Data & setup guide** explains DSS storage, Linux environment preparation and large
-transfers. Read [the cluster guide](CLUSTER_GUIDE.md) for the complete setup procedure.
+This local build adds a cluster mode for LRZ: **Use cluster…** in the top bar (or
+**Pipeline → Run on cluster…**) signs in over SSH/MFA, sets up storage in your home folder or a
+DSS container, prepares FEABAS at LRZ and synchronizes the images. While cluster mode is on (green
+accents), the normal Run buttons submit Slurm jobs; **Leave cluster mode** switches back to this
+PC. Read [the cluster guide](CLUSTER_GUIDE.md) for the complete setup procedure.
 
 Every window, every setting: what it does, when to touch it, and what it breaks if you change it later.
 If you only want the short version, read [Installing and starting the workbench](#1-installing-and-starting-the-workbench) and

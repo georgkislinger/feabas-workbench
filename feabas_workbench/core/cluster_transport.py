@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import base64
+import fnmatch
 import hashlib
 import json
+import os
 import re
 import shlex
 import socket
@@ -18,9 +20,60 @@ import paramiko
 from .cluster_bundle import MAX_BUNDLE_BYTES, module_names, remote_path
 from .cluster_storage import parse_dss_storage
 
+# FEABAS 3.0.5 ships a pure-Python wheel; every dependency has manylinux wheels for 3.11.
+FEABAS_PACKAGES = "'feabas==3.0.5' tifffile imagecodecs psutil"
+PART_SUFFIX = ".fw-part"
+
 
 class ClusterError(RuntimeError):
     pass
+
+
+def _stop_if(cancelled):
+    if cancelled and cancelled():
+        raise ClusterError("Transfer stopped. Files copied so far are kept; the next sync continues.")
+
+
+def _excluded(name, patterns):
+    return name.endswith(PART_SUFFIX) or any(fnmatch.fnmatchcase(name, p) for p in patterns)
+
+
+def install_script(python_path: str, modules: str = "") -> str:
+    """Shell script that creates (once) and fills the private FEABAS environment on a login node.
+
+    LRZ's python modules stop at 3.8 and LRZ recommends Miniforge for environments, so a
+    conda-forge Python 3.11 is created by path; a python3 >= 3.10 from the given modules is
+    the fallback. The environment's own python is called directly, so jobs need no activation.
+    """
+    dest = remote_path(python_path)
+    if not dest.endswith("/bin/python"):
+        raise ValueError("The environment Python should end in /bin/python.")
+    env, py, q = dest[:-len("/bin/python")], shlex.quote(dest), shlex.quote
+    lines = ["set -e"]
+    mods = module_names(modules)
+    if mods:
+        lines.append("module load " + " ".join(map(q, mods)))
+    lines += [
+        f"if ! test -x {py}; then",
+        "  command -v conda >/dev/null 2>&1 || module load miniforge3 >/dev/null 2>&1 || true",
+        "  if command -v conda >/dev/null 2>&1; then",
+        f"    conda create -y -q -p {q(env)} --override-channels -c conda-forge python=3.11 pip",
+        "  elif python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null; then",
+        f"    python3 -m venv {q(env)}",
+        "  else",
+        "    echo 'No Python 3.10 or newer: the miniforge3 module is missing and python3 is too old. Enter a module"
+        " that provides conda or Python 3.10+ under Advanced > Environment modules.' >&2",
+        "    exit 3",
+        "  fi",
+        "fi",
+        f"{py} -m pip install -q --progress-bar off --only-binary=:all: {FEABAS_PACKAGES}",
+        # FEABAS requires opencv-python, whose cv2 needs libGL; compute nodes may not have it.
+        f"{py} -m pip uninstall -q -y opencv-python",
+        f"{py} -m pip install -q --progress-bar off --only-binary=:all: --no-deps --force-reinstall opencv-python-headless",
+        f"{py} -c " + q("import sys, feabas, cv2, numpy, h5py, psutil, tensorstore, tifffile; "
+                        "print('FEABAS environment ready: Python ' + sys.version.split()[0])"),
+    ]
+    return "\n".join(lines)
 
 
 class SubmissionUncertain(ClusterError):
@@ -182,9 +235,11 @@ class ClusterClient:
             result["storage"] = self.execute("dssusrinfo all")
         except ClusterError as e:
             result["storage"] = str(e)
-            result.update(directories=[], storage_state="error")
+            result.update(directories=[], storage_state="error", home_used=None, home_limit=None)
         else:
-            result.update(parse_dss_storage(result["storage"]))
+            parsed = parse_dss_storage(result["storage"])
+            parsed["home"] = parsed["home"] or result.get("home", "")
+            result.update(parsed)
         return result
 
     def prepare_workspace(self, profile: dict) -> str:
@@ -216,20 +271,7 @@ class ClusterClient:
         return "Remote workspace is writable and belongs to this project."
 
     def install_environment(self, python_path: str, modules: str = "") -> str:
-        dest = remote_path(python_path)
-        if not dest.endswith("/bin/python"):
-            raise ValueError("The environment Python should end in /bin/python.")
-        env = dest[:-len("/bin/python")]
-        mods = module_names(modules)
-        prefix = "set -e; "
-        if mods:
-            prefix += "module load " + " ".join(map(shlex.quote, mods)) + "; "
-        command = (prefix + "python3 -c " + shlex.quote("import sys; assert sys.version_info >= (3,10), 'Select a Python >= 3.10 module in Advanced'")
-                   + "; if ! test -x " + shlex.quote(dest) + "; then python3 -m venv " + shlex.quote(env) + "; fi; "
-                   + shlex.quote(dest) + " -m pip install --only-binary=:all: 'feabas==3.0.5' psutil tifffile imagecodecs "
-                   "opencv-python-headless h5py PyYAML scikit-image; "
-                   + shlex.quote(dest) + " -c " + shlex.quote("import feabas,cv2,numpy,h5py,psutil,tensorstore; print('FEABAS environment ready')"))
-        return self.execute(command, timeout=1200)
+        return self.execute(install_script(python_path, modules), timeout=1800)
 
     def read_remote_json(self, path: str, missing=None):
         try:
@@ -362,3 +404,121 @@ class ClusterClient:
                     destination.unlink(missing_ok=True)
                 raise
         return total
+
+    # -- bulk transfers over SSH: the Globus-free path for projects that fit a home folder --
+    @staticmethod
+    def _replace(sftp, part: str, target: str):
+        try:
+            sftp.posix_rename(part, target)
+        except OSError:
+            try:
+                sftp.remove(target)
+            except FileNotFoundError:
+                pass
+            sftp.rename(part, target)
+
+    def upload_tree(self, local: Path, remote: str, exclude=(), progress=None, cancelled=None) -> dict:
+        """Copy new or changed files (size or modification time) into a remote folder.
+
+        Remote files are never deleted. Each file is written under a temporary name and
+        renamed once its size is confirmed, so an interrupted copy never looks complete;
+        the next call skips everything that already arrived.
+        """
+        local, root = Path(local), remote_path(remote)
+        if not local.is_dir():
+            raise ClusterError(f"Folder not found on this computer: {local}")
+        files = []
+        for directory, dirs, names in os.walk(local):
+            here = Path(directory)
+            dirs[:] = sorted(d for d in dirs if not _excluded(d, exclude))
+            for name in sorted(names):
+                p = here / name
+                if _excluded(name, exclude):
+                    continue
+                if p.is_symlink():
+                    raise ClusterError(f"Resolve links before uploading: {p}")
+                st = p.stat()
+                files.append((p, p.relative_to(local).as_posix(), st.st_size, int(st.st_mtime)))
+        total = sum(f[2] for f in files)
+        done = copied = 0
+        listings = {}
+        with self._sftp() as sftp:
+            def remote_files(folder):
+                if folder not in listings:
+                    try:
+                        listings[folder] = {a.filename: a for a in sftp.listdir_attr(folder)}
+                    except FileNotFoundError:
+                        self._mkdirs(sftp, folder)
+                        listings[folder] = {}
+                return listings[folder]
+            remote_files(root)
+            for path, rel, size, mtime in files:
+                _stop_if(cancelled)
+                target = root + "/" + rel
+                folder, name = target.rsplit("/", 1)
+                have = remote_files(folder).get(name)
+                if not (have and stat.S_ISREG(have.st_mode or 0) and have.st_size == size and have.st_mtime == mtime):
+                    def moved(n, _size, base=done):
+                        _stop_if(cancelled)
+                        if progress:
+                            progress(base + n, total)
+                    sftp.put(str(path), target + PART_SUFFIX, callback=moved, confirm=True)
+                    sftp.utime(target + PART_SUFFIX, (mtime, mtime))
+                    self._replace(sftp, target + PART_SUFFIX, target)
+                    copied += 1
+                done += size
+                if progress:
+                    progress(done, total)
+        return dict(files=len(files), copied=copied, bytes=total)
+
+    def download_tree(self, remote: str, local: Path, progress=None, cancelled=None) -> dict:
+        """Copy new or changed remote files into a local folder; local files are never deleted."""
+        root, local = remote_path(remote), Path(local)
+        files = []
+        with self._sftp() as sftp:
+            def walk(folder, rel):
+                for a in sorted(sftp.listdir_attr(folder), key=lambda a: a.filename):
+                    _stop_if(cancelled)
+                    name = a.filename
+                    if name in (".", "..") or "\\" in name or ":" in name or name.endswith(PART_SUFFIX):
+                        continue
+                    r = rel + "/" + name if rel else name
+                    if stat.S_ISDIR(a.st_mode or 0):
+                        walk(folder + "/" + name, r)
+                    elif stat.S_ISREG(a.st_mode or 0):   # links are not followed
+                        files.append((folder + "/" + name, r, a.st_size, a.st_mtime))
+            walk(root, "")
+            total = sum(f[2] for f in files)
+            done = copied = 0
+            for path, rel, size, mtime in files:
+                _stop_if(cancelled)
+                dest = local.joinpath(*rel.split("/"))
+                if not dest.resolve().is_relative_to(local.resolve()):
+                    raise ClusterError(f"Unsafe remote file name: {rel}")
+                if not (dest.is_file() and dest.stat().st_size == size and int(dest.stat().st_mtime) == mtime):
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    part = dest.with_name(dest.name + PART_SUFFIX)
+                    def moved(n, _size, base=done):
+                        _stop_if(cancelled)
+                        if progress:
+                            progress(base + n, total)
+                    sftp.get(path, str(part), callback=moved)
+                    if part.stat().st_size != size:
+                        part.unlink(missing_ok=True)
+                        raise ClusterError(f"Incomplete download: {rel}")
+                    os.utime(part, (mtime, mtime))
+                    os.replace(part, dest)
+                    copied += 1
+                done += size
+                if progress:
+                    progress(done, total)
+        return dict(files=len(files), copied=copied, bytes=total)
+
+    def upload_file(self, local: Path, remote: str, cancelled=None) -> dict:
+        """One file to an exact remote path, renamed into place after its size is confirmed."""
+        target = remote_path(remote)
+        with self._sftp() as sftp:
+            self._mkdirs(sftp, str(PurePosixPath(target).parent))
+            sftp.put(str(local), target + PART_SUFFIX, callback=lambda *_: _stop_if(cancelled), confirm=True)
+            self._replace(sftp, target + PART_SUFFIX, target)
+        return dict(files=1, copied=1, bytes=Path(local).stat().st_size)

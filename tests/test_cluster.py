@@ -386,7 +386,8 @@ def test_batch_launcher_warns_when_selected_environment_has_no_paramiko(tmp_path
         "sys.meta_path.insert(0, NoParamiko())\n", encoding="utf-8")
     env = dict(os.environ, FW_PYTHON=sys.executable, PYTHONPATH=str(tmp_path))
     root = Path(__file__).resolve().parents[1]
-    result = subprocess.run([os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", "start_gui.bat", "--help"],
+    # By full path: cmd does not search the working directory when NoDefaultCurrentDirectoryInExePath is set.
+    result = subprocess.run([os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", str(root / "start_gui.bat"), "--help"],
                             cwd=root, env=env, capture_output=True, text=True, timeout=40)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Cluster support is unavailable" in result.stdout

@@ -12,11 +12,14 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFormLayout, QHBox
                               QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
 from ..core.cluster_bundle import PARTITIONS, remote_path
-from ..core.cluster_storage import project_storage_path, storage_message
+from ..core.cluster_storage import (ENVIRONMENT_BYTES, STORAGE_FACTOR, estimate_project_bytes, fit_warning, is_home,
+                                    preprocessing_copies, project_storage_path, raw_image_bytes, storage_message)
 from ..core.cluster_workspace import local_globus_path, resources_for, save_profile, sync_scope, write_json
 
 LRZ_COLLECTION = "c3f32bba-797e-11e6-8435-22000b97daec"
 STORAGE_DOC = "https://doku.lrz.de/file-systems-and-io-on-linux-cluster-10745972.html"
+# Above this much raw data, a transfer that needs Workbench open for hours is the wrong default.
+GLOBUS_SUGGESTED_BYTES = 200 * 10**9
 
 
 class ClusterSetupDialog(QDialog):
@@ -24,6 +27,8 @@ class ClusterSetupDialog(QDialog):
         super().__init__(parent)
         self.ctx = ctx
         self.backend = ctx.cluster_setup()
+        self._discovery = {}
+        self._closed = False
         self.setWindowTitle("Use LRZ from Workbench")
         self.resize(850, 790)
         outer = QVBoxLayout(self)
@@ -38,43 +43,57 @@ class ClusterSetupDialog(QDialog):
         b = QPushButton("1. Sign in and find my storage")
         b.clicked.connect(self._discover); form.addRow(b)
         self.storage = QComboBox(); self.storage.setEditable(True)
-        self.storage.setPlaceholderText("Choose your DSS project folder after signing in")
-        form.addRow("DSS project folder", self.storage)
+        self.storage.setPlaceholderText("Choose your home folder or a DSS container after signing in")
+        form.addRow("Storage folder", self.storage)
+        self.storage_note = QLabel(); self.storage_note.setWordWrap(True); form.addRow(self.storage_note)
+        self.storage.currentTextChanged.connect(self._storage_hint)
         b = QPushButton("2. Use this storage folder")
         b.clicked.connect(self._choose_storage); form.addRow(b)
         self.paths = QLabel("No cluster workspace selected yet.")
         self.paths.setWordWrap(True); form.addRow(self.paths)
         b = QPushButton("3. Prepare FEABAS at LRZ")
         b.clicked.connect(self._install); form.addRow(b)
-        note = QLabel("This creates a private Linux environment. It does not change your workstation's Python. "
-                      "DSS is a separate LRZ allocation: if no storage appears, request it from your project administrator / LRZ.")
+        note = QLabel("This creates a private Python 3.11 environment (Miniforge, as LRZ recommends) next to the project "
+                      "folders and installs FEABAS 3.0.5; allow 5-15 minutes. It does not change your workstation's Python. "
+                      "Your home folder (100 GB) suits the tutorial and smaller projects; for large datasets request a DSS "
+                      "container from your project administrator / LRZ.")
         note.setWordWrap(True); form.addRow(note)
         b = QPushButton("LRZ storage instructions")
         b.clicked.connect(lambda: self.open_url(STORAGE_DOC)); form.addRow(b)
         self.tabs.addTab(setup, "1  Cluster setup")
 
-        transfer = QWidget(); form = QFormLayout(transfer)
+        transfer = QWidget(); form = self.transfer_form = QFormLayout(transfer)
+        self.transfer = QComboBox()
+        self.transfer.addItem("Directly over SSH: no extra software, for data that fits your storage", "ssh")
+        self.transfer.addItem("Globus: large datasets or an institute NAS, runs without Workbench", "globus")
+        self.transfer.currentIndexChanged.connect(self._transfer_changed)
+        form.addRow("How files travel", self.transfer)
+        self.ssh_note = QLabel("Files travel over your SSH login, encrypted and size-checked. Unchanged files are skipped "
+                               "and nothing is deleted at either end, so an interrupted upload simply continues with the "
+                               "next Sync. Keep Workbench open while it copies.")
+        self.ssh_note.setWordWrap(True); form.addRow(self.ssh_note)
+        self._globus_rows = []
         note = QLabel("For this PC, install Globus Connect Personal, select accessible folders, then sign in below. "
-                      "For an institute NAS, its own Globus collection is preferable if one exists.")
-        note.setWordWrap(True); form.addRow(note)
+                      "For an institute NAS, its own Globus collection is preferable if one exists. LRZ serves DSS "
+                      "containers through Globus, not home folders.")
+        note.setWordWrap(True); form.addRow(note); self._globus_rows.append(note)
         b = QPushButton("Set up Globus Connect Personal")
-        b.clicked.connect(lambda: self.open_url("https://docs.globus.org/globus-connect-personal/install/windows/")); form.addRow(b)
+        b.clicked.connect(lambda: self.open_url("https://docs.globus.org/globus-connect-personal/install/windows/"))
+        form.addRow(b); self._globus_rows.append(b)
         b = QPushButton("Sign in / grant Globus access in browser")
-        b.clicked.connect(self._globus_login); form.addRow(b)
+        b.clicked.connect(self._globus_login); form.addRow(b); self._globus_rows.append(b)
         b = QPushButton("Find this computer's collection")
-        b.clicked.connect(self._find_pc); form.addRow(b)
-        self._text(form, "computer_collection", "This PC's collection UUID")
-        self._text(form, "source_collection", "Images: source collection UUID")
-        self._text(form, "source_path", "Images: folder in Globus")
-        self._text(form, "destination_collection", "LRZ collection UUID")
-        self._text(form, "destination_tiles", "Images: LRZ folder in Globus")
-        self._text(form, "destination_project", "Project: LRZ folder in Globus")
+        b.clicked.connect(self._find_pc); form.addRow(b); self._globus_rows.append(b)
+        for key, label in (("computer_collection", "This PC's collection UUID"), ("source_collection", "Images: source collection UUID"),
+                           ("source_path", "Images: folder in Globus"), ("destination_collection", "LRZ collection UUID"),
+                           ("destination_tiles", "Images: LRZ folder in Globus"), ("destination_project", "Project: LRZ folder in Globus")):
+            self._text(form, key, label); self._globus_rows.append(self.fields[key])
         self.include_existing = QCheckBox("Include existing project results on the first synchronization")
         form.addRow(self.include_existing)
         self.download = QCheckBox("Automatically download after Export")
         form.addRow(self.download)
         b = QPushButton("Open these locations in Globus")
-        b.clicked.connect(self._file_manager); form.addRow(b)
+        b.clicked.connect(self._file_manager); form.addRow(b); self._globus_rows.append(b)
         self.tabs.addTab(transfer, "2  Data transfer")
 
         resource = QWidget(); form = QFormLayout(resource)
@@ -118,8 +137,11 @@ class ClusterSetupDialog(QDialog):
         self.status = QLabel(); self.status.setWordWrap(True); outer.addWidget(self.status)
         bottom = QHBoxLayout()
         refresh = QPushButton("Refresh jobs / transfers"); refresh.clicked.connect(self.backend.refresh); bottom.addWidget(refresh)
+        self.leave = QPushButton("Leave cluster mode")
+        self.leave.setToolTip("Compute on this PC again. Submitted LRZ jobs keep running.")
+        self.leave.clicked.connect(self._leave); bottom.addWidget(self.leave)
         bottom.addStretch(1)
-        self.save = QPushButton("Save cluster settings & use cluster"); self.save.setObjectName("Primary")
+        self.save = QPushButton("Save cluster settings && use cluster"); self.save.setObjectName("Primary")
         self.save.clicked.connect(self._save); bottom.addWidget(self.save)
         close = QPushButton("Close"); close.clicked.connect(self.reject); bottom.addWidget(close)
         outer.addLayout(bottom)
@@ -151,6 +173,8 @@ class ClusterSetupDialog(QDialog):
         self.port.setValue(p["port"])
         self.include_existing.setChecked(p["include_existing"])
         self.download.setChecked(p["download_after_export"])
+        self.transfer.setCurrentIndex(max(0, self.transfer.findData(p.get("transfer", "ssh"))))
+        self._transfer_changed()
         if not self.fields["destination_collection"].text():
             self.fields["destination_collection"].setText(LRZ_COLLECTION)
         if not self.fields["source_path"].text() and self.ctx.project.state.source.root_dir:
@@ -158,18 +182,20 @@ class ClusterSetupDialog(QDialog):
                 self.fields["source_path"].setText(local_globus_path(Path(self.ctx.project.state.source.root_dir)))
             except ValueError:
                 pass
-        self.paths.setText(p["remote_project"] or "Choose your DSS folder after signing in.")
+        self.paths.setText("Work: " + p["remote_project"] + "\nImages: " + p["remote_tiles"] if p["remote_project"]
+                           else "Choose a storage folder after signing in.")
         v = self.ctx.project.state.volume
         if v.tile_w and v.tile_h:
             per = v.tile_w * v.tile_h * max(1, v.grid_rows * v.grid_cols) * (2 if "16" in v.dtype else 1) / 2**30
             self.size_hint.setText(f"This project's raw pixels: about {per:.2f} GiB per section. This excludes working arrays "
                                    "and does not predict peak RAM. Job reports record observed process memory.")
+        self.leave.setVisible(self.ctx.cluster_enabled)
 
     def _values(self):
         p = dict(self.backend.profile)
         p.update({k: w.value() if isinstance(w, QSpinBox) else w.text().strip() for k, w in self.fields.items()})
         p.update(partition=self.partition.currentText(), port=self.port.value(), include_existing=self.include_existing.isChecked(),
-                 download_after_export=self.download.isChecked())
+                 download_after_export=self.download.isChecked(), transfer=self.transfer.currentData())
         return p
 
     def _store(self):
@@ -198,39 +224,105 @@ class ClusterSetupDialog(QDialog):
         except Exception as e:
             QMessageBox.warning(self, "Setup needs attention", str(e))
 
+    def _transfer_changed(self, *_):
+        globus = self.transfer.currentData() == "globus"
+        for widget in self._globus_rows:
+            self.transfer_form.setRowVisible(widget, globus)
+        self.transfer_form.setRowVisible(self.ssh_note, not globus)
+
     def _discover(self):
         def start():
             self._store()
+            source = self.ctx.local_project.state.source.root_dir
             def connected(_):
-                def discovered(info):
-                    self.storage.clear(); self.storage.addItems(info["directories"])
-                    self.output.setPlainText(info["storage"])
-                    message = storage_message(info)
-                    self.paths.setText(message)
-                    self.backend.status(message)
-                self.backend._work("Checking your LRZ account and DSS storage…", self.backend.client.discover, discovered)
+                def check():
+                    info = self.backend.client.discover()
+                    # Metadata only; on a large NAS dataset this walk is better off the GUI thread.
+                    info["raw_bytes"] = raw_image_bytes(source) if source and Path(source).is_dir() else 0
+                    return info
+                self.backend._work("Checking your LRZ account and storage…", check, self._discovered)
             self.backend.connect(connected)
         self._safe(start)
 
+    def _discovered(self, info):
+        if self._closed:
+            return
+        self._discovery = info
+        self.storage.clear()
+        self.storage.addItems(info["directories"] + ([info["home"]] if info.get("home") else []))
+        # With a placeholder text QComboBox leaves new items unselected (currentText() == "").
+        self.storage.setCurrentIndex(0 if self.storage.count() else -1)
+        self.output.setPlainText(info["storage"])
+        message = storage_message(info)
+        self.paths.setText(message)
+        self.backend.status(message)
+        self._storage_hint()
+
+    def _estimate(self):
+        raw = self._discovery.get("raw_bytes") or 0
+        return raw, (estimate_project_bytes(raw, preprocessing_copies(self.ctx.local_project.state)) + ENVIRONMENT_BYTES
+                     if raw else 0)
+
+    def _storage_hint(self, *_):
+        text, info = self.storage.currentText().strip(), self._discovery
+        lines = []
+        if text and info:
+            if is_home(text, info):
+                used, limit = info.get("home_used"), info.get("home_limit")
+                quota = f"{used / 1e9:.1f} of {limit / 1e9:.0f} GB used" if limit is not None and used is not None else "quota unknown"
+                lines.append(f"Home folder · {quota} · backed up nightly. Good for the tutorial and smaller projects; "
+                             "large datasets belong in a DSS container.")
+            else:
+                lines.append("DSS container · compare the estimate below with its free space in the report "
+                             "(DSS Container usage and limits).")
+        raw, estimate = self._estimate()
+        if raw:
+            lines.append(f"This project: {raw / 1e9:.1f} GB of raw images → roughly {estimate / 1e9:.0f} GB at LRZ once every "
+                         f"step has run ({STORAGE_FACTOR}× the raw data plus the FEABAS environment; archived results of "
+                         "changed settings come on top).")
+            if text and is_home(text, info):
+                warning = fit_warning(estimate, info.get("home_used"), info.get("home_limit"))
+                if warning:
+                    lines.append("Warning: " + warning)
+        self.storage_note.setText("\n".join(lines))
+
     def _choose_storage(self):
         def choose():
-            base = project_storage_path(self.storage.currentText())
+            info = self._discovery
+            if not info:
+                raise ValueError("Click '1. Sign in and find my storage' first, so Workbench knows your folders and quota.")
+            home = (info.get("home") or "").rstrip("/")
+            base = project_storage_path(self.storage.currentText(), home)
+            in_home = bool(home) and is_home(base, info)
+            if in_home and base == home:
+                base += "/feabas-workbench"      # keep the home folder itself tidy
+            raw, estimate = self._estimate()
+            warning = fit_warning(estimate, info.get("home_used"), info.get("home_limit")) if in_home else ""
+            if warning and QMessageBox.question(self, "Storage may become too small", warning + "\n\nUse this folder anyway?",
+                                                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
             name = re.sub(r"[^A-Za-z0-9_-]", "-", self.ctx.local_project.state.name)[:40] or "project"
             root = base + "/feabas-" + name + "-" + self.backend.profile["project_id"][:8]
             for key, value in {"remote_project": root + "/work", "remote_tiles": root + "/images",
                                "remote_python": base + "/feabas-env/bin/python", "destination_project": root + "/work",
                                "destination_tiles": root + "/images"}.items():
                 self.fields[key].setText(value)
+            # LRZ's Globus does not serve home folders; very large data should not depend on Workbench staying open.
+            method = "globus" if not in_home and raw > GLOBUS_SUGGESTED_BYTES else "ssh"
+            self.transfer.setCurrentIndex(self.transfer.findData(method))
             p = self._store()
-            self.paths.setText("Work: " + p["remote_project"] + "\nImages: " + p["remote_tiles"])
+            self.paths.setText("Work: " + p["remote_project"] + "\nImages: " + p["remote_tiles"]
+                               + "\nFiles travel " + ("through Globus (tab 2)." if method == "globus" else "over SSH (tab 2)."))
             self.backend.connect(lambda _: self.backend._work("Checking remote folders…", lambda: self.backend.client.prepare_workspace(p)))
         self._safe(choose)
 
     def _install(self):
         def start():
             p = self._store()
+            if not p["remote_python"]:
+                raise ValueError("Choose the storage folder first (step 2); the environment is created next to it.")
             remote_path(p["remote_python"])
-            self.backend.connect(lambda _: self.backend._work("Preparing the private FEABAS environment; this may take several minutes…",
+            self.backend.connect(lambda _: self.backend._work("Preparing the private FEABAS environment; this takes 5-15 minutes…",
                                   lambda: self.backend.client.install_environment(p["remote_python"], p["modules"])))
         self._safe(start)
 
@@ -293,7 +385,8 @@ class ClusterSetupDialog(QDialog):
     def _retry_transfer(self):
         if self.backend.busy:
             return
-        failed = [t for t in self.backend.transfers if t["state"] == "FAILED" and not t.get("replaced")]
+        # SSH copies never stay open: a new Sync continues where an interrupted one stopped.
+        failed = [t for t in self.backend.transfers if t["state"] == "FAILED" and not t.get("replaced") and t.get("method") != "ssh"]
         if not failed:
             QMessageBox.information(self, "Transfers", "No failed transfer. Recover unconfirmed transfers first.")
             return
@@ -323,9 +416,19 @@ class ClusterSetupDialog(QDialog):
             self.accept()
         self._safe(save)
 
+    def _leave(self):
+        leave = getattr(self.parent(), "_use_local", None)
+        if leave:
+            leave()
+        else:
+            self._safe(self.ctx.use_local)
+        if not self.ctx.cluster_enabled:
+            self.reject()
+
     def _status(self):
         self.status.setText(self.backend.message)
         self.save.setEnabled(not self.backend.busy and not self.backend.running)
+        self.leave.setVisible(self.ctx.cluster_enabled)
         rows = [f"Job {j['job_id'] or '?'}: {j['state']}" for j in self.backend.journal[-5:]]
         rows += [f"{t['purpose']}: {t['state']} {t.get('details', '')}" for t in self.backend.transfers[-5:]]
         if rows:
@@ -334,6 +437,7 @@ class ClusterSetupDialog(QDialog):
     def shutdown(self):
         # The backend belongs to AppContext; closing settings must keep jobs and
         # transfers alive and must not discard the authenticated SSH connection.
+        self._closed = True
         try:
             self.backend.changed.disconnect(self._status)
         except RuntimeError:

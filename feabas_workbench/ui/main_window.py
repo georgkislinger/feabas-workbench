@@ -84,11 +84,13 @@ class MainWindow(QMainWindow):
         self.cluster_settings_btn = QPushButton("Use cluster…")
         self.cluster_settings_btn.clicked.connect(self.run_on_cluster)
         row.addWidget(self.cluster_settings_btn)
-        self.sync_cluster_btn = QPushButton("Sync project & images")
-        self.sync_cluster_btn.clicked.connect(lambda: self.ctx.cluster.sync())
+        self.sync_cluster_btn = QPushButton("Sync project && images")   # && shows a literal &
+        self.sync_cluster_btn.clicked.connect(self._sync_or_stop)
         self.sync_cluster_btn.setVisible(False)
         row.addWidget(self.sync_cluster_btn)
-        self.local_btn = QPushButton("Use this PC")
+        self.local_btn = QPushButton("Leave cluster mode")
+        self.local_btn.setToolTip("Compute on this PC again. Jobs already submitted keep running at LRZ; "
+                                  "'Use cluster…' resumes monitoring them.")
         self.local_btn.clicked.connect(self._use_local)
         self.local_btn.setVisible(False)
         row.addWidget(self.local_btn)
@@ -144,6 +146,9 @@ class MainWindow(QMainWindow):
         p = mb.addMenu("&Pipeline")
         a = QAction("Run the &standard pipeline…", self); a.setShortcut("Ctrl+R"); a.triggered.connect(self.run_standard_pipeline); p.addAction(a)
         a = QAction("Run on &cluster…", self); a.triggered.connect(self.run_on_cluster); p.addAction(a)
+        a = QAction("&Leave cluster mode (compute on this PC)", self); a.triggered.connect(self._use_local); p.addAction(a)
+        a.setEnabled(False)
+        self.leave_cluster_action = a
         p.addSeparator()
         a = QAction("Create &snapshot of current state…", self); a.triggered.connect(self.make_snapshot); p.addAction(a)
         a = QAction("&Restore snapshot…", self); a.triggered.connect(self.restore_snapshot_dialog); p.addAction(a)
@@ -218,23 +223,47 @@ class MainWindow(QMainWindow):
     def _execution_changed(self):
         remote = self.ctx.cluster_enabled
         text = self.ctx.cluster.message if remote else "Local computation"
+        backend = self.ctx.cluster
+        if not remote and backend and (backend.running or backend.transferring):
+            text += " · LRZ jobs/transfers continue; 'Use cluster…' resumes monitoring"
         self.execution_label.setText(("Execution: LRZ cluster · " if remote else "Execution: This PC · ") + text)
         self.cluster_settings_btn.setText("Cluster settings…" if remote else "Use cluster…")
         self.sync_cluster_btn.setVisible(remote)
         self.local_btn.setVisible(remote)
-        self.sync_cluster_btn.setEnabled(remote and not self.ctx.cluster.running and not self.ctx.cluster.busy
-                                        and not self.ctx.cluster.transferring)
+        self.leave_cluster_action.setEnabled(remote)
+        copying = remote and backend.copying
+        self.sync_cluster_btn.setText("Stop transfer" if copying else "Sync project && images")
+        self.sync_cluster_btn.setEnabled(copying or (remote and not backend.running and not backend.busy
+                                                     and not backend.transferring))
         if getattr(self, "_cluster_palette", None) != remote:
             self.setStyleSheet(theme.QSS.replace(theme.ACCENT, "#22A06B").replace(theme.ACCENT2, "#75D6AA")
                               .replace("#1D4ED8", "#137749").replace("#2563EB", "#178653") if remote else "")
             self._cluster_palette = remote
         self._on_project(self.ctx.project)
 
+    def _sync_or_stop(self):
+        backend = self.ctx.cluster
+        if backend.copying:
+            backend.cancel_all()
+        else:
+            backend.sync()
+
     def _use_local(self):
+        backend = self.ctx.cluster
+        if not self.ctx.cluster_enabled:
+            return
+        if backend and (backend.running or backend.transferring) and not backend.busy:
+            if QMessageBox.question(self, "Leave cluster mode",
+                    "A job or transfer is still active at LRZ. It keeps running there; Workbench stops "
+                    "monitoring it until you choose 'Use cluster…' again.\n\nCompute on this PC now?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
         try:
             self.ctx.use_local()
         except RuntimeError as e:
             QMessageBox.information(self, "Execution mode", str(e))
+            return
+        self.ctx.log("Cluster mode left: the Run buttons compute on this PC")
 
     # ------------------------------------------------------------------
     def page_count(self) -> int:
