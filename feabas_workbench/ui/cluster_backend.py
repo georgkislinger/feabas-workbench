@@ -306,7 +306,7 @@ class ClusterBackend(QObject):
         initial = p.get("include_existing") and not self.synced
         meta = dict(batch=uuid.uuid4().hex, scope=sync_scope(p), batch_size=2 if initial else 1)
         self._ssh_copy("raw images", self.client.upload_tree, Path(self.ctx.project.state.source.root_dir),
-                       p["remote_tiles"], report, cancelled, fingerprint=fp, metadata=meta)
+                       p["remote_tiles"], report, cancelled, exclude=(CONTROL,), fingerprint=fp, metadata=meta)
         if initial:
             self._ssh_copy("initial project", self.client.upload_tree, self.local.root, p["remote_project"], report,
                            cancelled, exclude=(CONTROL, ".git", "snapshots", "workbench.log"), metadata=meta)
