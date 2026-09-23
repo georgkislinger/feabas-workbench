@@ -11,6 +11,20 @@ rendering, mipmaps and VAST export. A live LRZ check (job 5610645) confirmed SSH
 sign-in, Slurm submission, file round trips and download for this account; FEABAS
 itself has not run at LRZ yet. This is a local modification, not an upstream release.
 
+## Before you start: your LRZ access and storage
+
+- **Linux Cluster permission:** sign in to the [LRZ ID Portal](https://idportal.lrz.de) with your LRZ ID. Your
+  account overview lists the Linux-Cluster permission, your MFA token and the LRZ project your ID belongs to,
+  together with its Master User. If the project lacks Linux Cluster permission, the Master User asks the project's
+  LRZ advisor ([first-time access guide](https://doku.lrz.de/compact-guide-to-first-time-linux-cluster-access-process-11484378.html)).
+- **DSS container:** you cannot create one yourself. A data curator of your LRZ project (initially its Master Users)
+  creates it in [DSSWeb](https://dssweb.dss.lrz.de) - reachable only from the Munich Scientific Network - and
+  invites you; you confirm the emailed invitation. If the project has no DSS rights yet, ask through the
+  [LRZ Servicedesk](https://servicedesk.lrz.de). See [DSS for users](https://doku.lrz.de/dss-documentation-for-users-11476038.html)
+  and [DSS for data curators](https://doku.lrz.de/dss-documentation-for-data-curators-11476063.html).
+  For a 1 TB dataset ask for about 5 TB (all results plus room for archived reruns).
+- Until then, the home folder is enough for the tutorial and smaller projects.
+
 ## First live check: sign in, choose storage, prepare FEABAS
 
 1. Restart Workbench after updating. Confirm **0.3.3+cluster.5** in the title/About dialog.

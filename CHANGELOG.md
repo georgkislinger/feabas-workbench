@@ -29,6 +29,10 @@ versions follow [Semantic Versioning](https://semver.org/).
 - Bulk preview downloads compared local files with the new remote manifest instead of the
   previous one, so previews updated by a later run were kept as if they were local edits.
 
+### Removed
+- The cluster.1 "Run on cluster" window (`ui/cluster_dialog.py`), unreachable since cluster.2
+  replaced it with the setup window and per-project cluster mode.
+
 ## [0.3.3+cluster.4] – 2026-09-22 (local build)
 
 ### Fixed

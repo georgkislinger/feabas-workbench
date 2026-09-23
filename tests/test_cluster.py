@@ -307,27 +307,22 @@ def test_gui_cluster_keeps_seven_workstation_pages(tmp_path, monkeypatch):
     from PySide6.QtWidgets import QApplication
     from feabas_workbench.core import envs
     from feabas_workbench.ui.main_window import MainWindow
-    from feabas_workbench.ui.cluster_dialog import ClusterDialog
+    from feabas_workbench.ui.cluster_setup import ClusterSetupDialog
     monkeypatch.setattr(envs, "SETTINGS_FILE", tmp_path / "settings.json")
     app = QApplication.instance() or QApplication([])
     window = MainWindow(envs.Settings())
     project = make_demo_project(tmp_path / "ui", n_sections=2, tile=128)
     window.open_project(project.root)
-    dialog = ClusterDialog(window.ctx, window)
+    dialog = ClusterSetupDialog(window.ctx, window)
     try:
         assert window.page_count() == 7 and dialog.tabs.count() == 4
-        dialog.remote_project.setText("/dss/project"); dialog.remote_tiles.setText("/dss/tiles")
-        dialog.remote_python.setText("/dss/env/bin/python"); dialog._prepare()
-        deadline = time.monotonic() + 15
-        while dialog.runner.running and time.monotonic() < deadline:
-            app.processEvents(); time.sleep(.01)
-        assert dialog.bundle and (dialog.bundle / "job.sh").exists(), dialog.output.toPlainText()
-        assert not dialog.client
-        dialog.partition.setCurrentText("serial_std")
-        assert dialog.cpus.maximum() == 16 and dialog.workers.maximum() <= 16
-        dialog.reject()
-        saved = json.loads(dialog.profile_file.read_text())
+        assert not window.ctx.cluster_enabled and dialog.leave.isHidden()   # setup alone does not switch
+        dialog.fields["username"].setText("tester")
+        dialog._store()
+        saved = json.loads((project.root / ".workbench-cluster/workspace.json").read_text())
+        assert saved["username"] == "tester" and saved["mode"] == "local"
         assert not any("password" in key or "token" in key for key in saved)
+        assert not dialog.backend.client     # nothing connects before "Sign in"
     finally:
         dialog.shutdown(); window.close(); app.processEvents()
 
