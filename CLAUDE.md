@@ -17,7 +17,7 @@
   and stitch matching yields no matches at all - the patch defaults that flag to true. (2) Windows: FEABAS builds
   `file://D:/...` URLs that TensorStore rejects, rewritten to `file:///D:/...`. New projects default to the PNG
   (`image`) render driver.
-- Three interpreters: the GUI's own, a FEABAS env (feabas + tensorstore, numpy < 2) and a deep-learning env
+- Three interpreters: the GUI's own, a FEABAS env (feabas 3.0.5 + tensorstore; numpy 2.x works) and a deep-learning env
   (torch, careamics 0.3.2 which pins torch < 2.10, ultralytics, segmentation-models-pytorch). Paths live in
   `%APPDATA%/FeabasWorkbench/settings.json`; projects may override them.
 - Heavy in-process work goes through `ui/threads.ThreadRunner`; anything that needs torch/feabas goes through a
