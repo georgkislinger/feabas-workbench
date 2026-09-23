@@ -47,9 +47,12 @@ def test_install_script_is_valid_bash():
 
 # -- a real SSH server with an SFTP subsystem over a local folder ----------------------------
 @pytest.fixture
-def sftp(tmp_path):
+def ssh_server(tmp_path):
+    """Password 'pw', SFTP over a local folder, and canned replies to commands: replies maps a
+    substring of the command to (exit code, output); every command is recorded."""
     root = tmp_path / "server"
     root.mkdir()
+    replies, commands = {}, []
     host_key = paramiko.RSAKey.generate(2048)
     listener = socket.socket(); listener.bind(("127.0.0.1", 0)); listener.listen(1); listener.settimeout(10)
     stop, failures = threading.Event(), []
@@ -139,6 +142,15 @@ def sftp(tmp_path):
         def check_channel_request(self, kind, chanid):
             return paramiko.OPEN_SUCCEEDED
 
+        def check_channel_exec_request(self, channel, command):
+            text = command.decode("utf-8")
+            commands.append(text)
+            code, out = next(((c, o) for key, (c, o) in replies.items() if key in text), (1, "unexpected command"))
+            def send():
+                channel.sendall(out.encode("utf-8")); channel.send_exit_status(code); channel.shutdown_write()
+            threading.Thread(target=send, daemon=True).start()
+            return True
+
     def serve():
         try:
             conn, _ = listener.accept()
@@ -146,20 +158,28 @@ def sftp(tmp_path):
                 t.add_server_key(host_key)
                 t.set_subsystem_handler("sftp", paramiko.SFTPServer, Files)
                 t.start_server(server=Server())
-                stop.wait(60)
+                stop.wait(120)
         except Exception as e:  # noqa: BLE001 - reported by the fixture
             failures.append(e)
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
-    client = ClusterClient(ConnectionSettings("127.0.0.1", "tester", listener.getsockname()[1]),
+    try:
+        yield SimpleNamespace(port=listener.getsockname()[1], root=root, replies=replies, commands=commands)
+    finally:
+        stop.set(); listener.close(); thread.join(3)
+    assert not failures
+
+
+@pytest.fixture
+def sftp(ssh_server, tmp_path):
+    client = ClusterClient(ConnectionSettings("127.0.0.1", "tester", ssh_server.port),
                            lambda text, secret: "pw", lambda host, fp: True, tmp_path / "hosts")
     client.connect()
     try:
-        yield client, root
+        yield client, ssh_server.root
     finally:
-        client.close(); stop.set(); listener.close(); thread.join(3)
-    assert not failures
+        client.close()
 
 
 def test_ssh_upload_skips_unchanged_files_and_never_deletes(sftp, tmp_path):
@@ -386,3 +406,66 @@ def test_leaving_waits_only_for_an_operation_in_progress(window, project, profil
     with pytest.raises(RuntimeError, match="still busy"):
         window.ctx.use_local()
     assert window.ctx.cluster_enabled
+
+
+def test_setup_walkthrough_against_a_local_ssh_server(window, project, ssh_server, monkeypatch, tmp_path):
+    """The final-test clicks, end to end through the real dialog, backend, thread runner, SSH and SFTP:
+    sign in, discover, home folder, prepare FEABAS, save, sync over SSH, submit one step."""
+    import json
+    import time
+    from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
+    from feabas_workbench.core.steps import STEPS_BY_KEY
+    from feabas_workbench.ui import cluster_backend
+    from feabas_workbench.ui.cluster_setup import ClusterSetupDialog
+    home = "/dss/dsshome1/04/tester"
+    ssh_server.replies.update({
+        "expanduser": (0, json.dumps(dict(home=home, python="/usr/bin/python3", version=[3, 6, 15], user="tester"))),
+        "dssusrinfo all": (0, FIXTURE.replace("testuser", "tester")),
+        "conda create": (0, "FEABAS environment ready: Python 3.11.9"),
+        "Tile folder missing": (0, "FEABAS 3.0.5 and dependencies available; paths accessible."),
+        "sbatch --parsable": (0, "4242"),
+    })
+    monkeypatch.setattr(cluster_backend, "settings_dir", lambda: tmp_path / "settings")   # known_hosts stays here
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("pw", True))
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    problems = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: problems.append(a[2]) or QMessageBox.Ok)
+    app = QApplication.instance()
+
+    def wait(condition, seconds=30):
+        deadline = time.monotonic() + seconds
+        while not condition() and not problems and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(.01)
+        assert condition(), problems or backend.message
+
+    window.open_project(project.root)
+    dialog = ClusterSetupDialog(window.ctx, window)
+    backend = dialog.backend
+    try:
+        dialog.fields["host"].setText("127.0.0.1")
+        dialog.port.setValue(ssh_server.port)
+        dialog.fields["username"].setText("tester")
+        dialog._discover()
+        wait(lambda: dialog.storage.count() and not backend.busy)
+        assert dialog.storage.currentText() == home and "Home folder" in dialog.storage_note.text()
+        dialog._choose_storage()
+        remote = backend.profile["remote_project"]
+        wait(lambda: not backend.busy and backend.message.startswith("Remote workspace is writable"))
+        assert remote.startswith(home + "/feabas-workbench/feabas-")
+        dialog._install()
+        wait(lambda: not backend.busy and "FEABAS environment ready" in backend.message)
+        dialog._save()
+        assert window.ctx.cluster_enabled
+        window.sync_cluster_btn.click()
+        wait(lambda: bool(backend.synced) and not backend.busy)
+        images = ssh_server.root / backend.profile["remote_tiles"].lstrip("/")
+        assert sorted(p.name for p in images.rglob("*.tif")) == sorted(
+            p.name for p in Path(project.state.source.root_dir).rglob("*.tif"))
+        window.ctx.jobs.submit(window.ctx.feabas_step_spec(STEPS_BY_KEY["stitch.matching"]))
+        wait(lambda: backend.journal and backend.journal[-1].get("job_id") == "4242" and not backend.busy)
+        run = ssh_server.root / (remote + "/.workbench-cluster/" + backend.journal[-1]["run_id"]).lstrip("/")
+        assert (run / "READY").is_file() and backend.profile["remote_python"] in (run / "job.sh").read_text()
+        assert backend.message.startswith("Queued at LRZ · job 4242") and not problems
+    finally:
+        dialog.shutdown(); dialog.close()
