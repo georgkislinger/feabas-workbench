@@ -22,6 +22,8 @@ versions follow [Semantic Versioning](https://semver.org/).
   stop at 3.8, its default python3 is 3.6) with headless OpenCV for compute nodes.
 - Leaving cluster mode no longer refuses while a job or Globus transfer is active, including
   a transfer left unconfirmed; only an operation in progress has to finish.
+- Closing the LRZ sign-in dialog, declining the host key or stopping a copy is a status line,
+  not a failure; error dialogs show the message, the traceback goes to the log only.
 - After signing in, the first storage entry is selected; before, the list stayed unselected
   and "Use this storage folder" received an empty path.
 - "Sync project & images" and "Save cluster settings & use cluster" showed an underlined

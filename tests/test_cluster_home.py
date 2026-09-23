@@ -53,6 +53,7 @@ def ssh_server(tmp_path):
     root = tmp_path / "server"
     root.mkdir()
     replies, commands = {}, []
+    state = SimpleNamespace(port=0, root=root, replies=replies, commands=commands, auth="password")
     host_key = paramiko.RSAKey.generate(2048)
     listener = socket.socket(); listener.bind(("127.0.0.1", 0)); listener.listen(1); listener.settimeout(10)
     stop, failures = threading.Event(), []
@@ -134,10 +135,16 @@ def ssh_server(tmp_path):
 
     class Server(paramiko.ServerInterface):
         def get_allowed_auths(self, username):
-            return "password"
+            return state.auth
 
         def check_auth_password(self, username, password):
             return paramiko.AUTH_SUCCESSFUL if password == "pw" else paramiko.AUTH_FAILED
+
+        def check_auth_interactive(self, username, submethods):     # how LRZ asks for password and MFA
+            return paramiko.InteractiveQuery("LRZ", "", ("Password:", False))
+
+        def check_auth_interactive_response(self, responses):
+            return paramiko.AUTH_SUCCESSFUL if responses == ["pw"] else paramiko.AUTH_FAILED
 
         def check_channel_request(self, kind, chanid):
             return paramiko.OPEN_SUCCEEDED
@@ -151,21 +158,32 @@ def ssh_server(tmp_path):
             threading.Thread(target=send, daemon=True).start()
             return True
 
-    def serve():
+    def handle(conn):
         try:
-            conn, _ = listener.accept()
             with paramiko.Transport(conn) as t:
                 t.add_server_key(host_key)
                 t.set_subsystem_handler("sftp", paramiko.SFTPServer, Files)
                 t.start_server(server=Server())
-                stop.wait(120)
+                while t.is_active() and not stop.wait(.1):
+                    pass
         except Exception as e:  # noqa: BLE001 - reported by the fixture
             failures.append(e)
 
+    def serve():    # every sign-in attempt is a new connection
+        while not stop.is_set():
+            try:
+                conn, _ = listener.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            threading.Thread(target=handle, args=(conn,), daemon=True).start()
+
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
+    state.port = listener.getsockname()[1]
     try:
-        yield SimpleNamespace(port=listener.getsockname()[1], root=root, replies=replies, commands=commands)
+        yield state
     finally:
         stop.set(); listener.close(); thread.join(3)
     assert not failures
@@ -469,3 +487,37 @@ def test_setup_walkthrough_against_a_local_ssh_server(window, project, ssh_serve
         assert backend.message.startswith("Queued at LRZ · job 4242") and not problems
     finally:
         dialog.shutdown(); dialog.close()
+
+@pytest.mark.parametrize("auth", ["password", "keyboard-interactive"])
+def test_closing_the_sign_in_dialog_is_a_quiet_cancel(window, project, profile, ssh_server, monkeypatch, tmp_path, auth):
+    """Closing the LRZ password/MFA dialog: a status line, no warning, and the next sign-in works."""
+    import time
+    from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
+    from feabas_workbench.ui import cluster_backend
+    ssh_server.auth = auth
+    monkeypatch.setattr(cluster_backend, "settings_dir", lambda: tmp_path / "settings")
+    answers = [("", False), ("pw", True)]          # first dialog closed, second answered
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: answers.pop(0))
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    problems = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: problems.append(a[2]) or QMessageBox.Ok)
+    profile.update(host="127.0.0.1", port=ssh_server.port, username="tester")
+    window.open_project(project.root)
+    window.ctx.use_cluster(profile)
+    backend, app = window.ctx.cluster, QApplication.instance()
+
+    def wait(condition):
+        deadline = time.monotonic() + 20
+        while not condition() and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(.01)
+        assert condition(), (problems, backend.message)
+
+    signed_in = []
+    backend.connect(signed_in.append)
+    wait(lambda: not backend.busy and backend.message.startswith("Sign-in cancelled"))
+    assert not problems and not signed_in and not backend.client.connected
+    assert "Sign-in cancelled" in window.execution_label.text()
+    backend.connect(signed_in.append)
+    wait(lambda: bool(signed_in))
+    assert backend.client.connected and not problems and not answers

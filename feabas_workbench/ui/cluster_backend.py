@@ -14,7 +14,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
 
 from ..core.cluster_bundle import MAX_BUNDLE_BYTES, file_hash
-from ..core.cluster_transport import ClusterClient, ConnectionSettings
+from ..core.cluster_transport import ClusterClient, ConnectionSettings, Interrupted, SignInCancelled
 from ..core.cluster_workspace import (CONTROL, TERMINAL, build_workspace_bundle, local_globus_path,
                                      read_json, resources_for, source_signature, sync_scope, write_json)
 from ..core.envs import settings_dir
@@ -140,9 +140,16 @@ class ClusterBackend(QObject):
         r = dict(text=text, secret=secret, kind=kind, event=threading.Event(), answer=None)
         self.questions.append(r)
         self.question.emit(r)
-        if not r["event"].wait(300) or r["answer"] is None:
-            raise RuntimeError("Sign in cancelled or timed out.")
-        self.questions.remove(r)
+        try:
+            if not r["event"].wait(300):
+                raise SignInCancelled("Sign-in timed out after 5 minutes without an answer. Sign in again.")
+            if kind == "trust" and not r["answer"]:
+                raise SignInCancelled("Host key not accepted, so nothing was sent. Compare it with LRZ's published "
+                                      "fingerprints and sign in again.")
+            if r["answer"] is None:
+                raise SignInCancelled("Sign-in cancelled. Sign in again when you are ready.")
+        finally:
+            self.questions.remove(r)
         return r["answer"]
 
     def _work(self, text, function, done=None, *, progress=False):
@@ -151,25 +158,39 @@ class ClusterBackend(QObject):
         if self.busy:
             return False
         streaming = self._cancellable = progress
+        failure = {}
         def run(progress, cancelled):   # ThreadRunner passes both by keyword: keep these names
-            if not streaming:
-                return function()
-            last = [0.0]
-            def moved(sent, total):
-                # Throttled, and in megabytes: the progress signal carries 32-bit ints.
-                if sent >= total or time.monotonic() - last[0] > .5:
-                    last[0] = time.monotonic()
-                    progress(sent // 10**6, total // 10**6, text)
-            return function(moved, cancelled)
+            try:
+                if not streaming:
+                    return function()
+                last = [0.0]
+                def moved(sent, total):
+                    # Throttled, and in megabytes: the progress signal carries 32-bit ints.
+                    if sent >= total or time.monotonic() - last[0] > .5:
+                        last[0] = time.monotonic()
+                        progress(sent // 10**6, total // 10**6, text)
+                return function(moved, cancelled)
+            except Interrupted as e:     # the user closed the sign-in or stopped a copy: not a failure
+                return e
+            except Exception as e:
+                failure["message"] = str(e) or type(e).__name__
+                raise
         def finished(result, error):
             self._cancellable = False
             if self._closed:
                 return
+            if isinstance(result, Interrupted):
+                self.status(str(result))
+                self.ctx.log(str(result))
+                self.changed.emit()
+                return
             if error:
+                # The dialog gets the message; the traceback goes to the log only.
+                message = failure.get("message") or error.splitlines()[0]
                 self.timer.stop()  # do not repeatedly prompt for expired credentials every 30 seconds
-                self.status("Needs attention: " + error.splitlines()[0])
+                self.status("Needs attention: " + message.splitlines()[0])
                 self.ctx.log(error, "error")
-                QMessageBox.warning(self.ctx.parent(), "Cluster needs attention", error.split("Traceback")[0][:3000])
+                QMessageBox.warning(self.ctx.parent(), "Cluster needs attention", message[:3000])
             elif done:
                 try:
                     done(result)

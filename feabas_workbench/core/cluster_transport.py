@@ -29,9 +29,21 @@ class ClusterError(RuntimeError):
     pass
 
 
+class Interrupted(ClusterError):
+    """Stopped on purpose by the user: report it as a status, not as a failure."""
+
+
+class SignInCancelled(Interrupted):
+    pass
+
+
+class TransferStopped(Interrupted):
+    pass
+
+
 def _stop_if(cancelled):
     if cancelled and cancelled():
-        raise ClusterError("Transfer stopped. Files copied so far are kept; the next sync continues.")
+        raise TransferStopped("Transfer stopped. Files copied so far are kept; the next sync continues.")
 
 
 def _excluded(name, patterns):
