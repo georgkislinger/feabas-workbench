@@ -150,16 +150,16 @@ class ClusterBackend(QObject):
         function(report, cancelled), where report(bytes_done, bytes_total) updates the status."""
         if self.busy:
             return False
-        self._cancellable = progress
-        def run(report, cancelled):
-            if not progress:
+        streaming = self._cancellable = progress
+        def run(progress, cancelled):   # ThreadRunner passes both by keyword: keep these names
+            if not streaming:
                 return function()
             last = [0.0]
             def moved(sent, total):
                 # Throttled, and in megabytes: the progress signal carries 32-bit ints.
                 if sent >= total or time.monotonic() - last[0] > .5:
                     last[0] = time.monotonic()
-                    report(sent // 10**6, total // 10**6, text)
+                    progress(sent // 10**6, total // 10**6, text)
             return function(moved, cancelled)
         def finished(result, error):
             self._cancellable = False
@@ -182,7 +182,7 @@ class ClusterBackend(QObject):
             if not error and not self._closed:
                 self.timer.start()
             self.changed.emit()
-        started = self.runner.start(run, on_done=finished, on_progress=self._progressed if progress else None)
+        started = self.runner.start(run, on_done=finished, on_progress=self._progressed if streaming else None)
         self.status(text)   # after starting, so listeners already see busy (and a stoppable copy)
         return started
 

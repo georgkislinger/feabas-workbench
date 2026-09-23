@@ -297,6 +297,51 @@ def test_ssh_sync_uploads_images_and_project_and_unlocks_runs(window, project, p
     assert not backend.transferring        # an SSH copy never stays open like a Globus task
 
 
+def test_sign_in_and_ssh_sync_through_the_real_background_thread(window, project, profile, monkeypatch):
+    """No _work stand-in: the ThreadRunner calls its function with progress=/cancelled= keywords."""
+    import time
+    from PySide6.QtWidgets import QApplication
+    from feabas_workbench.ui import cluster_backend
+
+    class FakeClient:
+        connected = False
+
+        def __init__(self, *args):
+            pass
+
+        def connect(self):
+            FakeClient.connected = True
+            return "Connected to test"
+
+        def close(self):
+            pass
+
+        def prepare_workspace(self, p):
+            return "ok"
+
+        def upload_tree(self, src, dst, progress=None, cancelled=None, exclude=()):
+            assert not cancelled()
+            progress(5 * 10**9, 10**10)
+            progress(10**10, 10**10)
+            return dict(files=2, copied=2, bytes=10**10)
+
+    monkeypatch.setattr(cluster_backend, "ClusterClient", FakeClient)
+    window.open_project(project.root)
+    window.ctx.use_cluster(profile)
+    backend = window.ctx.cluster
+    seen = []
+    backend.changed.connect(lambda: seen.append(backend.message))
+    backend.sync()
+    app, deadline = QApplication.instance(), time.monotonic() + 15
+    while (backend.busy or not backend.synced) and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(.01)
+    assert backend.synced and backend.message == "Images synchronized over SSH · ready to run", seen
+    assert "Connected to test" in seen
+    assert any(s.endswith("5.00 of 10.00 GB") for s in seen)     # progress crossed the thread boundary
+    assert not backend.copying and window.sync_cluster_btn.text() == "Sync project && images"
+
+
 def test_ssh_export_download_reports_the_local_folder(window, project, profile, monkeypatch, tmp_path):
     profile["export_destination"] = str(tmp_path / "out")
     window.open_project(project.root)
