@@ -1,11 +1,14 @@
 <h1 align="center">FEABAS Workbench</h1>
 
-> **Local build 0.3.3+cluster.5:** adds persistent LRZ execution through the usual Run buttons,
+> **Development build 0.3.3+cluster.6:** adds persistent LRZ execution through the usual Run buttons,
 > guided SSH setup with home-folder or DSS storage (with a storage estimate), image synchronization
 > over SSH or Globus, remote previews and export downloads.
 > See [cluster setup and data transfer](docs/CLUSTER_GUIDE.md). Cluster mode is explicit and green;
 > **Leave cluster mode** restores workstation execution.
-> This is a local modification, not an upstream release; FEABAS has not yet run at LRZ.
+> This build also adds local within/across-section parallelism with resource estimates, pixel-based N2V
+> selection, training and validation loss curves, and a live best-model preview with graceful stopping.
+> See the [user guide](docs/USER_GUIDE.md#local-parallelism). This development build is not a
+> packaged release; full FEABAS image processing at LRZ has not yet been validated.
 
 <p align="center">
   A desktop app for stitching and aligning serial-section EM volumes with
@@ -221,5 +224,5 @@ Cite FEABAS for the stitching and alignment – that is where the science is:
 and, if the workbench was useful in your work, the workbench too (GitHub's *Cite this repository*
 button uses [CITATION.cff](CITATION.cff)):
 
-> Kislinger, G. (2026). *FEABAS Workbench* (version 0.3.3) [Computer software].
+> Kislinger, G. (2026). *FEABAS Workbench* (version 0.3.3+cluster.6) [Computer software].
 > https://github.com/georgkislinger/feabas-workbench — ORCID 0000-0002-6559-7421

@@ -143,6 +143,55 @@ def _hook(module, apply):
         sys.meta_path.insert(0, _Finder(module, apply))
 
 
+def _local_resources():
+    """Per-process resource overrides, inherited by spawn children; never edit project YAML."""
+    filename = os.environ.get("FW_LOCAL_RESOURCES_FILE")
+    if not filename:
+        return
+    import json
+    from feabas import config
+    with open(filename, encoding="utf-8") as f:
+        resource = json.load(f)
+    workers = int(resource["workers"])
+    config.general_settings().update(cpu_budget=workers, parallel_framework="process",
+                                     logging_directory=resource["logging_directory"])
+    config.parallel_framework.cache_clear()
+    getter = {"stitching": config.stitch_configs, "thumbnail": config.thumbnail_configs,
+              "alignment": config.align_configs}[resource["kind"]]
+    stage = getter()[resource["field"]]
+    stage.update(num_workers=workers, parallel_within_section=True)
+    config.limit_numpy_thread(1)
+
+
+def _local_section_listing():
+    """Keep all thumbnail phases on one named section, even with incomplete mipmaps."""
+    filename = os.environ.get("FW_LOCAL_RESOURCES_FILE")
+    if not filename:
+        return
+    import json
+    from feabas import storage
+    with open(filename, encoding="utf-8") as f:
+        resource = json.load(f)
+    if resource["kind"] != "thumbnail" or resource["field"] != "downsample":
+        return
+    name = resource.get("section_name")
+    if not name:
+        return
+    original = storage.list_folder_content
+
+    def listed(pattern, *args, **kwargs):
+        found = original(pattern, *args, **kwargs)
+        pattern = str(pattern).replace("\\", "/")
+        if pattern.endswith("metadata.txt"):
+            return [f for f in found if str(f).replace("\\", "/").split("/")[-2] == name]
+        if pattern.endswith("/ts_specs/*.json") or pattern.endswith("/stitch/tform/*.h5"):
+            return [f for f in found if os.path.splitext(os.path.basename(f))[0] == name]
+        return found
+    storage.list_folder_content = listed
+
+
+_hook("feabas.config", _local_resources)
+_hook("feabas.storage", _local_section_listing)
 _hook("feabas.matcher", _install_matcher)
 if os.name == "nt":
     _hook("tensorstore", _install)

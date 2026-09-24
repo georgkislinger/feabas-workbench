@@ -246,6 +246,24 @@ class AppContext(QObject):
         argv = step_argv(py, step, start, stop, stride, filt, extra_args)
         n = len([p for p in (root / "stitch" / "stitch_coord").glob("*.txt")])
         expected = expected_outputs(root, step, start, stop, stride)
+        if not self.cluster_enabled:
+            from ..core.local_parallel import SECTION_STEPS, options, plan
+            if step.key in SECTION_STEPS:
+                settings = options(self.project, step.key)
+                if settings["mode"] != "existing":
+                    if extra_args and extra_args != ["--reverse"]:
+                        raise RuntimeError("These extra arguments need Existing FEABAS settings for this stage.")
+                    from ..core.jobs import write_spec_file
+                    import uuid
+                    allocation = plan(self.project, step.key, settings)
+                    self.log(f"{step.label}: requested local {allocation.sections} sections × {allocation.workers} workers.")
+                    payload = dict(root=str(root), project=str(self.project.root), step=step.key, settings=settings,
+                                   start=start, stop=stop or None, stride=stride, filter=filt, reverse=bool(extra_args))
+                    spec_file = write_spec_file(root / "logs/specs", "local_parallel_" + uuid.uuid4().hex, payload)
+                    return JobSpec(name=step.label + (f" [{tag}]" if tag else ""),
+                        argv=[py, "-m", "feabas_workbench.workers.local_parallel", "--spec", str(spec_file)],
+                        cwd=root, env=worker_env(), kind="feabas", step_key=step.key, tag=tag,
+                        expected=expected, log_file=root / "workbench.log")
         full_run = start is None and stop is None
         progress_fn = None
         if step.key == "thumbnail.downsample" and full_run:

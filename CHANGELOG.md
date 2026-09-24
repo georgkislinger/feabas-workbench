@@ -3,6 +3,36 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.3+cluster.6] – 2026-09-24 (development build)
+
+### Added
+- Local parallelism controls for tile matching, montage optimization/rendering, stitched
+  mipmaps/thumbnails, aligned PNG section rendering and aligned PNG mipmaps. Choose workers
+  within sections, across sections, or both; CPU/RAM estimates limit simultaneous sections.
+  Project settings and section logs remain separate from cluster resource settings.
+- N2V training selection based on usable pixels instead of a minimum number of files, with
+  pixel-based auto-selection. A sufficiently large single image is accepted; training and
+  validation use non-overlapping spatial regions with recorded patch locations.
+- Live training and validation loss curves and a fixed held-out original/best-denoised patch
+  comparison for local N2V-family training. Stop after the current epoch while retaining the
+  checkpoint with the lowest validation loss.
+
+### Fixed
+- Clearing the denoising training selection now persists; model selection prefers the saved
+  best checkpoint. Existing training runs are protected by requiring a new run name.
+- Parallel thumbnail phases stay on the same named section when other mipmaps are incomplete.
+  Aligned rendering initializes the shared canvas once before processing sections in parallel.
+- A failed parallel section stops sibling and pending work and reports the original failure.
+- Disable CAREamics' console progress bar at construction so epoch progress messages remain
+  readable by the GUI. Large training images are sampled one at a time with bounded patch arrays.
+
+### Validation
+- 168 regression tests passed; one Linux-only test skipped on Windows.
+- A complete synthetic parallel pipeline, including a partial-section thumbnail run, passed.
+- Short CPU N2V and N2V2 runs verified both loss curves, best-model previews, graceful stopping,
+  checkpoint reload and prediction. RAM planning remains approximate; live denoising feedback
+  and graceful stopping are currently local-mode features.
+
 ## [0.3.3+cluster.5] – 2026-09-23 (local build)
 
 ### Added

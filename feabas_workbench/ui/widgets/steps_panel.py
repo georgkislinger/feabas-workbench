@@ -30,6 +30,12 @@ class StepsPanel(QWidget):
         self.status = QLabel("")
         self.status.setObjectName("Hint")
         top.addWidget(self.run_all)
+        from ...core.local_parallel import SECTION_STEPS
+        self.parallel_keys = [k for k in step_keys if k in SECTION_STEPS]
+        self.parallel_button = QPushButton("Local parallelism…")
+        self.parallel_button.clicked.connect(self._parallelism)
+        self.parallel_button.setVisible(bool(self.parallel_keys) and not ctx.cluster_enabled)
+        top.addWidget(self.parallel_button)
         top.addWidget(self.status, 1)
         lay.addLayout(top)
         for k in step_keys:
@@ -50,9 +56,17 @@ class StepsPanel(QWidget):
 
     def refresh(self, scan: PipelineScan | None) -> None:
         busy = self.ctx.jobs.running
+        self.parallel_button.setVisible(bool(self.parallel_keys) and not self.ctx.cluster_enabled)
+        self.parallel_button.setEnabled(self.ctx.project is not None and not busy)
         for k, card in self.cards.items():
             card.set_status(scan[k] if scan else None, busy=busy)
         self.run_all.setEnabled(scan is not None and not busy)
+
+    def _parallelism(self):
+        if not self.ctx.project or self.ctx.cluster_enabled:
+            return
+        from ..local_parallel_dialog import LocalParallelDialog
+        LocalParallelDialog(self.ctx, self.parallel_keys, self).exec()
 
     def _spec(self, step: Step, start=None, stop=None, stride=None):
         return self.ctx.feabas_step_spec(step, start, stop, stride, root=self.root_override, tag=self.tag)
