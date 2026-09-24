@@ -16,12 +16,21 @@ versions follow [Semantic Versioning](https://semver.org/).
 - **Leave cluster mode** in the top bar, the Pipeline menu and the setup window. Submitted
   jobs keep running at LRZ; monitoring pauses until cluster mode is chosen again.
 - The Sync button becomes **Stop transfer** while an SSH copy runs.
+- **Optional: prepare deep-learning tools at LRZ**: the counterpart of the local deep-learning
+  environment (CPU PyTorch, segmentation-models-pytorch, ultralytics, careamics), used by fold
+  detection, YOLO and Noise2Void at LRZ.
+- **Free this project's LRZ storage…**: shows the folder's size and which exports are on this PC,
+  then deletes only the folder the storage step created (optionally the environments too).
+- The setup window's log keeps a history and streams environment installs line by line; it
+  shares a draggable splitter with the tabs.
 
 ### Fixed
 - **Prepare FEABAS at LRZ** creates a Miniforge Python 3.11 environment (LRZ's python modules
   stop at 3.8, its default python3 is 3.6) with headless OpenCV for compute nodes.
 - Leaving cluster mode no longer refuses while a job or Globus transfer is active, including
   a transfer left unconfirmed; only an operation in progress has to finish.
+- The setup window fits the screen it opens on and its tabs scroll; on a 1280x800 display at
+  200 % its bottom buttons were off-screen and it could not be made smaller.
 - Closing the LRZ sign-in dialog, declining the host key or stopping a copy is a status line,
   not a failure; error dialogs show the message, the traceback goes to the log only.
 - After signing in, the first storage entry is selected; before, the list stayed unselected

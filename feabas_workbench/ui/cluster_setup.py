@@ -2,16 +2,18 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
+import time
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlencode
 
-from PySide6.QtCore import QUrl
-from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout,
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices, QGuiApplication
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFormLayout, QFrame, QHBoxLayout,
                               QInputDialog, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton,
-                              QSpinBox, QTabWidget, QVBoxLayout, QWidget)
+                              QScrollArea, QSpinBox, QSplitter, QTabWidget, QVBoxLayout, QWidget)
 
 from ..core.cluster_bundle import PARTITIONS, remote_path
+from ..core.cluster_transport import project_folder
 from ..core.cluster_storage import (ENVIRONMENT_BYTES, STORAGE_FACTOR, estimate_project_bytes, fit_warning, is_home,
                                     preprocessing_copies, project_storage_path, raw_image_bytes, storage_message)
 from ..core.cluster_workspace import local_globus_path, resources_for, save_profile, sync_scope, write_json
@@ -22,6 +24,11 @@ STORAGE_DOC = "https://doku.lrz.de/file-systems-and-io-on-linux-cluster-10745972
 GLOBUS_SUGGESTED_BYTES = 200 * 10**9
 
 
+def note(text=""):
+    label = QLabel(text)
+    label.setWordWrap(True)
+    return label
+
 class ClusterSetupDialog(QDialog):
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
@@ -29,38 +36,48 @@ class ClusterSetupDialog(QDialog):
         self.backend = ctx.cluster_setup()
         self._discovery = {}
         self._closed = False
+        self._logged = ""
         self.setWindowTitle("Use LRZ from Workbench")
-        self.resize(850, 790)
+        self.setSizeGripEnabled(True)
         outer = QVBoxLayout(self)
-        title = QLabel("<h2>Use your normal workflow on LRZ</h2>Connect once, synchronize your images, then use the usual Run buttons.")
+        title = QLabel("<b>Use your normal workflow on LRZ</b> - connect once, synchronize your images, "
+                       "then use the usual Run buttons.")
         title.setWordWrap(True)
         outer.addWidget(title)
         self.tabs = QTabWidget()
-        outer.addWidget(self.tabs, 1)
         self.fields = {}
-        setup = QWidget(); form = QFormLayout(setup)
-        self._text(form, "username", "LRZ username", "Your cluster account")
+        # A plain column: form layouts under-measure wrapped text in full-width rows inside a
+        # scroll area, which clipped the storage note once its text arrived after sign-in.
+        setup = QWidget(); col = QVBoxLayout(setup)
+        self._text(col, "username", "LRZ username", "Your cluster account")
         b = QPushButton("1. Sign in and find my storage")
-        b.clicked.connect(self._discover); form.addRow(b)
+        b.clicked.connect(self._discover); col.addWidget(b)
         self.storage = QComboBox(); self.storage.setEditable(True)
         self.storage.setPlaceholderText("Choose your home folder or a DSS container after signing in")
-        form.addRow("Storage folder", self.storage)
-        self.storage_note = QLabel(); self.storage_note.setWordWrap(True); form.addRow(self.storage_note)
+        self._pair(col, "Storage folder", self.storage)
+        self.storage_note = note(); col.addWidget(self.storage_note)
         self.storage.currentTextChanged.connect(self._storage_hint)
         b = QPushButton("2. Use this storage folder")
-        b.clicked.connect(self._choose_storage); form.addRow(b)
-        self.paths = QLabel("No cluster workspace selected yet.")
-        self.paths.setWordWrap(True); form.addRow(self.paths)
+        b.clicked.connect(self._choose_storage); col.addWidget(b)
+        self.paths = note("No cluster workspace selected yet."); col.addWidget(self.paths)
         b = QPushButton("3. Prepare FEABAS at LRZ")
-        b.clicked.connect(self._install); form.addRow(b)
-        note = QLabel("This creates a private Python 3.11 environment (Miniforge, as LRZ recommends) next to the project "
-                      "folders and installs FEABAS 3.0.5; allow 5-15 minutes. It does not change your workstation's Python. "
-                      "Your home folder (100 GB) suits the tutorial and smaller projects; for large datasets request a DSS "
-                      "container from your project administrator / LRZ.")
-        note.setWordWrap(True); form.addRow(note)
+        b.clicked.connect(lambda: self._install("feabas")); col.addWidget(b)
+        col.addWidget(note("The LRZ counterpart of your FEABAS environment (fw-feabas): a private Python 3.11 (Miniforge, "
+                           "as LRZ recommends) next to the project folders, with FEABAS 3.0.5; 5-15 minutes, progress in "
+                           "the log below. Your workstation's Python is not changed."))
+        b = QPushButton("Optional: prepare deep-learning tools at LRZ")
+        b.clicked.connect(lambda: self._install("dl")); col.addWidget(b)
+        col.addWidget(note("The counterpart of fw-dl (PyTorch, segmentation-models-pytorch, ultralytics, careamics) for "
+                           "fold detection, YOLO and Noise2Void runs at LRZ. CPU only - these partitions have no GPUs - so "
+                           "training is slow; about 5 GB, 10-25 minutes. Not needed for the FEABAS pipeline."))
+        b = QPushButton("Free this project's LRZ storage…")
+        b.clicked.connect(self._free_storage); col.addWidget(b)
+        col.addWidget(note("When the results are back on this PC: deletes this project's folder at LRZ (uploaded images "
+                           "and remote results) after showing its size and which exports are downloaded."))
         b = QPushButton("LRZ storage instructions")
-        b.clicked.connect(lambda: self.open_url(STORAGE_DOC)); form.addRow(b)
-        self.tabs.addTab(setup, "1  Cluster setup")
+        b.clicked.connect(lambda: self.open_url(STORAGE_DOC)); col.addWidget(b)
+        col.addStretch(1)
+        self.tabs.addTab(self._scrolled(setup), "1  Cluster setup")
 
         transfer = QWidget(); form = self.transfer_form = QFormLayout(transfer)
         self.transfer = QComboBox()
@@ -68,15 +85,15 @@ class ClusterSetupDialog(QDialog):
         self.transfer.addItem("Globus: large datasets or an institute NAS, runs without Workbench", "globus")
         self.transfer.currentIndexChanged.connect(self._transfer_changed)
         form.addRow("How files travel", self.transfer)
-        self.ssh_note = QLabel("Files travel over your SSH login, encrypted and size-checked. Unchanged files are skipped "
-                               "and nothing is deleted at either end, so an interrupted upload simply continues with the "
-                               "next Sync. Keep Workbench open while it copies.")
-        self.ssh_note.setWordWrap(True); form.addRow(self.ssh_note)
+        self.ssh_note = note("Files travel over your SSH login, encrypted and size-checked. Unchanged files are skipped "
+                             "and nothing is deleted at either end, so an interrupted upload simply continues with the "
+                             "next Sync. Keep Workbench open while it copies.")
+        form.addRow(self.ssh_note)
         self._globus_rows = []
-        note = QLabel("For this PC, install Globus Connect Personal, select accessible folders, then sign in below. "
-                      "For an institute NAS, its own Globus collection is preferable if one exists. LRZ serves DSS "
-                      "containers through Globus, not home folders.")
-        note.setWordWrap(True); form.addRow(note); self._globus_rows.append(note)
+        globus_note = note("For this PC, install Globus Connect Personal, select accessible folders, then sign in below. "
+                           "For an institute NAS, its own Globus collection is preferable if one exists. LRZ serves DSS "
+                           "containers through Globus, not home folders.")
+        form.addRow(globus_note); self._globus_rows.append(globus_note)
         b = QPushButton("Set up Globus Connect Personal")
         b.clicked.connect(lambda: self.open_url("https://docs.globus.org/globus-connect-personal/install/windows/"))
         form.addRow(b); self._globus_rows.append(b)
@@ -94,7 +111,7 @@ class ClusterSetupDialog(QDialog):
         form.addRow(self.download)
         b = QPushButton("Open these locations in Globus")
         b.clicked.connect(self._file_manager); form.addRow(b); self._globus_rows.append(b)
-        self.tabs.addTab(transfer, "2  Data transfer")
+        self.tabs.addTab(self._scrolled(transfer), "2  Data transfer")
 
         resource = QWidget(); form = QFormLayout(resource)
         self.preset = QComboBox()
@@ -107,12 +124,12 @@ class ClusterSetupDialog(QDialog):
                                     ("hours", "Maximum hours", 240), ("section_concurrency", "Simultaneous sections", 112),
                                     ("workers", "Workers per section", 112)):
             w = QSpinBox(); w.setRange(1, maximum); self.fields[key] = w; form.addRow(label, w)
-        note = QLabel("Section concurrency applies to tile matching, montage optimization/rendering, and mipmapping/thumbnails. "
-                      "Stack-wide alignment remains coordinated. Simultaneous sections × workers must fit in Total CPU cores. "
-                      "Start with one section and use measured RAM before increasing concurrency. These are CPU-only partitions.")
-        note.setWordWrap(True); form.addRow(note)
-        self.size_hint = QLabel(); self.size_hint.setWordWrap(True); form.addRow(self.size_hint)
-        self.tabs.addTab(resource, "3  Computing power")
+        form.addRow(note("Section concurrency applies to tile matching, montage optimization/rendering, and "
+                         "mipmapping/thumbnails. Stack-wide alignment remains coordinated. Simultaneous sections × workers "
+                         "must fit in Total CPU cores. Start with one section and use measured RAM before increasing "
+                         "concurrency. These are CPU-only partitions."))
+        self.size_hint = note(); form.addRow(self.size_hint)
+        self.tabs.addTab(self._scrolled(resource), "3  Computing power")
 
         advanced = QWidget(); form = QFormLayout(advanced)
         for key, label in (("host", "SSH host"), ("key_filename", "Optional private key"),
@@ -130,11 +147,23 @@ class ClusterSetupDialog(QDialog):
         b.clicked.connect(self._retry_transfer); form.addRow(b)
         b = QPushButton("Download completed exports")
         b.clicked.connect(lambda: self.backend.download_exports()); form.addRow(b)
-        self.tabs.addTab(advanced, "Advanced")
+        self.tabs.addTab(self._scrolled(advanced), "Advanced")
 
-        self.output = QPlainTextEdit(); self.output.setReadOnly(True); self.output.setMaximumHeight(160)
-        outer.addWidget(self.output)
+        # Tabs and the log share a splitter: drag the handle to give the log more room.
+        split = QSplitter(Qt.Vertical)
+        split.setChildrenCollapsible(False)
+        split.addWidget(self.tabs)
+        log = QWidget(); lay = QVBoxLayout(log); lay.setContentsMargins(0, 4, 0, 0)
+        lay.addWidget(QLabel("Log (LRZ messages and command output, newest at the bottom)"))
+        self.output = QPlainTextEdit(); self.output.setReadOnly(True); self.output.setMaximumBlockCount(5000)
+        self.output.setMinimumHeight(70)
+        lay.addWidget(self.output)
+        split.addWidget(log)
+        split.setStretchFactor(0, 3); split.setStretchFactor(1, 2)
+        outer.addWidget(split, 1)
         self.status = QLabel(); self.status.setWordWrap(True); outer.addWidget(self.status)
+        self.activity = QLabel(); self.activity.setObjectName("Hint"); self.activity.setWordWrap(True)
+        outer.addWidget(self.activity)
         bottom = QHBoxLayout()
         refresh = QPushButton("Refresh jobs / transfers"); refresh.clicked.connect(self.backend.refresh); bottom.addWidget(refresh)
         self.leave = QPushButton("Leave cluster mode")
@@ -149,11 +178,48 @@ class ClusterSetupDialog(QDialog):
         self.preset.currentIndexChanged.connect(self._preset)
         self.preset.activated.connect(self._preset)
         self.backend.changed.connect(self._status)
+        self.backend.output.connect(self._remote_line)
         self._status()
+        # Fit the screen the window opens on (a 1280x800 laptop at 200 % has 752 px of height);
+        # the tabs scroll and the size grip resizes, so the bottom buttons always stay reachable.
+        screen = (parent.screen() if parent is not None else None) or QGuiApplication.primaryScreen()
+        area = screen.availableGeometry()
+        self.resize(min(850, area.width() - 40), min(790, area.height() - 80))
 
-    def _text(self, form, key, label, placeholder=""):
+    @staticmethod
+    def _scrolled(page):
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.NoFrame)
+        area.setWidget(page)
+        return area
+
+    def _append(self, text):
+        bar = self.output.verticalScrollBar()
+        follow = bar.value() >= bar.maximum() - 4      # keep following unless the user scrolled up
+        self.output.appendPlainText(text)
+        if follow:
+            bar.setValue(bar.maximum())
+
+    def _remote_line(self, line):
+        self._append("    " + line)
+
+    def _text(self, layout, key, label, placeholder=""):
         field = QLineEdit(); field.setPlaceholderText(placeholder)
-        self.fields[key] = field; form.addRow(label, field)
+        self.fields[key] = field
+        if isinstance(layout, QFormLayout):
+            layout.addRow(label, field)
+        else:
+            self._pair(layout, label, field)
+
+    @staticmethod
+    def _pair(layout, label, widget):
+        row = QHBoxLayout()
+        caption = QLabel(label)
+        caption.setMinimumWidth(110)
+        row.addWidget(caption)
+        row.addWidget(widget, 1)
+        layout.addLayout(row)
 
     @staticmethod
     def open_url(url):
@@ -252,7 +318,7 @@ class ClusterSetupDialog(QDialog):
         self.storage.addItems(info["directories"] + ([info["home"]] if info.get("home") else []))
         # With a placeholder text QComboBox leaves new items unselected (currentText() == "").
         self.storage.setCurrentIndex(0 if self.storage.count() else -1)
-        self.output.setPlainText(info["storage"])
+        self._append("LRZ storage report (dssusrinfo):\n" + info["storage"])
         message = storage_message(info)
         self.paths.setText(message)
         self.backend.status(message)
@@ -316,14 +382,48 @@ class ClusterSetupDialog(QDialog):
             self.backend.connect(lambda _: self.backend._work("Checking remote folders…", lambda: self.backend.client.prepare_workspace(p)))
         self._safe(choose)
 
-    def _install(self):
+    def _install(self, kind="feabas"):
         def start():
             p = self._store()
-            if not p["remote_python"]:
+            if kind == "feabas":
+                python = p["remote_python"]
+            else:
+                try:
+                    python = str(PurePosixPath(project_folder(p)).parent / "dl-env/bin/python")
+                except ValueError:
+                    python = p["remote_dl_python"]    # folders chosen by hand: use the Advanced field
+            if not python:
                 raise ValueError("Choose the storage folder first (step 2); the environment is created next to it.")
-            remote_path(p["remote_python"])
-            self.backend.connect(lambda _: self.backend._work("Preparing the private FEABAS environment; this takes 5-15 minutes…",
-                                  lambda: self.backend.client.install_environment(p["remote_python"], p["modules"])))
+            remote_path(python)
+            self.tabs.setCurrentIndex(0)
+            self.backend.connect(lambda _: self.backend.install(kind, python, self._installed))
+        self._safe(start)
+
+    def _installed(self, result):
+        if not self._closed:
+            self.fields["remote_dl_python"].setText(self.backend.profile.get("remote_dl_python", ""))
+
+    def _free_storage(self):
+        def confirm(usage):
+            if self._closed:
+                return False, []
+            text = (f"Delete {usage['root']} at LRZ?\n\nIt holds {usage['bytes'] / 1e9:.1f} GB: the uploaded images and "
+                    "every result computed there for this project. The project, its settings and previews on this PC "
+                    "stay; a later Sync uploads the images again.\n\n" + "\n".join(self.backend.return_summary()))
+            box = QMessageBox(QMessageBox.Warning, "Free LRZ storage", text, QMessageBox.Yes | QMessageBox.No, self)
+            box.setDefaultButton(QMessageBox.No)
+            environments = usage["environments"]
+            check = None
+            if environments:
+                check = QCheckBox(f"Also remove the private environments ({sum(environments.values()) / 1e9:.1f} GB). "
+                                  "Other projects in this storage use them too; step 3 recreates them.")
+                box.setCheckBox(check)
+            ok = box.exec() == QMessageBox.Yes
+            return ok, (list(environments) if ok and check is not None and check.isChecked() else [])
+        def start():
+            p = self._store()
+            project_folder(p)          # refuses folders the storage step did not create, before connecting
+            self.backend.free_storage(confirm)
         self._safe(start)
 
     def _check(self):
@@ -426,19 +526,25 @@ class ClusterSetupDialog(QDialog):
             self.reject()
 
     def _status(self):
-        self.status.setText(self.backend.message)
+        message = self.backend.message
+        self.status.setText(message)
         self.save.setEnabled(not self.backend.busy and not self.backend.running)
         self.leave.setVisible(self.ctx.cluster_enabled)
-        rows = [f"Job {j['job_id'] or '?'}: {j['state']}" for j in self.backend.journal[-5:]]
-        rows += [f"{t['purpose']}: {t['state']} {t.get('details', '')}" for t in self.backend.transfers[-5:]]
-        if rows:
-            self.output.setPlainText("\n".join(rows))
+        # The log keeps a history: append changed messages instead of replacing its text
+        # (replacing it reset the scroll position on every update).
+        if message and message != self._logged and message != self.backend.progress_message:
+            self._append(f"[{time.strftime('%H:%M:%S')}] {message}")
+            self._logged = message
+        rows = [f"job {j['job_id'] or '?'} {j['state'].lower()}" for j in self.backend.journal[-3:]]
+        rows += [f"{t['purpose']} {t['state'].lower()}" for t in self.backend.transfers[-3:]]
+        self.activity.setText("Recent: " + " · ".join(rows) if rows else "")
 
     def shutdown(self):
         # The backend belongs to AppContext; closing settings must keep jobs and
         # transfers alive and must not discard the authenticated SSH connection.
         self._closed = True
-        try:
-            self.backend.changed.disconnect(self._status)
-        except RuntimeError:
-            pass
+        for signal, slot in ((self.backend.changed, self._status), (self.backend.output, self._remote_line)):
+            try:
+                signal.disconnect(slot)
+            except RuntimeError:
+                pass

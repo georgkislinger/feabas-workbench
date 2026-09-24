@@ -16,7 +16,7 @@ from PySide6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
 from ..core.cluster_bundle import MAX_BUNDLE_BYTES, file_hash
 from ..core.cluster_transport import ClusterClient, ConnectionSettings, Interrupted, SignInCancelled
 from ..core.cluster_workspace import (CONTROL, TERMINAL, build_workspace_bundle, local_globus_path,
-                                     read_json, resources_for, source_signature, sync_scope, write_json)
+                                     read_json, resources_for, save_profile, source_signature, sync_scope, write_json)
 from ..core.envs import settings_dir
 from ..core.globus_transfer import GlobusCLI, GlobusAuthorizationRequired
 from ..core.jobs import JobResult, JobSpec
@@ -82,6 +82,7 @@ def apply_preview_directory(incoming, view, manifest, previous):
 class ClusterBackend(QObject):
     changed = Signal()
     question = Signal(object)
+    output = Signal(str)        # whole lines of remote command output, e.g. an environment install
 
     def __init__(self, ctx, local, profile):
         super().__init__(ctx)
@@ -98,12 +99,14 @@ class ClusterBackend(QObject):
         self._specs = {}
         self.message = "Connect to LRZ to check setup"
         self.question.connect(self._answer)
+        self.output.connect(self._log_line)
         self.timer = QTimer(self)
         self.timer.setInterval(30000)
         self.timer.timeout.connect(self.refresh)
         self.timer.start()
         self._closed = False
         self._cancellable = False
+        self.progress_message = ""
 
     @property
     def running(self):
@@ -213,7 +216,85 @@ class ClusterBackend(QObject):
         return self.busy and self._cancellable
 
     def _progressed(self, done_mb, total_mb, text):
-        self.status(f"{text.rstrip('…')} · {done_mb / 1000:.2f} of {total_mb / 1000:.2f} GB" if total_mb else text)
+        # Remembered so the setup log can skip these frequent updates.
+        self.progress_message = (f"{text.rstrip('…')} · {done_mb / 1000:.2f} of {total_mb / 1000:.2f} GB"
+                                 if total_mb else text)
+        self.status(self.progress_message)
+
+    def _log_line(self, line):
+        self.ctx.log("LRZ: " + line)
+
+    def _stream(self):
+        """Callback for remote output chunks (any thread): emits whole, non-empty lines."""
+        pending = [""]
+        def feed(text):
+            pending[0] += text.replace("\r\n", "\n").replace("\r", "\n")
+            *lines, pending[0] = pending[0].split("\n")
+            for line in lines:
+                if line.strip():
+                    self.output.emit(line.rstrip())
+        return feed
+
+    def install(self, kind, python, done=None):
+        """Create or update a private environment at LRZ; its output streams to `output`."""
+        feed = self._stream()
+        text = ("Preparing FEABAS at LRZ; usually 5-15 minutes…" if kind == "feabas"
+                else "Preparing the deep-learning tools at LRZ; usually 10-25 minutes…")
+        def run():
+            result = self.client.install_environment(python, self.profile["modules"], kind, feed)
+            feed("\n")
+            return result
+        def finished(result):
+            if kind == "dl":
+                self.profile["remote_dl_python"] = python
+                save_profile(self.local, self.profile)
+            self.status(result)
+            if done:
+                done(result)
+        self._work(text, run, finished)
+
+    def return_summary(self):
+        """Which completed exports are already on this PC (for freeing LRZ storage)."""
+        exports = [j["run_id"] for j in self.journal if j.get("state") == "COMPLETED"
+                   and any(c.get("module") == "export_vast" for c in j.get("remote_commands", []))]
+        fetched = {t.get("export_run") for t in self.transfers if t.get("purpose") == "download export"
+                   and t.get("state") == "SUCCEEDED"}
+        missing = [r for r in exports if r not in fetched]
+        if not exports:
+            return ["No export of this project has been downloaded yet: afterwards its results exist only as the "
+                    "previews on this PC."]
+        lines = [f"{len(exports) - len(missing)} of {len(exports)} exports are downloaded to this PC."]
+        if missing:
+            lines.append("Not downloaded yet, lost after deleting: " + ", ".join(missing)
+                         + ". Use Advanced → Download completed exports first.")
+        return lines
+
+    def free_storage(self, confirm):
+        """Measure, ask (confirm(usage) -> (ok, environments), on the GUI thread), then delete
+        this project's folder at LRZ and optionally the private environments."""
+        if self.running or self.transferring or self.busy:
+            self.status("Wait for the running job or transfer before freeing LRZ storage.")
+            return
+        p = dict(self.profile)
+        def measured(usage):
+            ok, environments = confirm(usage)
+            if not ok:
+                self.status("LRZ storage left as it is")
+                return
+            def removed(text):
+                self.synced, self.snapshot = {}, {}
+                write_json(self.directory / "synchronized.json", {})
+                write_json(self.directory / "remote-state.json", {})
+                for key, name in (("remote_python", "/feabas-env"), ("remote_dl_python", "/dl-env")):
+                    if any(e.endswith(name) for e in environments):
+                        self.profile[key] = ""
+                save_profile(self.local, self.profile)
+                freed = usage["bytes"] + sum(usage["environments"].get(e, 0) for e in environments)
+                self.status(f"{text} · about {freed / 1e9:.1f} GB freed")
+                self.ctx.state_changed.emit()
+            self._work("Deleting this project's folder at LRZ…", lambda: self.client.remove_project(p, environments), removed)
+        self.connect(lambda _: self._work("Measuring what this project uses at LRZ…",
+                                          lambda: self.client.project_usage(p), measured))
 
     def _require_folders(self, p):
         if not p.get("remote_project") or not p.get("remote_tiles"):

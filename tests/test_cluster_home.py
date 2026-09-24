@@ -38,6 +38,39 @@ def test_install_script_uses_miniforge_python_311_and_headless_opencv():
         install_script("/dss/env/bin/python", "miniforge3; rm -rf ~")
 
 
+def test_deep_learning_script_uses_the_local_recipe_on_cpu_and_reports_steps():
+    from feabas_workbench.core.envs import DL_PIP, TORCH_PIP
+    script = install_script(HOME + "/feabas-workbench/dl-env/bin/python", kind="dl")
+    assert "--index-url https://download.pytorch.org/whl/cpu" in script
+    assert all(f"'{p}'" in script or f" {p}" in script for p in TORCH_PIP + DL_PIP)
+    assert "import sys, torch, segmentation_models_pytorch, ultralytics, careamics, cv2" in script
+    assert [line.split("]")[0] for line in script.splitlines() if "echo '[" in line] == [
+        "  echo '[1/4", "  echo '[1/4", "echo '[2/4", "echo '[3/4", "echo '[4/4"]
+    feabas = install_script(HOME + "/feabas-workbench/feabas-env/bin/python")
+    assert "echo '[2/3] FEABAS 3.0.5" in feabas and "torch" not in feabas
+    with pytest.raises(ValueError):
+        install_script("/dss/env/bin/python", kind="gpu")
+
+
+def test_only_the_folders_workbench_created_can_be_freed():
+    from feabas_workbench.core.cluster_transport import environment_folders, project_folder
+    pid = "0123456789abcdef0123456789abcdef"
+    base = HOME + "/feabas-workbench"
+    p = dict(project_id=pid, remote_project=f"{base}/feabas-tutorial-01234567/work",
+             remote_tiles=f"{base}/feabas-tutorial-01234567/images",
+             remote_python=f"{base}/feabas-env/bin/python", remote_dl_python="")
+    assert project_folder(p) == f"{base}/feabas-tutorial-01234567"
+    assert environment_folders(p) == [f"{base}/feabas-env"]
+    for change in (dict(remote_project=HOME + "/work"),                                  # typed by hand
+                   dict(remote_tiles=f"{base}/other/images"),                           # different parents
+                   dict(remote_project=f"{base}/feabas-tutorial-99999999/work",
+                        remote_tiles=f"{base}/feabas-tutorial-99999999/images"),        # another project's id
+                   dict(remote_project="", remote_tiles="")):
+        with pytest.raises(ValueError):
+            project_folder(dict(p, **change))
+    assert environment_folders(dict(p, remote_python="/somewhere/else/bin/python")) == []
+
+
 @pytest.mark.skipif(sys.platform == "win32" or not shutil.which("bash"), reason="needs a Linux bash")
 def test_install_script_is_valid_bash():
     result = subprocess.run(["bash", "-n"], input=install_script("/dss/my env/bin/python", "a b"),
@@ -436,12 +469,17 @@ def test_setup_walkthrough_against_a_local_ssh_server(window, project, ssh_serve
     from feabas_workbench.ui import cluster_backend
     from feabas_workbench.ui.cluster_setup import ClusterSetupDialog
     home = "/dss/dsshome1/04/tester"
-    ssh_server.replies.update({
+    ssh_server.replies.update({     # first matching key wins: the deep-learning script also contains "conda create"
         "expanduser": (0, json.dumps(dict(home=home, python="/usr/bin/python3", version=[3, 6, 15], user="tester"))),
         "dssusrinfo all": (0, FIXTURE.replace("testuser", "tester")),
-        "conda create": (0, "FEABAS environment ready: Python 3.11.9"),
+        "download.pytorch.org/whl/cpu": (0, "[2/4] PyTorch, CPU build\nCollecting torch<2.10\n"
+                                            "Deep-learning environment ready: torch 2.9.1, Python 3.11.9\n"),
+        "conda create": (0, "[1/3] Creating a Python 3.11 environment\n[2/3] FEABAS 3.0.5 and its dependencies\n"
+                            "Collecting feabas==3.0.5\nFEABAS environment ready: Python 3.11.9\n"),
         "Tile folder missing": (0, "FEABAS 3.0.5 and dependencies available; paths accessible."),
         "sbatch --parsable": (0, "4242"),
+        "du -sb": (0, "5000000000\n3000000000\n4000000000\n"),
+        "rm -rf": (0, ""),
     })
     monkeypatch.setattr(cluster_backend, "settings_dir", lambda: tmp_path / "settings")   # known_hosts stays here
     monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("pw", True))
@@ -473,6 +511,11 @@ def test_setup_walkthrough_against_a_local_ssh_server(window, project, ssh_serve
         assert remote.startswith(home + "/feabas-workbench/feabas-")
         dialog._install()
         wait(lambda: not backend.busy and "FEABAS environment ready" in backend.message)
+        wait(lambda: "Collecting feabas==3.0.5" in dialog.output.toPlainText())    # streamed into the log
+        dialog._install("dl")
+        wait(lambda: not backend.busy and "Deep-learning environment ready" in backend.message)
+        dl_python = home + "/feabas-workbench/dl-env/bin/python"
+        assert backend.profile["remote_dl_python"] == dl_python == dialog.fields["remote_dl_python"].text()
         dialog._save()
         assert window.ctx.cluster_enabled
         window.sync_cluster_btn.click()
@@ -485,6 +528,57 @@ def test_setup_walkthrough_against_a_local_ssh_server(window, project, ssh_serve
         run = ssh_server.root / (remote + "/.workbench-cluster/" + backend.journal[-1]["run_id"]).lstrip("/")
         assert (run / "READY").is_file() and backend.profile["remote_python"] in (run / "job.sh").read_text()
         assert backend.message.startswith("Queued at LRZ · job 4242") and not problems
+        assert window.ctx.cluster.profile["remote_dl_python"] == dl_python      # kept through Save
+        # Results back on the PC: free the home folder. Only the project folder goes; environments stay.
+        backend.journal[-1]["state"] = "COMPLETED"
+        asked = []
+        monkeypatch.setattr(QMessageBox, "exec", lambda box: asked.append(box.text()) or QMessageBox.Yes)
+        dialog._free_storage()
+        wait(lambda: not backend.busy and "freed" in backend.message)
+        root = remote[:-len("/work")]
+        assert "It holds 5.0 GB" in asked[0] and "No export of this project has been downloaded" in asked[0]
+        removal = [c for c in ssh_server.commands if "rm -rf" in c]
+        assert len(removal) == 1 and root in removal[0] and "feabas-env" not in removal[0]
+        assert backend.message.endswith("about 5.0 GB freed") and backend.synced == {}
+        assert backend.profile["remote_python"] and backend.profile["remote_dl_python"] == dl_python
+        assert "LRZ storage report" in dialog.output.toPlainText()     # the log kept its history
+    finally:
+        dialog.shutdown(); dialog.close()
+
+
+def test_setup_window_fits_the_screen_and_keeps_its_buttons_visible(window, project):
+    from PySide6.QtWidgets import QApplication
+    from feabas_workbench.ui.cluster_setup import ClusterSetupDialog
+    window.open_project(project.root)
+    dialog = ClusterSetupDialog(window.ctx, window)
+    try:
+        area = dialog.screen().availableGeometry()
+        dialog.show()
+        QApplication.instance().processEvents()
+        assert dialog.height() <= area.height() - 80 and dialog.minimumSizeHint().height() < 520
+        dialog.resize(dialog.width(), 520)          # smaller than all of tab 1: the tab scrolls instead
+        QApplication.instance().processEvents()
+        for button in (dialog.save, dialog.leave):
+            bottom = button.mapTo(dialog, button.rect().bottomLeft()).y()
+            assert bottom <= dialog.height()
+        assert dialog.tabs.currentWidget().verticalScrollBar().maximum() > 0
+    finally:
+        dialog.shutdown(); dialog.close()
+
+
+def test_freeing_refuses_folders_the_storage_step_did_not_create(window, project, profile, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from feabas_workbench.ui.cluster_setup import ClusterSetupDialog
+    problems = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: problems.append(a[2]) or QMessageBox.Ok)
+    profile.update(remote_project=HOME + "/my-work", remote_tiles=HOME + "/my-images")
+    save_profile(project, profile)
+    window.open_project(project.root)
+    dialog = ClusterSetupDialog(window.ctx, window)
+    monkeypatch.setattr(dialog.backend, "connect", lambda *a: pytest.fail("must refuse before connecting"))
+    try:
+        dialog._free_storage()
+        assert "not created by Workbench's storage step" in problems[0]
     finally:
         dialog.shutdown(); dialog.close()
 

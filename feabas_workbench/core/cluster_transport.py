@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import codecs
 import fnmatch
 import hashlib
 import json
@@ -20,8 +21,6 @@ import paramiko
 from .cluster_bundle import MAX_BUNDLE_BYTES, module_names, remote_path
 from .cluster_storage import parse_dss_storage
 
-# FEABAS 3.0.5 ships a pure-Python wheel; every dependency has manylinux wheels for 3.11.
-FEABAS_PACKAGES = "'feabas==3.0.5' tifffile imagecodecs psutil"
 PART_SUFFIX = ".fw-part"
 
 
@@ -50,23 +49,32 @@ def _excluded(name, patterns):
     return name.endswith(PART_SUFFIX) or any(fnmatch.fnmatchcase(name, p) for p in patterns)
 
 
-def install_script(python_path: str, modules: str = "") -> str:
-    """Shell script that creates (once) and fills the private FEABAS environment on a login node.
+def install_script(python_path: str, modules: str = "", kind: str = "feabas") -> str:
+    """Shell script that creates (once) and fills a private environment on a login node:
+    kind "feabas" is the LRZ counterpart of the local FEABAS env, "dl" of the deep-learning env
+    (CPU PyTorch; the partitions have no GPUs). Package lists follow core.envs.
 
     LRZ's python modules stop at 3.8 and LRZ recommends Miniforge for environments, so a
     conda-forge Python 3.11 is created by path; a python3 >= 3.10 from the given modules is
     the fallback. The environment's own python is called directly, so jobs need no activation.
+    Numbered echo lines let the caller show progress while the script runs.
     """
+    from .envs import DL_PIP, FEABAS_PIP, TORCH_PIP
+    if kind not in ("feabas", "dl"):
+        raise ValueError("Unknown environment kind.")
     dest = remote_path(python_path)
     if not dest.endswith("/bin/python"):
         raise ValueError("The environment Python should end in /bin/python.")
     env, py, q = dest[:-len("/bin/python")], shlex.quote(dest), shlex.quote
+    pip = f"{py} -m pip install --progress-bar off --disable-pip-version-check"
+    steps = 3 if kind == "feabas" else 4
     lines = ["set -e"]
     mods = module_names(modules)
     if mods:
         lines.append("module load " + " ".join(map(q, mods)))
     lines += [
         f"if ! test -x {py}; then",
+        f"  echo '[1/{steps}] Creating a Python 3.11 environment in {env} (Miniforge, a few minutes)'",
         "  command -v conda >/dev/null 2>&1 || module load miniforge3 >/dev/null 2>&1 || true",
         "  if command -v conda >/dev/null 2>&1; then",
         f"    conda create -y -q -p {q(env)} --override-channels -c conda-forge python=3.11 pip",
@@ -77,15 +85,55 @@ def install_script(python_path: str, modules: str = "") -> str:
         " that provides conda or Python 3.10+ under Advanced > Environment modules.' >&2",
         "    exit 3",
         "  fi",
+        "else",
+        f"  echo '[1/{steps}] Environment {env} exists; updating its packages'",
         "fi",
-        f"{py} -m pip install -q --progress-bar off --only-binary=:all: {FEABAS_PACKAGES}",
-        # FEABAS requires opencv-python, whose cv2 needs libGL; compute nodes may not have it.
+    ]
+    if kind == "feabas":
+        lines += [f"echo '[2/{steps}] FEABAS 3.0.5 and its dependencies'",
+                  f"{pip} --only-binary=:all: " + " ".join(map(q, FEABAS_PIP + ["psutil"]))]
+        check = ("import sys, feabas, cv2, numpy, h5py, psutil, tensorstore, tifffile; "
+                 "print('FEABAS environment ready: Python ' + sys.version.split()[0])")
+    else:
+        lines += [f"echo '[2/{steps}] PyTorch, CPU build'",
+                  f"{pip} --only-binary=:all: --index-url https://download.pytorch.org/whl/cpu " + " ".join(map(q, TORCH_PIP)),
+                  f"echo '[3/{steps}] segmentation-models-pytorch, ultralytics, careamics'",
+                  f"{pip} --prefer-binary " + " ".join(map(q, DL_PIP))]
+        check = ("import sys, torch, segmentation_models_pytorch, ultralytics, careamics, cv2; "
+                 "print('Deep-learning environment ready: torch ' + torch.__version__ + ', Python ' + sys.version.split()[0])")
+    lines += [
+        f"echo '[{steps}/{steps}] Headless OpenCV and a final check'",
+        # The packages pull in opencv-python, whose cv2 needs libGL; compute nodes may not have it.
         f"{py} -m pip uninstall -q -y opencv-python",
-        f"{py} -m pip install -q --progress-bar off --only-binary=:all: --no-deps --force-reinstall opencv-python-headless",
-        f"{py} -c " + q("import sys, feabas, cv2, numpy, h5py, psutil, tensorstore, tifffile; "
-                        "print('FEABAS environment ready: Python ' + sys.version.split()[0])"),
+        f"{pip} -q --only-binary=:all: --no-deps --force-reinstall opencv-python-headless",
+        f"{py} -c " + q(check),
     ]
     return "\n".join(lines)
+
+
+def project_folder(profile: dict) -> str:
+    """The folder Workbench's storage step created for this project (<base>/feabas-<name>-<id>
+    holding work/ and images/). Anything else is refused, so nothing else can be deleted."""
+    try:
+        work, images = PurePosixPath(remote_path(profile["remote_project"])), PurePosixPath(remote_path(profile["remote_tiles"]))
+    except (KeyError, ValueError):
+        raise ValueError("No LRZ folders are set for this project.") from None
+    root = work.parent
+    if (work.name != "work" or images != root / "images" or not root.name.startswith("feabas-")
+            or not root.name.endswith("-" + profile["project_id"][:8])):
+        raise ValueError("These LRZ folders were not created by Workbench's storage step, so Workbench does not "
+                         f"delete them. Remove them yourself if you are sure: {work} and {images}")
+    return str(root)
+
+
+def environment_folders(profile: dict) -> list[str]:
+    """The private environments next to the project folders (shared by projects in that storage)."""
+    base = PurePosixPath(project_folder(profile)).parent
+    out = []
+    for key, name in (("remote_python", "feabas-env"), ("remote_dl_python", "dl-env")):
+        if profile.get(key) == str(base / name / "bin" / "python"):
+            out.append(str(base / name))
+    return out
 
 
 class SubmissionUncertain(ClusterError):
@@ -191,20 +239,28 @@ class ClusterClient:
         if t:
             t.close()
 
-    def execute(self, command: str, timeout: int = 90) -> str:
+    def execute(self, command: str, timeout: int = 90, on_output: Callable[[str], None] | None = None) -> str:
+        """Run a command in a login shell; on_output receives stdout and stderr text as it arrives."""
         if not self.connected:
             raise ClusterError("Connect to the cluster first.")
         channel = self.transport.open_session(timeout=25)
         channel.settimeout(25)
         output, errors = bytearray(), bytearray()
+        decoders = [codecs.getincrementaldecoder("utf-8")("replace") for _ in range(2)]
         deadline = time.monotonic() + timeout
         try:
             channel.exec_command("bash -lc " + shlex.quote(command))
             while True:
                 if channel.recv_ready():
-                    output.extend(channel.recv(65536))
+                    chunk = channel.recv(65536)
+                    output.extend(chunk)
+                    if on_output and chunk:
+                        on_output(decoders[0].decode(chunk))
                 if channel.recv_stderr_ready():
-                    errors.extend(channel.recv_stderr(65536))
+                    chunk = channel.recv_stderr(65536)
+                    errors.extend(chunk)
+                    if on_output and chunk:
+                        on_output(decoders[1].decode(chunk))
                 if len(output) + len(errors) > 2 * 1024 * 1024:
                     raise ClusterError("Remote command output exceeded 2 MiB.")
                 if channel.exit_status_ready() and not channel.recv_ready() and not channel.recv_stderr_ready():
@@ -282,8 +338,41 @@ class ClusterClient:
                 f.write(identifier)
         return "Remote workspace is writable and belongs to this project."
 
-    def install_environment(self, python_path: str, modules: str = "") -> str:
-        return self.execute(install_script(python_path, modules), timeout=1800)
+    def install_environment(self, python_path: str, modules: str = "", kind: str = "feabas", on_output=None) -> str:
+        output = self.execute(install_script(python_path, modules, kind), timeout=2400, on_output=on_output)
+        return output.splitlines()[-1] if output else "Environment ready"
+
+    def _owned(self, root: str, project_id: str) -> bool:
+        """False if the folder is gone; an error if it exists without this project's owner file."""
+        with self._sftp() as sftp:
+            try:
+                sftp.lstat(root)
+            except FileNotFoundError:
+                return False
+        owner = self.read_remote_json(root + "/work/.workbench-cluster/owner.json", {})
+        if owner.get("project_id") != project_id:
+            raise ClusterError(f"{root} does not carry this project's owner file, so Workbench does not delete it.")
+        return True
+
+    def project_usage(self, profile: dict) -> dict:
+        """Size of the project folder and of the private environments next to it, in bytes."""
+        root = project_folder(profile)
+        self._owned(root, profile["project_id"])
+        folders = [root, *environment_folders(profile)]
+        sizes = self.execute("for d in " + " ".join(map(shlex.quote, folders)) +
+                             "; do if test -d \"$d\"; then du -sb -- \"$d\" | cut -f1; else echo 0; fi; done").split()
+        sizes = [int(s) for s in sizes]
+        return dict(root=root, bytes=sizes[0], environments={f: s for f, s in zip(folders[1:], sizes[1:]) if s})
+
+    def remove_project(self, profile: dict, environments=()) -> str:
+        """Delete this project's LRZ folder (uploaded images and every remote result) and, if
+        asked, the private environments. Only folders Workbench created itself qualify."""
+        root = project_folder(profile)
+        allowed = environment_folders(profile)
+        targets = ([root] if self._owned(root, profile["project_id"]) else []) + [e for e in environments if e in allowed]
+        if targets:
+            self.execute("rm -rf -- " + " ".join(map(shlex.quote, targets)), timeout=1800)
+        return "Removed at LRZ: " + (", ".join(targets) if targets else "nothing (already gone)")
 
     def read_remote_json(self, path: str, missing=None):
         try:

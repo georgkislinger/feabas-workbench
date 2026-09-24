@@ -45,7 +45,14 @@ itself has not run at LRZ yet. This is a local modification, not an upstream rel
    so Workbench loads LRZ's recommended **Miniforge** module, creates a private
    Python 3.11 environment next to the project folders and installs FEABAS 3.0.5 with
    headless OpenCV (compute nodes may lack the graphics libraries of the default OpenCV).
-   Jobs call that environment's Python directly; nothing needs activating.
+   Jobs call that environment's Python directly; nothing needs activating. This is the LRZ
+   counterpart of your local `fw-feabas`; its progress streams into the log at the bottom of
+   the setup window (drag the splitter above it for more room).
+6. Only if you want fold detection, YOLO or Noise2Void to run at LRZ: **Optional: prepare
+   deep-learning tools at LRZ** builds the counterpart of `fw-dl` (CPU PyTorch,
+   segmentation-models-pytorch, ultralytics, careamics; about 5 GB, 10–25 minutes). The LRZ
+   partitions used here have no GPUs, so training there is slow; the FEABAS pipeline does not
+   need this environment.
 
 The home folder (100 GB, backed up nightly) is enough for the tutorial and projects up
 to roughly 15–20 GB of raw images. The proposed 1 TB dataset needs a DSS container: ask
@@ -107,6 +114,17 @@ If Globus requests collection permissions, click **Sign in / grant access** agai
 interface remembers the required consent scopes for that session. Failed transfers can
 be retried under Advanced. If a request's outcome is unknown, recover its task UUID from
 Globus Activity using the exact label; Workbench does not automatically duplicate it.
+
+## Freeing LRZ storage when the results are back
+
+Once the exports you need are downloaded (Export page, or Advanced → Download completed
+exports), **Free this project's LRZ storage…** in tab 1 measures the project's folder at LRZ and
+lists which exports are already on this PC. After you confirm, it deletes that folder: the
+uploaded images and every remote result of this project. The project, its settings and the
+previews on this PC stay; a later Sync uploads the images again. A checkbox also removes the
+private environments (other projects in the same storage use them too; step 3 recreates them).
+Only the folder the storage step created (`feabas-<project>-<id>` with `work/` and `images/`)
+can be deleted this way; folders typed in by hand are refused.
 
 ## Leaving cluster mode
 
