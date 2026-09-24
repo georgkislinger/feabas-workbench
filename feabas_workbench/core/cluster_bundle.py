@@ -222,10 +222,15 @@ def export_bundle(project: Project, destination: Path, remote_project: str, remo
                   "#SBATCH --hint=nomultithread", f"#SBATCH --mem={resources.memory_gib}G",
                   f"#SBATCH --time={resources.hours}:00:00", "#SBATCH --get-user-env", "#SBATCH --export=NONE",
                   f"#SBATCH --chdir={shlex.quote(remote_bundle)}",
-                  f"#SBATCH --output={shlex.quote(remote_bundle + '/slurm-%j.out')}",
-                  "set -euo pipefail", "module load slurm_setup"]
+                  f"#SBATCH --output={shlex.quote(remote_bundle + '/slurm-%j.out')}"]
         if module_list:
-            lines.append("module load " + " ".join(map(shlex.quote, module_list)))
+            # Batch shells do not read the login profile that defines `module` (CoolMUC-4 job 220345
+            # failed with "module: command not found"). Only modules chosen under Advanced need it:
+            # the Miniforge environment's python runs without any, and nothing here uses srun.
+            mods = " ".join(map(shlex.quote, module_list))
+            lines += ["type module >/dev/null 2>&1 || source /etc/profile >/dev/null 2>&1 || true",
+                      f"module load {mods} || {{ echo 'Could not load the modules: {mods}' >&2; exit 3; }}"]
+        lines.append("set -euo pipefail")
         runtime = remote_bundle + "/runtime"
         lines += ["export PYTHONUNBUFFERED=1 PYTHONUTF8=1 MALLOC_ARENA_MAX=2",
                   "export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1",

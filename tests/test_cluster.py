@@ -46,6 +46,7 @@ def test_bundle_maps_only_inputs_and_preserves_source(project, tmp_path):
     assert "#SBATCH --ntasks=1" in script and "#SBATCH --cpus-per-task=64" in script
     assert "#SBATCH --qos=cm4_tiny" in script and "#SBATCH --export=NONE" in script
     assert script.index("#SBATCH --output") < script.index("set -euo")
+    assert "module" not in script      # batch shells on CoolMUC-4 have no `module` (job 220345)
     assert b"\r" not in (out / "job.sh").read_bytes()
     assert (out / "runtime/feabas_workbench/vendor/winfix/sitecustomize.py").exists()
 
@@ -87,6 +88,13 @@ def test_external_config_rejected(project, tmp_path):
     from feabas_workbench.core.configs import ConfigStore
     cs = ConfigStore(project.configs_dir); cs.set("stitching", "rendering.out_dir", "C:/outputs"); cs.save()
     with pytest.raises(ValueError, match="Custom out_dir"): bundle(project, tmp_path)
+
+
+def test_chosen_modules_initialise_the_module_system_first(project, tmp_path):
+    lines = (bundle(project, tmp_path, modules="python/3.10.12").joinpath("job.sh")).read_text().splitlines()
+    init = lines.index("type module >/dev/null 2>&1 || source /etc/profile >/dev/null 2>&1 || true")
+    load = next(i for i, line in enumerate(lines) if line.startswith("module load python/3.10.12 ||"))
+    assert init < load < lines.index("set -euo pipefail")     # profile scripts may not survive set -u
 
 
 def test_modules_not_shell(project, tmp_path):

@@ -29,6 +29,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   stop at 3.8, its default python3 is 3.6) with headless OpenCV for compute nodes.
 - Leaving cluster mode no longer refuses while a job or Globus transfer is active, including
   a transfer left unconfirmed; only an operation in progress has to finish.
+- Jobs failed at once on CoolMUC-4 with "module: command not found": batch shells do not
+  define `module`. job.sh no longer loads modules unless some are chosen under Advanced, and then
+  initialises the module system itself.
 - The setup window fits the screen it opens on and its tabs scroll; on a 1280x800 display at
   200 % its bottom buttons were off-screen and it could not be made smaller.
 - Closing the LRZ sign-in dialog, declining the host key or stopping a copy is a status line,
