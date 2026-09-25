@@ -3,6 +3,24 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.4] – 2026-09-25
+
+### Added
+- Bring the cluster-mode development builds into the public release: guided LRZ setup,
+  SSH or Globus data transfer, persistent remote job monitoring, previews and export downloads
+  through the usual workbench controls. See the cluster.1–cluster.6 entries for details.
+- Local section/worker parallelism with CPU and RAM planning; pixel-based N2V training
+  selection; live training/validation loss and best-patch previews with graceful stopping.
+
+### Fixed
+- Run the FEABAS-dependent parallelism tests in the dedicated runtime CI job; GUI-only
+  installations skip those two integration checks because FEABAS lives in a separate environment.
+
+### Packaging
+- Use public version 0.3.4 for the Windows executable, wheel, source archive and PyPI package.
+- Full FEABAS image processing at LRZ remains unvalidated; live training previews and graceful
+  N2V stopping currently apply to local execution.
+
 ## [0.3.3+cluster.6] – 2026-09-24 (development build)
 
 ### Added

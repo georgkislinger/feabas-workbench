@@ -917,8 +917,22 @@ boundaries after rendering and can weaken matching.</p>
 GPU if there is one. Useful for low-dose/fast acquisitions; unnecessary for already clean data, and it
 does cost disk space and hours.</p>
 <p><strong>Choosing training tiles</strong> – pick tiles in the grid on the left, <strong>Add selected tiles →</strong>, or press
-<strong>Random 24</strong>. 10–40 representative tiles is plenty; at least 4 are required. Include the different
-looks in your data (dense tissue, resin, edges).</p>
+<strong>Auto-select by pixels</strong>. The minimum is based on usable image area, not a file count: with the default
+128-pixel patch and batch 12, it requires about <strong>4.2 MP for training plus 1.05 MP held out for validation</strong>.
+One large image can qualify. The displayed requirement grows for larger patches or batches, and only
+complete patches count. Include different tissue, resin and edges; sufficient pixel area does not
+guarantee a representative selection. Auto-selection is a starting point for reviewing that diversity.</p>
+<p>Training and validation use separate spatial bands of each image; no sampled patch overlaps the other
+split. Training samples up to roughly 64 Mi pixels (normally 256 MiB as float32), unless the chosen
+patch/batch minimum requires more. Compressed images may still need one full tile decoded at a time.
+Patch locations are recorded in <code>models/n2v/&lt;run&gt;/training_files.json</code>.</p>
+<p>During <strong>local</strong> training, the denoising card plots <strong>training loss and validation loss</strong> after each
+epoch. It shows the same held-out original patch beside the current best denoised patch, with matching
+contrast. “Best” means the lowest validation loss; the preview updates only when that improves.
+<strong>Stop after this epoch</strong> finishes the current epoch and keeps <code>best.ckpt</code>, which is selected for
+prediction. Loss history and the preview are saved in the run folder. Use a new run name to preserve
+earlier experiments. Live feedback and this graceful stop are local features; cluster training still
+returns its model after the job. The ordinary job Cancel button remains an immediate stop.</p>
 <p>The card shows what most people need – method, run name, <em>Train model</em>; model, <em>Preview on a tile</em>,
 <em>Denoise all tiles</em> – and keeps everything else under <strong>Advanced settings</strong> (click to expand). The
 StructN2V axis and span appear next to the method only when StructN2V is selected.</p>
@@ -979,7 +993,7 @@ StructN2V axis and span appear next to the method only when StructN2V is selecte
 <tr>
 <td><em>Advanced:</em> <strong>epochs / steps per epoch</strong></td>
 <td>Training length (default 100 / 100).</td>
-<td>100×100 is a reasonable first run; watch the loss in the log.</td>
+<td>Watch both loss curves and the held-out preview; stop after an epoch when sufficient.</td>
 </tr>
 <tr>
 <td><em>Advanced:</em> <strong>ROI / masked %</strong></td>
@@ -997,6 +1011,27 @@ StructN2V axis and span appear next to the method only when StructN2V is selecte
 <h2 id="6-window-3-stitching">6. Window 3 – Stitching</h2>
 <p>Three FEABAS steps in order: <strong>Match tiles → Optimize montage → Render montages</strong>. The tabs are <em>Run</em>,
 <em>Test on subset</em>, <em>Quality check</em> and <em>All settings</em>.</p>
+<h3 id="local-parallelism">Local parallelism</h3>
+<p>In <strong>This PC</strong> mode, use <strong>Local parallelism…</strong> beside the step group's Run button on Stitching,
+Thumbnails and Export → Render. Each eligible step can use the existing FEABAS settings, workers
+<strong>within a section</strong>, workers <strong>across sections</strong>, or <strong>both</strong>. Montage optimization already operates
+across sections, so it offers that option with one worker per section.</p>
+<p>For example, 4 sections × 8 workers uses a budget of 32 cores. The dialog shows what can run now,
+limited by available physical cores, selected sections and estimated RAM. A 64-core workstation can
+request 8 × 8, but memory may lower the simultaneous section count. The default RAM planning budget
+is 80% of currently available RAM. These limits are recalculated when each stage starts.</p>
+<p>RAM estimates use image dimensions, dtype, tile count and worker count; they are planning allowances,
+not measured guarantees or enforced memory limits. First run one representative section, then use the
+logged peak plus headroom as <strong>RAM per section</strong>. Unknown image dimensions default to one section until
+you supply an allowance. More workers can increase I/O contention, especially on an NAS.</p>
+<p>Supported stages are tile matching, montage optimization, montage rendering, stitched mipmaps/thumbnails,
+aligned PNG section rendering and aligned PNG mipmaps. Whole-stack solving, shared TensorStore volume
+writes and final VAST/OME-Zarr packaging retain their existing execution. Stages remain in order; only
+independent sections within one stage overlap. A failed section stops its siblings and pending work.</p>
+<p>These per-project workstation choices are saved separately in <code>workbench_project.json</code>; they do not
+change the scientific YAML settings or cluster resources. Choose <strong>Existing FEABAS settings</strong> to return
+to the original behavior. Detailed section logs, the allocation and observed peak memory are stored
+under <code>logs/local-parallel/</code>.</p>
 <h3 id="run-tab-the-settings-that-matter">Run tab – the settings that matter</h3>
 <div class="table-wrap"><table>
 <thead>

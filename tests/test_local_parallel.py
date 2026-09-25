@@ -1,4 +1,5 @@
 import json
+import importlib.util
 import os
 import subprocess
 import sys
@@ -10,6 +11,12 @@ from feabas_workbench.core.local_parallel import input_sections, selected_indice
 from feabas_workbench.core.project import Project
 from feabas_workbench.core.synthetic import make_demo_project
 from feabas_workbench.core.configs import ConfigStore
+
+
+# GUI-only installations deliberately do not include the separate FEABAS runtime.
+# CI also runs this file in the FEABAS end-to-end job, where these checks are mandatory.
+requires_feabas = pytest.mark.skipif(importlib.util.find_spec("feabas") is None,
+                                    reason="requires the separate FEABAS runtime")
 
 
 @pytest.fixture
@@ -87,6 +94,7 @@ def test_gui_routes_only_opted_in_local_steps(project, tmp_path, monkeypatch):
     dialog.close(); app.processEvents()
 
 
+@requires_feabas
 def test_spawn_resource_override_keeps_project_config_untouched(project, tmp_path):
     from feabas_workbench.core.jobs import feabas_env
     original = {str(f): f.read_bytes() for f in project.configs_dir.glob('*.yaml')}
@@ -101,6 +109,7 @@ def test_spawn_resource_override_keeps_project_config_untouched(project, tmp_pat
     assert original == {str(f): f.read_bytes() for f in project.configs_dir.glob('*.yaml')}
 
 
+@requires_feabas
 def test_thumbnail_runtime_listing_uses_names_with_partial_mips(project, tmp_path):
     from feabas_workbench.core.jobs import feabas_env
     folder = project.root / 'stitched_sections/mip2'
