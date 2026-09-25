@@ -166,4 +166,9 @@ if [ -z "$PY" ]; then
 fi
 
 echo "Starting FEABAS Workbench with $PY"
+if ! "$PY" -c "import paramiko" >/dev/null 2>&1; then
+  echo "Cluster support is unavailable in this Python environment."
+  echo "To enable it, run this command and restart Workbench:"
+  printf '    %q -m pip install %q\n' "$PY" 'paramiko>=3.4,<6'
+fi
 exec "$PY" -m feabas_workbench "$@"

@@ -17,7 +17,7 @@
   and stitch matching yields no matches at all - the patch defaults that flag to true. (2) Windows: FEABAS builds
   `file://D:/...` URLs that TensorStore rejects, rewritten to `file:///D:/...`. New projects default to the PNG
   (`image`) render driver.
-- Three interpreters: the GUI's own, a FEABAS env (feabas + tensorstore, numpy < 2) and a deep-learning env
+- Three interpreters: the GUI's own, a FEABAS env (feabas 3.0.5 + tensorstore; numpy 2.x works) and a deep-learning env
   (torch, careamics 0.3.2 which pins torch < 2.10, ultralytics, segmentation-models-pytorch). Paths live in
   `%APPDATA%/FeabasWorkbench/settings.json`; projects may override them.
 - Heavy in-process work goes through `ui/threads.ThreadRunner`; anything that needs torch/feabas goes through a
@@ -32,6 +32,13 @@
   best-epoch=25-val_iou=0.6638.ckpt` (gitignored, optimizer state included) and gives identical detections;
   `workers/fold_train` fine-tunes from either, since it only ever reads the weights. `_test_projects/` and `_scratch/`
   are gitignored scratch areas.
+- LRZ cluster mode (branch `cluster-mode`, per project, opt-in): `core/cluster_*` is Qt-free - `cluster_transport`
+  (paramiko SSH/MFA, SFTP tree copies, the Miniforge environment script), `cluster_storage` (dssusrinfo parsing, home
+  vs DSS containers, the ~5x-raw storage estimate), `cluster_workspace` (profile in `.workbench-cluster/workspace.json`,
+  request bundles, the separate `view` project that shows remote results), `cluster_remote`/`cluster_runner` (run only
+  inside Slurm on the compute node, never on a login node). `ui/cluster_backend` sits behind `ctx.jobs.submit`, so the
+  normal Run buttons dispatch remotely while `ctx.cluster_enabled`; `ui/cluster_setup` is the setup window. Images
+  travel over SSH (default) or Globus; passwords, MFA codes and tokens are never stored.
 - Workers in other interpreters get `core/jobs.worker_env()` on PYTHONPATH, a staged copy of the package under
   `%APPDATA%/FeabasWorkbench/worker_pkg` holding only `core/`, `workers/`, `vendor/`. Never put `package_root()`
   itself there: for a wheel install that is site-packages (for a frozen build the bundle), and its compiled numpy/cv2

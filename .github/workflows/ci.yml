@@ -77,7 +77,7 @@ jobs:
       - name: Install FEABAS as the Setup page would, plus the workbench
         run: |
           python -m pip install feabas==3.0.5 tifffile imagecodecs
-          python -m pip install -e .
+          python -m pip install -e . pytest
 
       # FEABAS reads configs/general_configs.yaml from the working directory, like a project folder.
       - name: stitching_matcher is patched when vendor/winfix is on PYTHONPATH
@@ -88,6 +88,12 @@ jobs:
           printf 'working_directory: %s/proj\nparallel_framework: process\nfull_resolution: 10\nsection_thickness: 50\n' "$PWD" > proj/configs/general_configs.yaml
           cd proj
           python -c "from feabas import matcher, stitcher; assert matcher._feabas_workbench_phtm_fix, 'not patched'; assert stitcher.stitching_matcher is matcher.stitching_matcher, 'stitcher not rebound'; print('FEABAS run-time patch active: OK')"
+
+      # These tests import the separate FEABAS runtime and are skipped in GUI-only jobs.
+      - name: Check local parallelism against the installed FEABAS runtime
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest tests/test_local_parallel.py -q
 
       # Stitch, thumbnails, coarse and fine alignment, PNG render and mipmaps on 4 synthetic
       # sections of 2x2 tiles - the whole pipeline the GUI drives, through the same vendored scripts.

@@ -1,6 +1,6 @@
 [project]
 name = "feabas-workbench"
-version = "0.3.3"
+version = "0.3.4"
 description = "Desktop workbench around FEABAS: data prep, preprocessing, stitching, masks, structure-guided alignment and export for serial-section EM"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -30,6 +30,8 @@ dependencies = [
     "psutil",
     "opencv-python-headless",
     "tensorstore",
+    "paramiko>=3.4,<6",
+    "globus-cli>=3.43,<4",
 ]
 
 [project.optional-dependencies]

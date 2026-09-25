@@ -483,6 +483,7 @@ class MasksPage(Page):
         self.steps.refresh(self.ctx.scan())
         self._refresh_sections()
         self._refresh_fold_sources()
+        self._refresh_models()
 
     def on_running_changed(self, running: bool) -> None:
         self.steps.refresh(self.ctx.scan())
@@ -748,6 +749,9 @@ class MasksPage(Page):
         if not secs:
             QMessageBox.information(self, "Tissue", "No thumbnails for the selected sections yet.")
             return
+        if self.ctx.cluster_enabled and not preview:
+            self._cluster_masks("tissue", secs)
+            return
 
         def work(progress=None, cancelled=None):
             out = {}
@@ -798,6 +802,10 @@ class MasksPage(Page):
         secs = [s for s in secs if s and self.store.thumbnail_path(s)]
         if not secs:
             QMessageBox.information(self, "Folds", "No thumbnails for the selected sections yet.")
+            return
+        if self.ctx.cluster_enabled and not preview:
+            self._cluster_masks("dark", secs, max_grey=self.fold_dark_max.value(),
+                                min_px=self.fold_min.value(), dilate=self.fold_dil.value())
             return
         store = self.store
         max_grey, min_px, dil = self.fold_dark_max.value(), self.fold_min.value(), self.fold_dil.value()
@@ -883,6 +891,14 @@ class MasksPage(Page):
                 self.tr_models.addItem(run.name, str(run / "best.pt"))
 
     def _job_finished(self, res) -> None:
+        if res.spec.remote and res.spec.remote.get("module") == "mask_operations" and res.ok:
+            self.store._manifest = None
+            for row in res.result.get("masks", []):
+                if row and row.get("hires"):
+                    self.ctx.configs.set("alignment", "meshing.mask_mip_level", row["hires_mip"])
+                    self.ctx.configs.save("alignment")
+                    break
+            self._refresh_sections()
         if res.spec.name.startswith("Fold detection"):
             self.ov_folds.setChecked(True)
             self._refresh_sections()
@@ -905,6 +921,13 @@ class MasksPage(Page):
         smode = self.project.state.structure.get("material_mode", "off")
         sdil = int(self.project.state.structure.get("material_dilate", 0))
         store = self.store
+
+        if self.ctx.cluster_enabled:
+            self._cluster_masks("compose", secs, skip_edited=skip,
+                                compose=dict(use_folds=use_folds, fold_label=label, structure_mode=smode,
+                                             structure_dilate=sdil, write_hires=hires, clip_folds=clip,
+                                             margin_px=margin, margin_label=margin_label))
+            return
 
         def work(progress=None, cancelled=None):
             out = []
@@ -939,6 +962,12 @@ class MasksPage(Page):
             self._refresh_sections()
 
         self._start_thread(work, "material masks", after=after)
+
+    def _cluster_masks(self, operation, sections, **options):
+        from dataclasses import asdict
+        payload = dict(root=str(self.project.root), operation=operation, sections=sections,
+                       volume=asdict(self.project.state.volume), tissue=self._tissue_params().to_dict(), **options)
+        self.submit(self.ctx.worker_spec("mask_operations", payload, "Material masks · " + operation))
 
     def _import_masks(self) -> None:
         if not self.store:

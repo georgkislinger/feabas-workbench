@@ -1,5 +1,15 @@
 <h1 align="center">FEABAS Workbench</h1>
 
+> **Version 0.3.4:** adds persistent LRZ execution through the usual Run buttons,
+> guided SSH setup with home-folder or DSS storage (with a storage estimate), image synchronization
+> over SSH or Globus, remote previews and export downloads.
+> See [cluster setup and data transfer](docs/CLUSTER_GUIDE.md). Cluster mode is explicit and green;
+> **Leave cluster mode** restores workstation execution.
+> This build also adds local within/across-section parallelism with resource estimates, pixel-based N2V
+> selection, training and validation loss curves, and a live best-model preview with graceful stopping.
+> See the [user guide](docs/USER_GUIDE.md#local-parallelism). Full FEABAS image processing at LRZ
+> has not yet been validated; local pipeline and cluster transport tests are described in the changelog.
+
 <p align="center">
   A desktop app for stitching and aligning serial-section EM volumes with
   <a href="https://github.com/YuelongWu/feabas">FEABAS</a> – for people who do not want to touch YAML files or a terminal.
@@ -147,6 +157,24 @@ project/
 The project folder *is* the FEABAS working directory. Your raw tiles stay where they are.
 </details>
 
+## Running at LRZ (cluster mode, local build)
+
+The same pages and Run buttons can send the work to the LRZ Linux Cluster instead of this PC. Cluster mode is
+chosen per project and is off until you switch it on; workstation runs and their results are untouched.
+
+1. **Use cluster…** (top bar) → **1. Sign in** with your LRZ ID, password and MFA (entered in private dialogs,
+   never stored).
+2. **Storage folder**: your home folder (100 GB, fine for the tutorial and projects up to ~15–20 GB of raw images)
+   or a DSS container your project's data curator shared with you. Workbench estimates the space the project will
+   need (about 5× the raw images) and warns if the folder is too small.
+3. **3. Prepare FEABAS at LRZ** installs a private Python 3.11 + FEABAS 3.0.5 there (Miniforge, 5–15 min).
+4. **Save cluster settings & use cluster** → **Sync project & images** (directly over SSH, or Globus for very large
+   data) → use the normal Run buttons. Green accents mark cluster mode; **Leave cluster mode** switches back.
+
+Access: check your account's Linux Cluster permission in the [LRZ ID Portal](https://idportal.lrz.de); DSS
+containers are created and shared by your project's data curator ([DSS documentation](https://doku.lrz.de/dss-documentation-for-users-11476038.html)).
+Details, resource presets and recovery: [docs/CLUSTER_GUIDE.md](docs/CLUSTER_GUIDE.md).
+
 ## Development
 
 ```bash
@@ -196,5 +224,5 @@ Cite FEABAS for the stitching and alignment – that is where the science is:
 and, if the workbench was useful in your work, the workbench too (GitHub's *Cite this repository*
 button uses [CITATION.cff](CITATION.cff)):
 
-> Kislinger, G. (2026). *FEABAS Workbench* (version 0.3.3) [Computer software].
+> Kislinger, G. (2026). *FEABAS Workbench* (version 0.3.4) [Computer software].
 > https://github.com/georgkislinger/feabas-workbench — ORCID 0000-0002-6559-7421

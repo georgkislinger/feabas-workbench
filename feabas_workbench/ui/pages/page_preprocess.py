@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import sys
+import json
+import re
 from pathlib import Path
 
 import numpy as np
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox,
                                QPushButton, QRadioButton, QVBoxLayout, QWidget, QSplitter)
 
@@ -14,6 +17,9 @@ from ...core.images import imread, downsample, to_uint8
 from ...core.testruns import retarget_stitch_coords, parse_stitch_coord
 from ..widgets import PathPicker, TileGridWidget, ImageView, card, hint, form_row, spin, dspin, combo, labelled, row_widget, Collapsible
 from .base import Page
+from ..threads import ThreadRunner
+from ..widgets.loss_plot import LossPlot
+from ...core.n2v_training import inspect_selection
 
 
 class PreprocessPage(Page):
@@ -73,8 +79,9 @@ class PreprocessPage(Page):
 
         # --- denoising -----------------------------------------------------
         f, lay = card("Denoising with CAREamics (N2V / N2V2 / StructN2V)")
-        lay.addWidget(hint("Self-supervised: no clean images needed. Pick a handful of representative tiles as training "
-                           "data (10–40 is plenty), train, check the preview, then denoise all tiles. StructN2V removes "
+        lay.addWidget(hint("Self-supervised: no clean images needed. Select representative tiles; the minimum is checked "
+                           "by usable pixels, so one large image can be enough. Include varied tissue and noise: "
+                           "pixel quantity alone does not ensure a good model. StructN2V removes "
                            "line-structured scan noise. Runs in the deep-learning environment on the GPU."))
         split = QSplitter()
         left = QWidget(); ll = QVBoxLayout(left); ll.setContentsMargins(0, 0, 0, 0)
@@ -91,9 +98,12 @@ class PreprocessPage(Page):
         self.dn_list = QListWidget()
         rl.addWidget(self.dn_list, 1)
         r = QHBoxLayout()
-        rm = QPushButton("Remove"); clr = QPushButton("Clear"); rnd = QPushButton("Random 24")
+        rm = QPushButton("Remove"); clr = QPushButton("Clear"); rnd = QPushButton("Auto-select by pixels")
         r.addWidget(rm); r.addWidget(clr); r.addWidget(rnd); r.addStretch(1)
         rl.addLayout(r)
+        self.dn_pixels = QLabel("Select images to calculate usable pixels.")
+        self.dn_pixels.setWordWrap(True)
+        rl.addWidget(self.dn_pixels)
         split.addWidget(right)
         split.setSizes([600, 300])
         lay.addWidget(split)
@@ -148,6 +158,31 @@ class PreprocessPage(Page):
         self.dn_status = QLabel("")
         self.dn_status.setObjectName("Hint")
         lay.addWidget(self.dn_status)
+        self.dn_live = QWidget()
+        live = QVBoxLayout(self.dn_live); live.setContentsMargins(0, 0, 0, 0)
+        live.addWidget(QLabel("Training progress · best model uses lowest validation loss"))
+        self.dn_loss = LossPlot(); live.addWidget(self.dn_loss)
+        self.dn_best_label = QLabel("The same held-out patch is used throughout; both images share the same contrast.")
+        self.dn_best_label.setWordWrap(True); live.addWidget(self.dn_best_label)
+        self.dn_best_view = ImageView(); self.dn_best_view.setMinimumHeight(260)
+        self.dn_best_view.setVisible(False); live.addWidget(self.dn_best_view)
+        self.dn_stop = QPushButton("Stop after this epoch")
+        self.dn_stop.setToolTip("Finish this epoch and keep the checkpoint with the lowest validation loss.")
+        self.dn_stop.setEnabled(False); self.dn_stop.clicked.connect(self._dn_stop_training)
+        live.addWidget(self.dn_stop)
+        self.dn_live.setVisible(False); lay.addWidget(self.dn_live)
+        self._dn_training_work = None
+        self._dn_preview_epoch = None
+        self._dn_live_timer = QTimer(self); self._dn_live_timer.setInterval(1000)
+        self._dn_live_timer.timeout.connect(self._dn_poll_training)
+        self.runner = ThreadRunner(self)
+        self._dn_check_timer = QTimer(self); self._dn_check_timer.setSingleShot(True)
+        self._dn_check_timer.timeout.connect(self._dn_assess)
+        self.dn_patch.valueChanged.connect(self._dn_schedule_check)
+        self.dn_batch.valueChanged.connect(self._dn_schedule_check)
+        self.dn_list.model().rowsInserted.connect(self._dn_schedule_check)
+        self.dn_list.model().rowsRemoved.connect(self._dn_schedule_check)
+        self.dn_list.model().modelReset.connect(self._dn_schedule_check)
         self.dn_view = ImageView()
         self.dn_view.setMinimumHeight(260)
         self.dn_view.setVisible(False)
@@ -156,7 +191,7 @@ class PreprocessPage(Page):
         self.dn_sec.currentIndexChanged.connect(self._dn_show_section)
         self.dn_add.clicked.connect(self._dn_add)
         rm.clicked.connect(self._dn_remove)
-        clr.clicked.connect(self.dn_list.clear)
+        clr.clicked.connect(self._dn_clear)
         rnd.clicked.connect(self._dn_random)
         self.dn_train.clicked.connect(self._dn_train)
         self.dn_preview.clicked.connect(self._dn_preview)
@@ -165,9 +200,17 @@ class PreprocessPage(Page):
         self._dn_method_changed()
         self.ctx.jobs.job_finished.connect(self._job_finished)
 
+    def shutdown(self):
+        self._dn_check_timer.stop()
+        self._dn_live_timer.stop()
+        super().shutdown()
+
     # ------------------------------------------------------------------
     def on_project_changed(self, project) -> None:
         self._plan = None
+        self._dn_training_work = None
+        self._dn_live_timer.stop()
+        self.dn_live.setVisible(False)
         self.dn_sec.clear()
         self.dn_list.clear()
         if project is None:
@@ -245,22 +288,52 @@ class PreprocessPage(Page):
             self.dn_list.takeItem(self.dn_list.row(it))
         self._save_dn()
 
-    def _dn_random(self) -> None:
-        import random
-        p = self.project
-        if not p:
-            return
-        allt = []
-        for name in p.section_names():
-            _, tl = self._section_tiles(name)
-            allt += [str(ap) for _, ap, _, _ in tl]
-        if not allt:
-            return
-        random.seed(42)
+    def _dn_clear(self):
         self.dn_list.clear()
-        for t in random.sample(allt, min(24, len(allt))):
-            self.dn_list.addItem(t)
         self._save_dn()
+
+    def _dn_schedule_check(self, *args):
+        self._dn_check_timer.start(300)
+
+    def _dn_random(self):
+        self._dn_assess("auto")
+
+    def _dn_assess(self, action="check"):
+        if not self.project:
+            return
+        if self.runner.running:
+            self._dn_check_timer.start(300)
+            return
+        settings = self._dn_settings()
+        paths = settings["training_tiles"]
+        if action == "auto":
+            paths = [str(ap) for name in self.project.section_names()
+                     for _, ap, _, _ in self._section_tiles(name)[1]]
+        project = self.project
+        self.dn_train.setEnabled(False)
+        self.dn_pixels.setText("Reading image dimensions…")
+        def done(info, error):
+            self.dn_train.setEnabled(not self.ctx.jobs.running)
+            if self.project is not project:
+                return
+            now = self._dn_settings()
+            if any(now[k] != settings[k] for k in ("training_tiles", "patch_size", "batch_size")):
+                self._dn_schedule_check()
+                return
+            if error:
+                self.dn_pixels.setText(error.splitlines()[0])
+                return
+            if not info:
+                return
+            self.dn_pixels.setText(info["message"])
+            if action == "auto":
+                self.dn_list.clear()
+                self.dn_list.addItems([tile.path for tile in info["tiles"]])
+                self._save_dn()
+            elif action == "train" and info["valid"]:
+                self._dn_launch_training()
+        self.runner.start(inspect_selection, (paths, settings["patch_size"], settings["batch_size"]),
+                          {"auto": action == "auto"}, on_done=done)
 
     def _dn_method_changed(self) -> None:
         self.dn_struct_row.setVisible(self.dn_method.currentData() == "structn2v")
@@ -347,27 +420,92 @@ class PreprocessPage(Page):
         d = p.models_dir / "n2v"
         if d.is_dir():
             for run in sorted(d.iterdir()):
-                ck = list(run.rglob("*.ckpt"))
+                ck = [c for c in run.rglob("*.ckpt") if not c.name.endswith(".pending.ckpt")]
                 if ck:
                     best = [c for c in ck if "last" not in c.name] or ck
-                    self.dn_models.addItem(run.name, str(sorted(best)[-1]))
+                    checkpoint = run / "best.ckpt"
+                    self.dn_models.addItem(run.name, str(checkpoint if checkpoint.is_file() else sorted(best)[-1]))
 
     def _dn_train(self) -> None:
         if not self.require_project():
             return
-        s = self._dn_settings()
-        if len(s["training_tiles"]) < 4:
-            QMessageBox.information(self, "Training tiles", "Add at least 4 training tiles (10–40 recommended).")
+        if self.ctx.jobs.running:
+            return
+        self._dn_assess("train")
+
+    def _dn_launch_training(self):
+        if self.ctx.jobs.running:
             return
         if not self.ctx.dl_python():
             QMessageBox.information(self, "Environment", "Configure the deep-learning Python on the Setup page.")
             return
         self._save_dn()
         name = self.dn_name.text().strip() or "n2v_run"
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name):
+            QMessageBox.information(self, "Run name", "Use letters, numbers, dashes and underscores for the run name.")
+            return
         work = self.project.models_dir / "n2v" / name
-        payload = dict(s, work_dir=str(work), experiment=name, seed=42)
+        if work.exists():
+            QMessageBox.information(self, "Run exists", "Choose a new run name to preserve the previous model and loss history.")
+            return
+        payload = dict(self._dn_settings(), work_dir=str(work), experiment=name, seed=42)
         spec = self.ctx.worker_spec("n2v_train", payload, f"N2V training '{name}'")
+        self._dn_training_work = work
+        self._dn_preview_epoch = None
+        self.dn_loss.set_history([]); self.dn_best_view.setVisible(False)
+        self.dn_live.setVisible(True)
+        self.dn_best_label.setText("Waiting for the first completed epoch. Left: original held-out patch; right: best denoised patch.")
+        self.dn_stop.setEnabled(not self.ctx.cluster_enabled)
+        self.dn_stop.setText("Stop after this epoch")
+        if self.ctx.cluster_enabled:
+            self.dn_best_label.setText("Live preview and stop-after-epoch are available for local training. Cluster models return after the job finishes.")
+        else:
+            self._dn_live_timer.start()
         self.submit(spec)
+
+    def _dn_poll_training(self):
+        work = self._dn_training_work
+        if work is None:
+            return
+        try:
+            state = json.loads((work / "training_status.json").read_text(encoding="utf-8"))
+            self.dn_loss.set_history(state["history"])
+            epoch = state.get("best_epoch")
+            if epoch and epoch != self._dn_preview_epoch and state.get("preview"):
+                with np.load(work / "training_preview.npz", allow_pickle=False) as preview:
+                    if int(preview["epoch"]) != epoch:
+                        return  # reader crossed an atomic snapshot update; retry next tick
+                    raw, den = preview["original"], preview["denoised"]
+                lo, hi = np.percentile(raw[np.isfinite(raw)], (.5, 99.5))
+                a, b = to_uint8(raw, lo, hi), to_uint8(den, lo, hi)
+                self.dn_best_view.set_image(np.concatenate([a, np.full((a.shape[0], 8), 255, np.uint8), b], axis=1))
+                self.dn_best_view.setVisible(True)
+                self._dn_preview_epoch = epoch
+            loss = f"{state['best_loss']:.5g}" if state.get("best_loss") is not None else "—"
+            self.dn_best_label.setText(f"{state['state'].capitalize()} · best epoch {epoch or '—'} · "
+                f"validation loss {loss}\nLeft: original held-out patch · right: best denoised patch · same contrast")
+            if state["state"] in {"completed", "stopped", "failed"}:
+                self.dn_stop.setEnabled(False)
+                self._dn_live_timer.stop()
+        except (OSError, ValueError, KeyError):
+            pass  # no complete snapshot yet
+
+    def _dn_stop_training(self):
+        if not self._dn_training_work or self.ctx.cluster_enabled or not self.ctx.jobs.running:
+            return
+        try:
+            self._dn_training_work.mkdir(parents=True, exist_ok=True)
+            (self._dn_training_work / "stop_after_epoch.request").touch()
+        except OSError as error:
+            self.error(f"Could not request a graceful stop: {error}")
+            return
+        self.dn_stop.setEnabled(False)
+        self.dn_stop.setText("Finishing this epoch; keeping the best model…")
+
+    def on_running_changed(self, running):
+        self.dn_train.setEnabled(not running and not self.runner.running)
+        if not running:
+            self.dn_stop.setEnabled(False)
 
     def _dn_preview(self) -> None:
         ck = self.dn_models.currentData()
@@ -398,7 +536,7 @@ class PreprocessPage(Page):
             QMessageBox.information(self, "Model", "Train a model first.")
             return
         p = self.project
-        src_root = p.preprocessed_dir / "histmatch" if self.src_hm.isChecked() and (p.preprocessed_dir / "histmatch").is_dir() else Path(p.state.source.root_dir)
+        src_root = p.preprocessed_dir / "histmatch" if self.src_hm.isChecked() and (self.ctx.cluster_enabled or (p.preprocessed_dir / "histmatch").is_dir()) else Path(p.state.source.root_dir)
         rule = p.state.source.naming_rule()
         out = p.preprocessed_dir / "denoised"
         payload = {"checkpoint": ck, "in_root": str(src_root), "out_root": str(out), "ext": rule.ext, "recursive": rule.recursive,
@@ -414,9 +552,18 @@ class PreprocessPage(Page):
             return
         name = res.spec.name
         if name.startswith("N2V training"):
+            self._dn_poll_training()
+            self._dn_live_timer.stop()
+            self.dn_stop.setEnabled(False)
             self._refresh_models()
+            if self._dn_training_work:
+                index = self.dn_models.findText(self._dn_training_work.name)
+                if index >= 0:
+                    self.dn_models.setCurrentIndex(index)
             if res.ok:
-                self.dn_status.setText(f"training finished: {res.result}")
+                self.dn_status.setText(f"Training {res.result.get('state', 'finished')}. Best epoch: {res.result.get('best_epoch', 'see model')}.")
+            else:
+                self.dn_status.setText("Training stopped or failed. Any previously saved best model is preserved; see the job log.")
         elif name == "N2V preview" and res.ok and getattr(self, "_preview_pair", None):
             raw, den = self._preview_pair
             if den.is_file():
@@ -446,6 +593,9 @@ class PreprocessPage(Page):
         dn = p.preprocessed_dir / "denoised"
         n_hm = sum(1 for _ in hm.rglob("*.*")) if hm.is_dir() else 0
         n_dn = sum(1 for _ in dn.rglob("*.*")) if dn.is_dir() else 0
+        if self.ctx.cluster_enabled:
+            counts = self.ctx.cluster.snapshot.get("preprocessing", {})
+            n_hm, n_dn = counts.get("histmatch", 0), counts.get("denoised", 0)
         self.src_hm.setEnabled(n_hm > 0); self.src_dn.setEnabled(n_dn > 0)
         cur = p.state.preprocessing.active_source
         self.src_info.setText(f"raw: {p.state.volume.n_tiles} tiles · histogram-matched: {n_hm} files · denoised: {n_dn} files · "
@@ -458,7 +608,7 @@ class PreprocessPage(Page):
         choice = "histmatch" if self.src_hm.isChecked() else ("denoise" if self.src_dn.isChecked() else "raw")
         p.state.preprocessing.active_source = choice
         root = p.active_tile_root()
-        if root is None or not root.is_dir():
+        if root is None or (not self.ctx.cluster_enabled and not root.is_dir()):
             self.error(f"tile folder not found: {root}")
             return
         n = retarget_stitch_coords(p, root)

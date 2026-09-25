@@ -19,3 +19,10 @@ stitching and alignment; the workbench is a front end for it.
 FEABAS itself is installed separately, as a Python package, into an environment of your choice; the
 workbench never modifies that installation. `feabas_workbench/vendor/winfix/sitecustomize.py` applies two
 run-time fixes to FEABAS 3.0.5 from the outside (see the comments in that file).
+
+## Globus CLI and Globus SDK
+
+The Windows build includes Globus CLI 3.43.0 and Globus SDK 4.9.0 for browser authentication
+and verified transfers. Both are distributed under the Apache License 2.0. Their package
+metadata and license notices are included in the application's `_internal` directory.
+Projects: https://github.com/globus/globus-cli and https://github.com/globus/globus-sdk-python.

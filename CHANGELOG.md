@@ -3,6 +3,171 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.4] – 2026-09-25
+
+### Added
+- Bring the cluster-mode development builds into the public release: guided LRZ setup,
+  SSH or Globus data transfer, persistent remote job monitoring, previews and export downloads
+  through the usual workbench controls. See the cluster.1–cluster.6 entries for details.
+- Local section/worker parallelism with CPU and RAM planning; pixel-based N2V training
+  selection; live training/validation loss and best-patch previews with graceful stopping.
+
+### Fixed
+- Run the FEABAS-dependent parallelism tests in the dedicated runtime CI job; GUI-only
+  installations skip those two integration checks because FEABAS lives in a separate environment.
+
+### Packaging
+- Use public version 0.3.4 for the Windows executable, wheel, source archive and PyPI package.
+- Full FEABAS image processing at LRZ remains unvalidated; live training previews and graceful
+  N2V stopping currently apply to local execution.
+
+## [0.3.3+cluster.6] – 2026-09-24 (development build)
+
+### Added
+- Local parallelism controls for tile matching, montage optimization/rendering, stitched
+  mipmaps/thumbnails, aligned PNG section rendering and aligned PNG mipmaps. Choose workers
+  within sections, across sections, or both; CPU/RAM estimates limit simultaneous sections.
+  Project settings and section logs remain separate from cluster resource settings.
+- N2V training selection based on usable pixels instead of a minimum number of files, with
+  pixel-based auto-selection. A sufficiently large single image is accepted; training and
+  validation use non-overlapping spatial regions with recorded patch locations.
+- Live training and validation loss curves and a fixed held-out original/best-denoised patch
+  comparison for local N2V-family training. Stop after the current epoch while retaining the
+  checkpoint with the lowest validation loss.
+
+### Fixed
+- Clearing the denoising training selection now persists; model selection prefers the saved
+  best checkpoint. Existing training runs are protected by requiring a new run name.
+- Parallel thumbnail phases stay on the same named section when other mipmaps are incomplete.
+  Aligned rendering initializes the shared canvas once before processing sections in parallel.
+- A failed parallel section stops sibling and pending work and reports the original failure.
+- Disable CAREamics' console progress bar at construction so epoch progress messages remain
+  readable by the GUI. Large training images are sampled one at a time with bounded patch arrays.
+
+### Validation
+- 168 regression tests passed; one Linux-only test skipped on Windows.
+- A complete synthetic parallel pipeline, including a partial-section thumbnail run, passed.
+- Short CPU N2V and N2V2 runs verified both loss curves, best-model previews, graceful stopping,
+  checkpoint reload and prediction. RAM planning remains approximate; live denoising feedback
+  and graceful stopping are currently local-mode features.
+
+## [0.3.3+cluster.5] – 2026-09-23 (local build)
+
+### Added
+- The home folder is offered as project storage next to assigned DSS containers; its quota
+  is read from `dssusrinfo`. Setup estimates the project's storage need (about 5× the raw
+  images, plus one copy per preprocessing variant and the FEABAS environment) and warns
+  before a folder that is too small is used.
+- Images, job inputs, previews, exports and rendered stacks can travel directly over SSH:
+  resumable, size-checked, never deleting at either end, no Globus Connect Personal needed.
+  Default for home-folder projects and datasets below ~200 GB; Globus stays available.
+- **Leave cluster mode** in the top bar, the Pipeline menu and the setup window. Submitted
+  jobs keep running at LRZ; monitoring pauses until cluster mode is chosen again.
+- The Sync button becomes **Stop transfer** while an SSH copy runs.
+- **Optional: prepare deep-learning tools at LRZ**: the counterpart of the local deep-learning
+  environment (CPU PyTorch, segmentation-models-pytorch, ultralytics, careamics), used by fold
+  detection, YOLO and Noise2Void at LRZ.
+- **Free this project's LRZ storage…**: shows the folder's size and which exports are on this PC,
+  then deletes only the folder the storage step created (optionally the environments too).
+- The setup window's log keeps a history and streams environment installs line by line; it
+  shares a draggable splitter with the tabs.
+
+### Fixed
+- **Prepare FEABAS at LRZ** creates a Miniforge Python 3.11 environment (LRZ's python modules
+  stop at 3.8, its default python3 is 3.6) with headless OpenCV for compute nodes.
+- Leaving cluster mode no longer refuses while a job or Globus transfer is active, including
+  a transfer left unconfirmed; only an operation in progress has to finish.
+- Jobs failed at once on CoolMUC-4 with "module: command not found": batch shells do not
+  define `module`. job.sh no longer loads modules unless some are chosen under Advanced, and then
+  initialises the module system itself.
+- The setup window fits the screen it opens on and its tabs scroll; on a 1280x800 display at
+  200 % its bottom buttons were off-screen and it could not be made smaller.
+- Closing the LRZ sign-in dialog, declining the host key or stopping a copy is a status line,
+  not a failure; error dialogs show the message, the traceback goes to the log only.
+- After signing in, the first storage entry is selected; before, the list stayed unselected
+  and "Use this storage folder" received an empty path.
+- "Sync project & images" and "Save cluster settings & use cluster" showed an underlined
+  letter instead of "&".
+- Bulk preview downloads compared local files with the new remote manifest instead of the
+  previous one, so previews updated by a later run were kept as if they were local edits.
+
+### Removed
+- The cluster.1 "Run on cluster" window (`ui/cluster_dialog.py`), unreachable since cluster.2
+  replaced it with the setup window and per-project cluster mode.
+
+## [0.3.3+cluster.4] – 2026-09-22 (local build)
+
+### Fixed
+- Query supported SSH authentication methods after verifying the host, before
+  asking for credentials. Interactive password/MFA login no longer asks for an
+  unused extra password before the server's own challenges.
+
+### Validation
+- Added a real local SSH server test for interactive-only password/MFA; password
+  plus MFA, encrypted-key plus MFA, and changed-host-key rejection still pass.
+- 134 regression tests passed. Live LRZ evidence is recorded separately in
+  LRZ_TEST_RESULTS.json; local tests do not establish account access.
+
+## [0.3.3+cluster.3] – 2026-09-19 (local build)
+
+### Fixed
+- DSS discovery only offers assigned container paths, excluding mounted filesystem
+  roots and home directories. An empty container list is distinguished from an
+  unrecognized or failed discovery report.
+- The guided storage selector rejects filesystem roots, home and scratch paths.
+
+### Validation
+- All 133 automated tests passed, including 17 storage regression cases based on
+  the reported empty-container output. See the separate live LRZ access report
+  for account-specific results; this test does not run FEABAS or upload images.
+
+## [0.3.3+cluster.2] – 2026-09-19 (local build)
+
+### Added
+- Persistent per-project cluster mode: the normal Run buttons use LRZ; green accents
+  and an execution banner identify the selected backend.
+- Guided SSH/MFA, DSS discovery, private FEABAS environment setup, official Globus
+  browser login, verified synchronization, transfer recovery and return downloads.
+- Bounded section concurrency combined with workers inside each section, Teramem
+  resource support and observed memory reporting.
+- Remote preprocessing, mask workers, shared settings, previews, models, logs and
+  versioned exports; active jobs survive closing and reopening the interface.
+
+### Fixed
+- Missing transfer dependency in source launch environments and the packaged Windows app.
+- Portable paths for mirrored Windows results, stale downstream results after settings
+  changes, large input staging, and preservation of local edits during preview refresh.
+- Empty preprocessing inputs now fail clearly; remote preprocessing selection does
+  not fall back to raw data because its outputs are absent from the PC.
+
+### Validation
+- 116 tests passed; the full 13-command synthetic FEABAS pipeline passed with two
+  simultaneous sections and two workers per section. Live LRZ verification is pending.
+
+## [0.3.3+cluster.1] – 2026-09-18 (local build)
+
+### Added
+- Separate **Pipeline → Run on cluster…** window: LRZ SSH/MFA, portable input snapshots,
+  single-node Slurm resource presets, preview, submission receipts, job history, status,
+  cancellation, logs and explicit small-file result downloads. Workstation controls remain local.
+- Cluster setup/data-transfer guide. Raw image data stays out of small job uploads.
+- Offline tests including a local SSH server exercising password/key plus MFA.
+
+### Fixed
+- Source launchers now report missing cluster dependencies in their selected environment.
+  Opening the cluster window without Paramiko shows a repair command for that exact Python
+  instead of an unhandled import error; workstation pages remain usable.
+- A missing executable could deadlock the local job queue. Log-file creation failures now also
+  finish the job and let queue error handling run.
+- Headless pipeline timeouts now stop silent subprocess trees as well as processes that print output.
+- Windows packaging isolates DLL discovery from unrelated programs on PATH; an incompatible
+  Poppler ICU library could otherwise make the bundled Qt interface fail to start.
+- The module/frozen entry point now returns failures to the caller, so a failed self-check
+  no longer reports process exit code zero.
+
+This is a local modification of upstream 0.3.3, not an upstream release. Live LRZ execution
+requires the user's account, DSS allocation and FEABAS environment and has not been verified.
+
 ## [0.3.3] – 2026-09-17
 
 ### Added

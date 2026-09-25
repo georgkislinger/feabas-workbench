@@ -25,6 +25,10 @@ class ExportPage(Page):
         self._server: VolumeServer | None = None
         self.tabs = QTabWidget()
         self.body.addWidget(self.tabs)
+        self.cluster_download = QPushButton("Download rendered stack from LRZ for local viewing")
+        self.cluster_download.clicked.connect(lambda: self.ctx.cluster.download_rendered())
+        self.cluster_download.setVisible(self.ctx.cluster_enabled)
+        self.body.addWidget(self.cluster_download)
 
         # ---- render tab
         t = QWidget(); tl = QVBoxLayout(t); tl.setContentsMargins(6, 6, 6, 6)
@@ -120,9 +124,11 @@ class ExportPage(Page):
         self.editor = ConfigEditor(); self.editor.changed.connect(self._editor_changed)
         self.tabs.addTab(self.editor, "Alignment settings")
         self.ctx.jobs.job_finished.connect(self._job_finished)
+        self.ctx.export_downloaded.connect(self._download_finished)
 
     # ------------------------------------------------------------------
     def on_project_changed(self, project) -> None:
+        self.cluster_download.setVisible(self.ctx.cluster_enabled)
         if project is None:
             self.editor.set_doc(None)
             return
@@ -184,10 +190,13 @@ class ExportPage(Page):
         if not self.require_project():
             return
         base = self._aligned_base()
-        if not base or not (base / "mip0").is_dir():
+        rendered = self.ctx.scan()["align.rendering"].done > 0 if self.ctx.cluster_enabled else bool(base and (base / "mip0").is_dir())
+        if not rendered:
             QMessageBox.information(self, "Export", "Render the PNG tile stack first (Render tab).")
             return
         out = self.e_out.path() or self.project.exports_dir
+        if self.ctx.cluster_enabled and out.is_relative_to(self.project.root):
+            out = self.ctx.local_project.exports_dir / "cluster"
         self.project.state.export["out_dir"] = str(out); self.project.save()
         v = self.project.state.volume
         payload = {"aligned_stack": str(base), "out_dir": str(out), "name": self.e_name.text().strip() or "aligned",
@@ -269,10 +278,18 @@ class ExportPage(Page):
 
     def _job_finished(self, res) -> None:
         if res.spec.name.startswith("Export") and res.ok:
+            if self.ctx.cluster_enabled:
+                self.info("Export completed at LRZ. The verified download is tracked in the top bar.")
+                return
             self._refresh_vsvi()
             v = res.result.get("vast", {}).get("vsvi")
             if v:
                 self.info(f"VAST file: {v}")
+
+    def _download_finished(self, path):
+        self.e_out.setText(path)
+        self._refresh_vsvi()
+        self.info("Export downloaded and verified: " + path)
 
 
 class _PairSource:

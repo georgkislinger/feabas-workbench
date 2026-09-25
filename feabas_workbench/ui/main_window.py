@@ -72,7 +72,31 @@ class MainWindow(QMainWindow):
         llay.addWidget(self.project_label)
         llay.addWidget(self.nav, 1)
         lay.addWidget(left)
-        lay.addWidget(self.stack, 1)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        execution = QWidget()
+        execution.setObjectName("ExecutionBanner")
+        row = QHBoxLayout(execution)
+        self.execution_label = QLabel("Execution: This PC")
+        self.execution_label.setWordWrap(True)
+        row.addWidget(self.execution_label, 1)
+        self.cluster_settings_btn = QPushButton("Use cluster…")
+        self.cluster_settings_btn.clicked.connect(self.run_on_cluster)
+        row.addWidget(self.cluster_settings_btn)
+        self.sync_cluster_btn = QPushButton("Sync project && images")   # && shows a literal &
+        self.sync_cluster_btn.clicked.connect(self._sync_or_stop)
+        self.sync_cluster_btn.setVisible(False)
+        row.addWidget(self.sync_cluster_btn)
+        self.local_btn = QPushButton("Leave cluster mode")
+        self.local_btn.setToolTip("Compute on this PC again. Jobs already submitted keep running at LRZ; "
+                                  "'Use cluster…' resumes monitoring them.")
+        self.local_btn.clicked.connect(self._use_local)
+        self.local_btn.setVisible(False)
+        row.addWidget(self.local_btn)
+        content_layout.addWidget(execution)
+        content_layout.addWidget(self.stack, 1)
+        lay.addWidget(content, 1)
         self.setCentralWidget(central)
 
         # log dock: hidden until something worth reading arrives, so the workflow pages
@@ -121,6 +145,10 @@ class MainWindow(QMainWindow):
 
         p = mb.addMenu("&Pipeline")
         a = QAction("Run the &standard pipeline…", self); a.setShortcut("Ctrl+R"); a.triggered.connect(self.run_standard_pipeline); p.addAction(a)
+        a = QAction("Run on &cluster…", self); a.triggered.connect(self.run_on_cluster); p.addAction(a)
+        a = QAction("&Leave cluster mode (compute on this PC)", self); a.triggered.connect(self._use_local); p.addAction(a)
+        a.setEnabled(False)
+        self.leave_cluster_action = a
         p.addSeparator()
         a = QAction("Create &snapshot of current state…", self); a.triggered.connect(self.make_snapshot); p.addAction(a)
         a = QAction("&Restore snapshot…", self); a.triggered.connect(self.restore_snapshot_dialog); p.addAction(a)
@@ -148,12 +176,94 @@ class MainWindow(QMainWindow):
         self._refresh_recent()
 
     def _wire(self) -> None:
+        self.ctx.execution_changed.connect(self._execution_changed)
         self.ctx.project_changed.connect(self._on_project)
         self.ctx.jobs.job_started.connect(self._job_started)
         self.ctx.jobs.progress.connect(self._job_progress)
         self.ctx.jobs.job_finished.connect(self._job_finished)
         self.ctx.jobs.running_changed.connect(self._running)
         self.cancel_btn.clicked.connect(self._cancel)
+
+    def run_on_cluster(self) -> None:
+        if self.ctx.project is None:
+            QMessageBox.information(self, "Open a project", "Open or create a project first.")
+            return
+        if self.ctx.jobs.queue.running:
+            QMessageBox.information(self, "Local job running", "Let the local job finish before snapshotting cluster inputs.")
+            return
+        try:
+            from .cluster_setup import ClusterSetupDialog
+            dialog = ClusterSetupDialog(self.ctx, self)
+        except (ImportError, OSError) as e:
+            import shlex
+            import subprocess
+            import sys
+            if getattr(sys, "frozen", False):
+                repair = "Re-extract the complete Windows app, including its _internal folder."
+            else:
+                argv = [sys.executable, "-m", "pip", "install", "paramiko>=3.4,<6"]
+                command = subprocess.list2cmdline(argv) if sys.platform == "win32" else shlex.join(argv)
+                # cmd.exe treats < and > as redirections unless quoted.
+                if sys.platform == "win32":
+                    command = command.replace("paramiko>=3.4,<6", '"paramiko>=3.4,<6"')
+                repair = "Run this command in a terminal, then restart Workbench:\n\n" + command
+            QMessageBox.warning(self, "Cluster support needs setup",
+                                "The SSH components could not be loaded in this Workbench environment.\n\n"
+                                + repair + "\n\nDetails: " + str(e))
+            self.ctx.log(f"Cluster support unavailable: {e}", "warn")
+            return
+        self._cluster_dialog = dialog
+        try:
+            dialog.exec()
+        finally:
+            dialog.shutdown()
+            self._cluster_dialog = None
+            dialog.deleteLater()
+
+    def _execution_changed(self):
+        remote = self.ctx.cluster_enabled
+        text = self.ctx.cluster.message if remote else "Local computation"
+        backend = self.ctx.cluster
+        if not remote and backend and (backend.running or backend.transferring):
+            text += " · LRZ jobs/transfers continue; 'Use cluster…' resumes monitoring"
+        self.execution_label.setText(("Execution: LRZ cluster · " if remote else "Execution: This PC · ") + text)
+        self.cluster_settings_btn.setText("Cluster settings…" if remote else "Use cluster…")
+        self.sync_cluster_btn.setVisible(remote)
+        self.local_btn.setVisible(remote)
+        self.leave_cluster_action.setEnabled(remote)
+        copying = remote and backend.copying
+        self.sync_cluster_btn.setText("Stop transfer" if copying else "Sync project && images")
+        self.sync_cluster_btn.setEnabled(copying or (remote and not backend.running and not backend.busy
+                                                     and not backend.transferring))
+        if getattr(self, "_cluster_palette", None) != remote:
+            self.setStyleSheet(theme.QSS.replace(theme.ACCENT, "#22A06B").replace(theme.ACCENT2, "#75D6AA")
+                              .replace("#1D4ED8", "#137749").replace("#2563EB", "#178653") if remote else "")
+            self._cluster_palette = remote
+        self._on_project(self.ctx.project)
+
+    def _sync_or_stop(self):
+        backend = self.ctx.cluster
+        if backend.copying:
+            backend.cancel_all()
+        else:
+            backend.sync()
+
+    def _use_local(self):
+        backend = self.ctx.cluster
+        if not self.ctx.cluster_enabled:
+            return
+        if backend and (backend.running or backend.transferring) and not backend.busy:
+            if QMessageBox.question(self, "Leave cluster mode",
+                    "A job or transfer is still active at LRZ. It keeps running there; Workbench stops "
+                    "monitoring it until you choose 'Use cluster…' again.\n\nCompute on this PC now?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+        try:
+            self.ctx.use_local()
+        except RuntimeError as e:
+            QMessageBox.information(self, "Execution mode", str(e))
+            return
+        self.ctx.log("Cluster mode left: the Run buttons compute on this PC")
 
     # ------------------------------------------------------------------
     def page_count(self) -> int:
@@ -219,7 +329,7 @@ class MainWindow(QMainWindow):
             self.project_label.setText("no project")
             self.setWindowTitle(f"{APP_NAME} {__version__}")
         else:
-            root = str(project.root)
+            root = str(self.ctx.local_project.root if self.ctx.local_project else project.root)
             if len(root) > 34:
                 root = "…" + root[-33:]
             self.project_label.setText(f"<b>{project.state.name}</b><br><span style='color:{theme.MUTED}'>{root}</span>")
@@ -348,6 +458,11 @@ class MainWindow(QMainWindow):
     def make_snapshot(self) -> None:
         if not self.ctx.project:
             return
+        if self.ctx.cluster_enabled:
+            from ..core.jobs import JobSpec
+            self.ctx.jobs.submit(JobSpec("Snapshot cluster state", [], self.ctx.project.root,
+                                         remote=dict(kind="snapshot", label="Workbench snapshot")))
+            return
         size_mb = estimate_snapshot_size(self.ctx.project.root) / 1e6
         label, ok = QInputDialog.getText(self, "Snapshot", f"Label for this snapshot (about {size_mb:.0f} MB will be copied):")
         if not ok:
@@ -357,6 +472,10 @@ class MainWindow(QMainWindow):
 
     def restore_snapshot_dialog(self) -> None:
         if not self.ctx.project:
+            return
+        if self.ctx.cluster_enabled:
+            QMessageBox.information(self, "Cluster snapshots", "Cluster snapshots are stored remotely. Use the cluster file manager "
+                                    "to inspect them; restoring requires a separate remote project to preserve current results.")
             return
         snaps = list_snapshots(self.ctx.project.root)
         if not snaps:
@@ -386,6 +505,15 @@ class MainWindow(QMainWindow):
         self.confirm_clear(step)
 
     def confirm_clear(self, step, cascade: bool = True) -> bool:
+        if self.ctx.cluster_enabled:
+            if QMessageBox.question(self, "Clear cluster outputs", f"Move '{step.label}' and downstream cluster outputs "
+                                    "into the remote history folder? Raw images are preserved.", QMessageBox.Yes | QMessageBox.No,
+                                    QMessageBox.No) != QMessageBox.Yes:
+                return False
+            from ..core.jobs import JobSpec
+            self.ctx.jobs.submit(JobSpec("Clear " + step.label, [], self.ctx.project.root,
+                                         remote=dict(kind="clear", step=step.key)))
+            return True
         targets = clear_targets(self.ctx.project.root, step, cascade)
         if not targets:
             QMessageBox.information(self, "Nothing to clear", f"No outputs of '{step.label}' found.")
@@ -413,7 +541,11 @@ class MainWindow(QMainWindow):
         if getattr(self, "_shut_down", False):
             return
         self._shut_down = True
-        self.ctx.jobs.cancel_all()
+        if getattr(self, "_cluster_dialog", None) is not None:
+            self._cluster_dialog.shutdown()
+        if self.ctx.cluster:
+            self.ctx.cluster.shutdown()
+        self.ctx.jobs.queue.cancel_all()
         for page in self._pages:
             try:
                 page.shutdown()
@@ -423,7 +555,7 @@ class MainWindow(QMainWindow):
         self.ctx.settings.save()
 
     def closeEvent(self, event) -> None:
-        if self.ctx.jobs.running:
+        if self.ctx.jobs.running and not self.ctx.cluster_enabled:
             if QMessageBox.question(self, "Quit", "A job is running. Stop it and quit?") != QMessageBox.Yes:
                 event.ignore()
                 return

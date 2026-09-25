@@ -1,5 +1,11 @@
 # FEABAS Workbench – user guide
 
+This local build adds a cluster mode for LRZ: **Use cluster…** in the top bar (or
+**Pipeline → Run on cluster…**) signs in over SSH/MFA, sets up storage in your home folder or a
+DSS container, prepares FEABAS at LRZ and synchronizes the images. While cluster mode is on (green
+accents), the normal Run buttons submit Slurm jobs; **Leave cluster mode** switches back to this
+PC. Read [the cluster guide](CLUSTER_GUIDE.md) for the complete setup procedure.
+
 Every window, every setting: what it does, when to touch it, and what it breaks if you change it later.
 If you only want the short version, read [Installing and starting the workbench](#1-installing-and-starting-the-workbench) and
 [A first dataset, end to end](#10-a-first-dataset-end-to-end).
@@ -461,8 +467,24 @@ GPU if there is one. Useful for low-dose/fast acquisitions; unnecessary for alre
 does cost disk space and hours.
 
 **Choosing training tiles** – pick tiles in the grid on the left, **Add selected tiles →**, or press
-**Random 24**. 10–40 representative tiles is plenty; at least 4 are required. Include the different
-looks in your data (dense tissue, resin, edges).
+**Auto-select by pixels**. The minimum is based on usable image area, not a file count: with the default
+128-pixel patch and batch 12, it requires about **4.2 MP for training plus 1.05 MP held out for validation**.
+One large image can qualify. The displayed requirement grows for larger patches or batches, and only
+complete patches count. Include different tissue, resin and edges; sufficient pixel area does not
+guarantee a representative selection. Auto-selection is a starting point for reviewing that diversity.
+
+Training and validation use separate spatial bands of each image; no sampled patch overlaps the other
+split. Training samples up to roughly 64 Mi pixels (normally 256 MiB as float32), unless the chosen
+patch/batch minimum requires more. Compressed images may still need one full tile decoded at a time.
+Patch locations are recorded in `models/n2v/<run>/training_files.json`.
+
+During **local** training, the denoising card plots **training loss and validation loss** after each
+epoch. It shows the same held-out original patch beside the current best denoised patch, with matching
+contrast. “Best” means the lowest validation loss; the preview updates only when that improves.
+**Stop after this epoch** finishes the current epoch and keeps `best.ckpt`, which is selected for
+prediction. Loss history and the preview are saved in the run folder. Use a new run name to preserve
+earlier experiments. Live feedback and this graceful stop are local features; cluster training still
+returns its model after the job. The ordinary job Cancel button remains an immediate stop.
 
 The card shows what most people need – method, run name, *Train model*; model, *Preview on a tile*,
 *Denoise all tiles* – and keeps everything else under **Advanced settings** (click to expand). The
@@ -479,7 +501,7 @@ StructN2V axis and span appear next to the method only when StructN2V is selecte
 | **Denoise all tiles** | Writes `preprocessed/denoised/`, skipping files that already exist (so it is resumable). | If the *histogram-matched tiles* radio button is selected, it denoises those instead of the raw tiles. |
 | *Advanced:* **patch** | Training patch size (default 128). | 64–256. Larger patches see more context but need more VRAM. |
 | *Advanced:* **batch** | Patches per step (default 12). | Lower it if you hit CUDA out-of-memory. |
-| *Advanced:* **epochs / steps per epoch** | Training length (default 100 / 100). | 100×100 is a reasonable first run; watch the loss in the log. |
+| *Advanced:* **epochs / steps per epoch** | Training length (default 100 / 100). | Watch both loss curves and the held-out preview; stop after an epoch when sufficient. |
 | *Advanced:* **ROI / masked %** | N2V blind-spot parameters: neighbourhood size (11) and percentage of pixels masked per patch (0.2). | Defaults are fine; raising masked % speeds up learning but adds noise to the gradient. |
 | *Advanced:* **prediction tile / overlap / batch** | Tiled inference: tile size 512, overlap 64, batch 4. | Reduce the tile size if you run out of VRAM; increase the overlap if you see seams in the denoised output. |
 
@@ -489,6 +511,33 @@ StructN2V axis and span appear next to the method only when StructN2V is selecte
 
 Three FEABAS steps in order: **Match tiles → Optimize montage → Render montages**. The tabs are *Run*,
 *Test on subset*, *Quality check* and *All settings*.
+
+### Local parallelism
+
+In **This PC** mode, use **Local parallelism…** beside the step group's Run button on Stitching,
+Thumbnails and Export → Render. Each eligible step can use the existing FEABAS settings, workers
+**within a section**, workers **across sections**, or **both**. Montage optimization already operates
+across sections, so it offers that option with one worker per section.
+
+For example, 4 sections × 8 workers uses a budget of 32 cores. The dialog shows what can run now,
+limited by available physical cores, selected sections and estimated RAM. A 64-core workstation can
+request 8 × 8, but memory may lower the simultaneous section count. The default RAM planning budget
+is 80% of currently available RAM. These limits are recalculated when each stage starts.
+
+RAM estimates use image dimensions, dtype, tile count and worker count; they are planning allowances,
+not measured guarantees or enforced memory limits. First run one representative section, then use the
+logged peak plus headroom as **RAM per section**. Unknown image dimensions default to one section until
+you supply an allowance. More workers can increase I/O contention, especially on an NAS.
+
+Supported stages are tile matching, montage optimization, montage rendering, stitched mipmaps/thumbnails,
+aligned PNG section rendering and aligned PNG mipmaps. Whole-stack solving, shared TensorStore volume
+writes and final VAST/OME-Zarr packaging retain their existing execution. Stages remain in order; only
+independent sections within one stage overlap. A failed section stops its siblings and pending work.
+
+These per-project workstation choices are saved separately in `workbench_project.json`; they do not
+change the scientific YAML settings or cluster resources. Choose **Existing FEABAS settings** to return
+to the original behavior. Detailed section logs, the allocation and observed peak memory are stored
+under `logs/local-parallel/`.
 
 ### Run tab – the settings that matter
 

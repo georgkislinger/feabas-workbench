@@ -39,6 +39,16 @@ def selfcheck(out: Path) -> int:
     from .core.envs import Settings, settings_dir
     rep: dict = {"version": __version__, "frozen": bool(getattr(sys, "frozen", False)), "python": sys.executable,
                  "package_root": str(package_root()), "settings_dir": str(settings_dir()), "problems": []}
+    try:
+        from .core.cluster_transport import ClusterClient
+        from .core.cluster_bundle import ClusterResources
+        from .ui.cluster_setup import ClusterSetupDialog
+        from .core.globus_transfer import GlobusCLI
+        ClusterResources().validate()
+        rep["cluster_support"] = bool(ClusterClient and ClusterSetupDialog)
+        rep["globus_command"] = GlobusCLI().command()
+    except Exception as e:  # noqa: BLE001
+        rep["problems"].append(f"cluster support unavailable: {e}")
     for name in ("scripts/stitch_main.py", "scripts/thumbnail_main.py", "scripts/align_main.py"):
         if not (VENDOR_DIR / name).is_file():
             rep["problems"].append(f"vendored FEABAS script missing: {VENDOR_DIR / name}")
@@ -74,6 +84,24 @@ def selfcheck(out: Path) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "--globus-helper":
+        # Windowed frozen apps have no stdout/stderr. Keep the official CLI's
+        # browser authentication and token store, with explicit output handles.
+        if len(argv) < 4:
+            return 2
+        with open(argv[1], "w", encoding="utf-8") as out, open(argv[2], "w", encoding="utf-8") as err, open(os.devnull) as inp:
+            sys.stdout, sys.stderr, sys.stdin = out, err, inp
+            sys.argv = ["globus", *argv[3:]]
+            try:
+                from globus_cli import main as globus_main
+                globus_main()
+                return 0
+            except SystemExit as e:
+                return int(e.code or 0)
+            except Exception:
+                traceback.print_exc()
+                return 1
     ap = argparse.ArgumentParser(prog="feabas-workbench")
     ap.add_argument("--project", help="project folder to open")
     ap.add_argument("--page", type=int, default=None, help="page index to show")
