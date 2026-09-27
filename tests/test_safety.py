@@ -596,6 +596,35 @@ def test_a_montage_test_run_leaves_the_projects_settings_alone(tmp_path):
     assert {f.name: f.stat().st_mtime for f in p.configs_dir.glob("*.yaml")} == before
 
 
+# ----------------------------------------------------------------------------- the end-to-end check
+
+def test_match_files_without_matches_fail_the_end_to_end_check(tmp_path):
+    import h5py
+    from feabas_workbench.core.pipeline import match_problems
+    for sub in ("stitch/match_h5", "align/matches"):
+        (tmp_path / sub).mkdir(parents=True)
+    with h5py.File(tmp_path / "stitch/match_h5/s0001.h5", "w") as h:          # a connected montage
+        h.create_dataset("matches/1_0", data=np.zeros(8, np.float32))
+        h.create_dataset("connected_subsystem", data=np.array([0, 0], np.int32))
+    with h5py.File(tmp_path / "stitch/match_h5/s0002.h5", "w") as h:          # tiles that never matched
+        h.create_dataset("connected_subsystem", data=np.array([0, 1], np.int32))
+    with h5py.File(tmp_path / "align/matches/s0001__to__s0002.h5", "w") as h:  # one point for a whole pair
+        h.create_dataset("xy0", data=np.zeros((1, 2)))
+    problems = match_problems(tmp_path)
+    assert len(problems) == 2, problems
+    assert "s0002.h5" in problems[0] and "2 separate groups" in problems[0]
+    assert "1 match point(s)" in problems[1]
+
+
+def test_the_demo_project_matches_on_a_grid_its_sections_can_hold(tmp_path):
+    from feabas_workbench.core.synthetic import demo_alignment_grid, make_demo_project
+    p = make_demo_project(tmp_path / "demo", n_sections=2, rows=2, cols=2, tile=384)
+    cs = ConfigStore(p.configs_dir)
+    assert cs.get("alignment", "meshing.mesh_size") == 146          # 730 px sections
+    assert cs.get("alignment", "matching.matcher_config.spacings") == [91, 26]
+    assert demo_alignment_grid(40000, 2) == (8000, [5000, 1429])     # a real section keeps coarse grids
+
+
 # ============================================================================= the GUI (offscreen)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

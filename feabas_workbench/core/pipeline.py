@@ -124,3 +124,32 @@ def summary(runs: list[StepRun]) -> str:
         state = "skipped" if r.skipped else ("ok" if r.ok else f"FAILED (exit {r.exit_code})")
         lines.append(f"{r.step.label:<40} {state:<18} {r.done}/{r.expected} outputs  {r.seconds:6.0f} s")
     return "\n".join(lines)
+
+
+def match_problems(root: Path, min_points: int = 5) -> list[str]:
+    """
+    What the output counts cannot see: match files that exist but hold (almost) nothing.
+
+    A montage whose tile pairs all failed to match still leaves one file per section (FEABAS
+    3.0.5's stitching_matcher bug did exactly that), and a fine alignment computed from a single
+    point per section pair still leaves one file per pair. Each stitch match file must connect
+    all tiles of its section into one montage, and each coarse and fine match file must hold at
+    least *min_points* points. Returns one line per problem; empty when all is well.
+    """
+    import h5py
+    root = Path(root)
+    problems = []
+    for f in sorted((root / "stitch" / "match_h5").glob("*.h5")):
+        with h5py.File(f, "r") as h:
+            pairs = len(h["matches"]) if "matches" in h else 0
+            groups = len(set(h["connected_subsystem"][()].tolist())) if "connected_subsystem" in h else 0
+        if pairs == 0 or groups != 1:
+            problems.append(f"stitch/match_h5/{f.name}: {pairs} matched tile pairs, "
+                            f"tiles fall into {groups} separate groups (1 expected)")
+    for sub in ("thumbnail_align/matches", "align/matches"):
+        for f in sorted((root / sub).glob("*.h5")):
+            with h5py.File(f, "r") as h:
+                n = int(h["xy0"].shape[0]) if "xy0" in h else 0
+            if n < min_points:
+                problems.append(f"{sub}/{f.name}: {n} match point(s), at least {min_points} expected")
+    return problems
