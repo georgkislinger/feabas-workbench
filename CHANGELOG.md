@@ -83,6 +83,8 @@ versions follow [Semantic Versioning](https://semver.org/).
   atomically.
 - The FEABAS run-time patch on `PYTHONPATH` shadowed an environment's own `sitecustomize`; it now
   runs it too.
+- Closing the window while a background task was just finishing could crash the application:
+  stopping a task released its worker before the worker's thread had ended.
 
 ### Fixed – setup and export
 - RTX 50-series (Blackwell) GPUs were given CUDA 12.6 PyTorch builds, which cannot run on them;
@@ -99,7 +101,7 @@ versions follow [Semantic Versioning](https://semver.org/).
   quality-check viewer use the configured montage folder.
 
 ### Tests, CI and packaging
-- `tests/test_safety.py`: 41 regression tests for the fixes above, core and offscreen GUI.
+- `tests/test_safety.py`: 42 regression tests for the fixes above, core and offscreen GUI.
 - The end-to-end run now checks the matches themselves (every montage connected, several coarse and
   fine match points per pair). FEABAS's default mesh and matching grids left one fine match point
   per section pair on the synthetic sections, so the demo project scales them to its section size.

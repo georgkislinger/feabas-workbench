@@ -772,3 +772,27 @@ def test_gui_split_line_is_painted_as_split_material(app, window, tmp_path):
     page._view_clicked(105.0, 60.0)
     m = read_mask(p.root / "thumbnail_align" / "material_masks" / "s0001.png")
     assert (m[60, 20:100] == LABEL_SPLIT).all() and page.store.is_hand_edited("s0001")
+
+
+def test_stopping_a_background_job_keeps_its_worker_until_the_thread_has_ended(app, monkeypatch):
+    """
+    ThreadRunner.stop() (every page calls it on shutdown) dropped its worker before waiting for the
+    thread: if the job was just returning, the worker was deleted from the GUI thread while its own
+    thread was still using it, and the process died (an access violation on Windows CI).
+    """
+    from PySide6.QtCore import QThread
+    from feabas_workbench.ui.threads import ThreadRunner
+    r = ThreadRunner()
+    gate = threading.Event()
+    r.start(lambda progress=None, cancelled=None: gate.wait(5), on_done=lambda res, err: None)
+    held = []
+    wait = QThread.wait
+
+    def waiting(thread, *args):
+        held.append(r._worker is not None)
+        gate.set()                              # let the job return while stop() waits for it
+        return wait(thread, *args)
+    monkeypatch.setattr(QThread, "wait", waiting)
+    r.stop()
+    assert held and held[0], "the worker was released before its thread ended"
+    assert r._worker is None and not r.running

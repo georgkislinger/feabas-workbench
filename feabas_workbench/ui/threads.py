@@ -88,10 +88,12 @@ class ThreadRunner(QObject):
         a QThread still running when Qt tears it down aborts the process."""
         self.cancel()
         thread, self._thread = self._thread, None
-        self._worker = None
         self._on_progress = self._on_done = None
         if thread is not None and thread.isRunning():
             thread.quit()
             if not thread.wait(msec):
                 thread.terminate()
                 thread.wait(1000)
+        # only now: dropping the last reference while run() is returning deletes the worker inside
+        # its own signal call in the worker thread, which crashes the process
+        self._worker = None
