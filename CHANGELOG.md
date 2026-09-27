@@ -3,6 +3,111 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed – what "done", "stale" and "Clear" mean
+- *Clear…* on a test run's step card cleared the **project's** outputs instead of the test run's.
+  It now clears the test run's own folder, and clearing never deletes through a link or junction
+  (alignment test runs link the project's rendered montages; the dialog lists what it left alone).
+- Clearing *Mipmaps for PNG stack* deleted the whole aligned stack including the full-resolution
+  render, and clearing *Mipmaps for volume* deleted the whole volume. Both now remove only the
+  downsampled levels (the volume's `info` and `align/ts_spec.json` are cut back to match).
+- Output folders set in the configs (`rendering.out_dir` for montages and the aligned stack,
+  `tensorstore_rendering.out_dir`) were ignored: those steps never showed as done, and *Clear*
+  removed nothing, so FEABAS skipped the old outputs on the next run. Steps now look where FEABAS
+  writes (relative paths are relative to the project), at the configured render mip, and clear only
+  FEABAS's own folders in a folder you chose.
+- *Mipmaps for volume* showed *done* as soon as the volume render started, and *Mipmaps for PNG
+  stack* as soon as the first section had one level. They now count the finished mip levels
+  (`align/ts_spec.json`) and the sections whose coarsest level is written.
+- Pressing *Apply* with nothing changed rewrote the config file and made every output of that stage
+  *stale*. Config files are now written only when their content changes; an override file whose
+  last key is reset stays as `{}` (FEABAS fails on an empty one).
+- Staleness is judged section by section (pair by pair for matches): running an earlier step for a
+  few more sections no longer marks the finished ones stale, and a section whose inputs changed is
+  no longer missed. Staleness is passed on downstream, rewritten coordinate files make *Match tiles*
+  stale, and a new coarse solution makes the meshes stale (FEABAS starts them from it).
+- *Run* on a stale step did nothing (FEABAS skips outputs that exist). It now offers *Clear, then
+  run* or *Run without clearing*.
+- Restoring a snapshot rewrote every file, which hid what it changed. Only differing files are
+  written now, so outputs computed later from other inputs show as stale; snapshot paths are checked
+  against the list of snapshotted folders.
+
+### Fixed – projects, settings and test runs
+- A copied, moved or renamed project (and any test run in it) still pointed FEABAS's
+  `working_directory` at the original folder, so FEABAS read and wrote the original project. The
+  path is repaired when a project is opened and before every FEABAS step or tool.
+- A corrected pixel size had no effect: FEABAS caches the first run's resolution in
+  `configs/resolutions.yaml`. The cache is removed when new coordinate files carry another value
+  (in cluster mode too).
+- Writing the coordinate files overwrote thumbnail and working mip levels chosen on the Masks and
+  Alignment pages, and every thumbnail mip change also rewrote `meshing.mask_mip_level`, so FEABAS
+  read existing high-resolution masks at the wrong scale. Suggested mips now replace only values the
+  workbench set itself; the mask mip belongs to `align/material_masks` alone.
+- The compute settings on the Setup page (CPU budget, parallel framework, log level) were not
+  written by *Apply*.
+- Creating a montage test run wrote the quick settings into the project's configs (making project
+  outputs stale); they now go into the test run's copy only. Test runs no longer inherit the
+  project's configured output folders, and alignment test runs link the montages from wherever the
+  project renders them.
+- *Open project* turned any folder into a project without asking, and a missing last or recent
+  project was silently recreated empty (e.g. a disconnected drive). Both now ask or refuse; *New
+  project* warns about a non-empty folder.
+- Duplicate names in `section_order.txt` listed a section twice.
+
+### Fixed – masks
+- *Split section* painted the line as *exclude* (255), leaving a blank strip in the output; it now
+  uses FEABAS's split material (200) as documented.
+- Masks made for earlier thumbnails (thumbnails made again at another mip) crashed composing or were
+  resized silently: the footprint backup is rebuilt, a tissue mask older than its thumbnail is
+  computed again (imported ones resampled), and stale fold masks are left out after asking.
+  *Clear…* on *Make thumbnails* removes the masks drawn on them.
+- Composing read widget values from the worker thread; hole filling and border bands are
+  vectorized (they looped over every connected component); mask temp files no longer look like
+  masks to the section listing.
+
+### Fixed – tiles, jobs and robustness
+- TIFFs with a print resolution (72 or 300 dpi) were read as pixel sizes of hundreds of
+  micrometres; whole-number dpi values are ignored, ImageJ units are honoured and implausible sizes
+  rejected.
+- A project folder inside the tile folder made tile scans count its preprocessed copies as more raw
+  tiles.
+- Switching between raw and preprocessed tiles ignored coordinate files written with absolute paths,
+  and switched to incomplete or missing folders without a word.
+- A cancelled FEABAS step could leave a truncated `.h5` that FEABAS then skipped as finished;
+  unreadable outputs written by the cancelled run are removed. Histogram matching and denoising
+  write each tile under a temporary name first.
+- Two jobs queued in the same second shared one spec file.
+- The staged worker package was replaced in place, under workers still importing it (a second
+  installation or version); each version now gets its own folder. `settings.json` is written
+  atomically.
+- The FEABAS run-time patch on `PYTHONPATH` shadowed an environment's own `sitecustomize`; it now
+  runs it too.
+
+### Fixed – setup and export
+- RTX 50-series (Blackwell) GPUs were given CUDA 12.6 PyTorch builds, which cannot run on them;
+  *auto* now reads the compute capability and picks the CUDA 12.8 build (driver ≥ 570), which is
+  also selectable.
+- Installs forced `--index-url https://pypi.org/simple`, overriding pip mirrors and proxies (also in
+  `tools/install.sh` / `install.bat`); only PyTorch keeps its dedicated index.
+- *Download micromamba* and *Check selected* froze the window; both run in the background. The
+  download takes the official release binary and checks it against its published SHA-256.
+- A failed environment install is reported; the install handler is connected once.
+- Export and the aligned-stack viewer assumed the stack was rendered at mip 0: a stack rendered at
+  a coarser `rendering.mip_level` now exports with that level as full resolution (voxel size scaled).
+- Structure detection progress assumed a `structures.json` existed; structure sources and the
+  quality-check viewer use the configured montage folder.
+
+### Tests, CI and packaging
+- `tests/test_safety.py`: 41 regression tests for the fixes above, core and offscreen GUI.
+- The end-to-end run now checks the matches themselves (every montage connected, several coarse and
+  fine match points per pair). FEABAS's default mesh and matching grids left one fine match point
+  per section pair on the synthetic sections, so the demo project scales them to its section size.
+- CI also tests Python 3.10, the oldest version `pyproject.toml` accepts.
+- `THIRD_PARTY_NOTICES.md` covers what the Windows build carries (Qt/PySide6 under LGPL-3.0,
+  paramiko under LGPL-2.1, and the rest); the build includes the GNU license texts (`LICENSES/`)
+  and each package's license files, and keeps paramiko as replaceable source files.
+
 ## [0.3.4] – 2026-09-25
 
 ### Added

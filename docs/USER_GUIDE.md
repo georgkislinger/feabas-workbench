@@ -218,12 +218,20 @@ There is no hidden database. A step is "done" when its output files exist. Each 
 | **not started** | no outputs |
 | **partly done** | some sections have outputs (crash, cancel, or a deliberate subset run) |
 | **done** | as many outputs as expected |
-| **stale** | outputs exist, but the config file or an upstream step is newer than they are |
+| **stale** | outputs exist, but something they were computed from changed afterwards: the step's config file, the coordinate files (for *Match tiles*) or the outputs of a step it depends on — or that step is stale itself |
 | **errors** | FEABAS left `*_err` markers – those sections failed |
 | **blocked** | a required earlier step has no outputs yet |
 
-"Stale" is a warning, not a lock: nothing stops you from running a stale step, but the result can mix
-old and new settings. The honest fix is **Clear…** on the earliest stale step and re-run.
+Steps that work section by section are compared section by section: running an earlier step for a few
+more sections leaves the sections that were already finished alone, and only outputs whose own inputs
+changed count. Staleness is passed on — when *Match tiles* is stale, so is everything built on it. A
+config file counts as changed only when its content changes: pressing *Apply* without changing anything
+makes nothing stale.
+
+"Stale" is a warning, not a lock, but running a stale step as it is recomputes nothing: FEABAS skips
+every output that already exists. **Run** (and *Run all steps below in order*) on a stale step therefore
+asks first: **Clear, then run** removes the stale outputs and everything after them (after showing the
+list) and runs the step again; **Run without clearing** only fills in what is missing.
 
 Press **F5** (Pipeline → Re-read pipeline state) after changing files outside the GUI.
 
@@ -236,7 +244,11 @@ Press **F5** (Pipeline → Re-read pipeline state) after changing files outside 
 * **Remove error files** – appears only when `*_err` markers exist; deleting them makes the next run
   retry exactly those sections.
 * **Clear…** – deletes this step's outputs **and every later step's outputs**, after showing the list.
-  Snapshot first if the old state was expensive.
+  Snapshot first if the old state was expensive. On a test run's card it clears that test run only. It
+  removes what the step writes and nothing else: clearing a mipmap step keeps the full-resolution level
+  the mipmaps were made from, an output folder you pointed elsewhere loses only FEABAS's folders in it,
+  and a link or junction to data outside the folder (a test run's view of the project's montages, say)
+  is never followed — the list names what was left alone.
 * **Run all steps below in order** – queues the steps of that panel that are not already *done*.
 
 Only one job runs at a time; further submissions queue. The status bar shows progress and a **Cancel
@@ -314,7 +326,7 @@ Only needed if you do not have the environments yet.
 |---|---|
 | **conda** | Path to `conda`, `mamba` or `micromamba`; auto-detected if Miniforge/Miniconda is installed. |
 | **Download micromamba** | Fetches a standalone micromamba if you have no conda at all. |
-| **PyTorch build** | `auto from driver` picks the wheel index from your NVIDIA driver version; pin CUDA 12.6 / 11.8 / CPU-only if you know better. CUDA 12.6 wheels need driver ≥ 528. |
+| **PyTorch build** | `auto from driver` picks the wheel index from your GPU and NVIDIA driver version; pin CUDA 12.8 / 12.6 / 11.8 / CPU-only if you know better. CUDA 12.6 wheels need driver ≥ 528. RTX 50-series (Blackwell) cards only run with the CUDA 12.8 build, which needs driver ≥ 570; *auto* picks it for them. |
 | **Install fw-feabas** | Creates `fw-feabas` (Python 3.12) with feabas 3.0.5 + tensorstore. |
 | **Install fw-dl** | Creates `fw-dl` (Python 3.11) with torch, segmentation-models-pytorch, ultralytics, careamics 0.3.2. Several GB, 10–30 minutes. |
 
@@ -412,8 +424,11 @@ name…** first so the section number lands in the filename.
 2. saves source folder, rule, layout and volume info into `workbench_project.json`;
 3. writes `configs/general_configs.yaml` (working directory, full resolution, section thickness);
 4. points the coordinate files at the preprocessed tiles if you activated one (Window 2);
-5. seeds sensible defaults: `alignment.matching.working_mip_level`, `thumbnail.thumbnail_mip_level`,
-   `alignment.meshing.mask_mip_level`, `stitching.section_thickness`.
+5. seeds the suggested mip levels, `thumbnail.thumbnail_mip_level` and
+   `alignment.matching.working_mip_level`, where you have not chosen a value yourself (a level you set
+   on the Masks or Alignment page is kept, and the log says what it would have suggested), plus
+   `stitching.section_thickness`. When the pixel size changed, it also deletes FEABAS's cached
+   `configs/resolutions.yaml`, which would otherwise keep the old one.
 
 The line underneath shows the suggested working mip and thumbnail mip for your voxel size — those are
 the numbers Windows 3–5 refer to.
@@ -440,7 +455,9 @@ your tiles are already consistent and clean.
 
 Radio buttons **raw tiles / histogram-matched tiles / denoised tiles** plus **Apply to coordinate
 files**. Applying rewrites the `stitch_coord` files to point at the chosen folder — that is the whole
-switch. The info line counts the files available in each variant.
+switch. The info line counts the files available in each variant. Nothing is switched when the folder
+does not exist, and if some tiles of the coordinate files have no preprocessed copy it asks first
+(stitching would fail on them).
 
 If stitching outputs already exist when you switch, the log warns you: clear *Match tiles* on the
 Stitching page, otherwise you mix montages made from different pixel data.
@@ -677,7 +694,14 @@ is optional.
 
 **Make thumbnails** also builds the intermediate mip levels of the stitched sections that fine alignment
 reads, and writes FEABAS's default masks (everything imaged = tissue), which the next tab replaces.
-Pressing **Apply** here also sets `alignment.meshing.mask_mip_level` to the same mip.
+**Apply** leaves `alignment.meshing.mask_mip_level` alone: FEABAS reads it only for the
+higher-resolution masks in `align/material_masks`, which keep their own mip.
+
+Thumbnails made again (at another mip, say) outdate the masks drawn on them: *Clear…* on *Make
+thumbnails* removes the tissue, fold and footprint masks with them. A tissue mask older than its
+thumbnail is computed again when you compose, and when fold masks are older than their thumbnails
+*Compose* asks whether to compose those sections without folds (detect them again afterwards) or to
+use the old fold masks anyway.
 
 The progress bar in the status bar counts both phases: the mip levels (the slow part — one entry per
 section and level, `mip levels 120/453`) and then the thumbnails themselves (`thumbnails 40/151`).
@@ -1044,7 +1068,10 @@ J. W. (2026), *FEABAS: A Stitching and Alignment Tool for Serial EM Data*, bioRx
 **Snapshots** (Pipeline → *Create snapshot of current state…*) copy the small, expensive things —
 matches, meshes, transforms, configs — into `snapshots/<timestamp>/`. Rendered images are *not* included
 (they are large and reproducible). The dialog tells you how much will be copied. *Restore snapshot…*
-puts them back and reloads the configs.
+puts them back and reloads the configs. Only files that differ are written, so what the restore really
+changed becomes new: steps computed from other inputs after the snapshot (including rendered images)
+show as *stale*, everything else keeps its state. A snapshot taken before the project was moved or
+copied still points FEABAS at the project's current folder.
 
 **Clear** (Pipeline → *Clear a step and everything after it…*, or **Clear…** on any step card) deletes a
 step's outputs and everything downstream, after listing exactly what will go. This is the supported way
@@ -1082,7 +1109,7 @@ checkout.
 | `start_gui.bat` says it found no environment | No environment with PySide6 in any of the places it scans (`start_gui.bat --envs` shows what it found, `set FW_DEBUG=1` every path it tried). Run `tools\install.bat` (it records its environment in `start_gui.local.bat`), put the folder with your environments in `FW_ENV_DIRS`, or set `FW_PYTHON` to the interpreter you want. |
 | `tools\install.bat` says it found no conda | It looks on `PATH`, in `CONDA_EXE` / `MAMBA_EXE` and in the usual install folders on `C:`, `D:` and `E:` (`set FW_DEBUG=1` lists every path). Point it at your package manager: `set FW_CONDA=C:\path\to\micromamba.exe` (or `conda.exe`), then run it again. |
 | Step card says **blocked** | An upstream step has no outputs. The reason line names it. |
-| Step card says **stale** | A config or an upstream step is newer than these outputs. Clear this step and re-run. |
+| Step card says **stale** | A config, the coordinate files or an upstream step changed after these outputs (the card's reason line says which). Run it and choose *Clear, then run*, or Clear it yourself and re-run. |
 | Many `*_err` files after matching | Overlap or search margin wrong, or genuinely broken tiles. Check the log for the failing sections, fix the setting, *Remove error files*, re-run. |
 | Visible seams in the montage | Matches rejected or wrong: enlarge the search margin, lower the confidence threshold, verify overlap with *Show overlap of two neighbouring tiles*. |
 | Rendered sections look inverted | Turn off `rendering.loader_settings.inverse`. |

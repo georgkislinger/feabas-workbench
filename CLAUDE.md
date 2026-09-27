@@ -9,7 +9,11 @@
   default configs (MIT) – do not edit them.
 - FEABAS steps run as subprocesses with **cwd = project folder**: FEABAS reads `configs/general_configs.yaml` from
   the cwd, so the project folder is the FEABAS working directory and the FEABAS install is never modified.
-- Pipeline state is derived from files on disk (`core/steps.py`); never keep step state elsewhere.
+- Pipeline state is derived from files on disk (`core/steps.py`); never keep step state elsewhere. Output folders
+  follow the project's configs (`rendering.out_dir`, `rendering.mip_level`, `align/ts_spec.json` for the volume):
+  use the helpers there (`stitched_dir`, `aligned_dir`, `aligned_render_mip`, `tensorstore_dir`) instead of
+  hard-coding `stitched_sections`/`aligned_stack`. Clearing (`clear_targets`) never deletes through a link or
+  junction: test runs link the project's montages into their sandbox.
 - FEABAS 3.0.5 run-time fixes live in `vendor/winfix/sitecustomize.py`, put first on PYTHONPATH of every FEABAS job
   (`ui/bridge.feabas_env`) so they reach multiprocessing children too; keep that when adding new ways to launch
   FEABAS. (1) all platforms: `matcher.stitching_matcher` only assigns `phtm` when `compute_photometric` is true but
@@ -25,14 +29,17 @@
 - Test data: `Example_data_to_stitch_and_align_and_export` (Thermo Maps tiles, 10 sections, 8×5 grid, 10 nm px;
   gitignored). Without it, `core/synthetic.py` makes a synthetic dataset + project
   (`python -m feabas_workbench.core.synthetic DIR`) and `tools/run_demo_pipeline.py` runs every FEABAS step on it
-  (CI does this on Linux; locally pass `--feabas-python`). Keep that green: it is the only end-to-end test. The bundled fold U-Net is `feabas_workbench/resources/fold_unet_resnet34_inference_only_fp16.ckpt`
+  (CI does this on Linux; locally pass `--feabas-python`). Keep that green: it is the only end-to-end test. Besides the
+  output counts it checks the matches themselves (`core.pipeline.match_problems`: connected montages, several coarse
+  and fine match points per pair); the demo project scales FEABAS's mesh and matching grid to its small sections
+  (`core.synthetic.demo_alignment_grid`), since the defaults leave one fine match point per pair. The bundled fold U-Net is `feabas_workbench/resources/fold_unet_resnet34_inference_only_fp16.ckpt`
   (smp Unet, resnet34, fp16 weights only, 49 MB; `core.masks.bundled_fold_checkpoint()`, stored in project files as
   the sentinel `"bundled"` so a project survives a move or a different install location; inside the package so wheels ship
   it). It was exported from the 280 MB Lightning checkpoint `Fold_model_ckpt/lightning_logs/version_0/checkpoints/
   best-epoch=25-val_iou=0.6638.ckpt` (gitignored, optimizer state included) and gives identical detections;
   `workers/fold_train` fine-tunes from either, since it only ever reads the weights. `_test_projects/` and `_scratch/`
   are gitignored scratch areas.
-- LRZ cluster mode (branch `cluster-mode`, per project, opt-in): `core/cluster_*` is Qt-free - `cluster_transport`
+- LRZ cluster mode (per project, opt-in; part of main since 0.3.4): `core/cluster_*` is Qt-free - `cluster_transport`
   (paramiko SSH/MFA, SFTP tree copies, the Miniforge environment script), `cluster_storage` (dssusrinfo parsing, home
   vs DSS containers, the ~5x-raw storage estimate), `cluster_workspace` (profile in `.workbench-cluster/workspace.json`,
   request bundles, the separate `view` project that shows remote results), `cluster_remote`/`cluster_runner` (run only
@@ -40,7 +47,8 @@
   normal Run buttons dispatch remotely while `ctx.cluster_enabled`; `ui/cluster_setup` is the setup window. Images
   travel over SSH (default) or Globus; passwords, MFA codes and tokens are never stored.
 - Workers in other interpreters get `core/jobs.worker_env()` on PYTHONPATH, a staged copy of the package under
-  `%APPDATA%/FeabasWorkbench/worker_pkg` holding only `core/`, `workers/`, `vendor/`. Never put `package_root()`
+  `%APPDATA%/FeabasWorkbench/worker_pkg/<version hash>` holding only `core/`, `workers/`, `vendor/` (one folder per
+  version of those files, so a running worker's files are never replaced). Never put `package_root()`
   itself there: for a wheel install that is site-packages (for a frozen build the bundle), and its compiled numpy/cv2
   would shadow the other interpreter's own. Release: bump `pyproject.toml`, `__init__.py`, `CITATION.cff`, README
   "How to cite", CHANGELOG; `python -m build` → `pip install dist/*.whl` in a clean venv; push tag `vX.Y.Z` → GitHub
