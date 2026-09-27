@@ -37,14 +37,24 @@ def read_gray(path: os.PathLike | str) -> np.ndarray:
 
 
 def write_gray(path: os.PathLike | str, img: np.ndarray) -> None:
-    path = str(path)
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    if path.lower().endswith((".tif", ".tiff")):
-        import tifffile
-        tifffile.imwrite(path, img, photometric="minisblack")
-    else:
-        from PIL import Image
-        Image.fromarray(img).save(path)
+    """
+    Write under a temporary name and rename: runs skip outputs that exist, so a tile cut short
+    by a cancelled job must never appear under its final name.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name("." + path.name + ".part")
+    try:
+        if path.suffix.lower() in (".tif", ".tiff"):
+            import tifffile
+            tifffile.imwrite(tmp, img, photometric="minisblack")
+        else:
+            from PIL import Image
+            Image.fromarray(img).save(tmp, format=Image.registered_extensions().get(path.suffix.lower()))
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def histogram(img: np.ndarray) -> np.ndarray:

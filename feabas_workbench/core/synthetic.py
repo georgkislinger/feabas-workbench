@@ -23,8 +23,8 @@ from pathlib import Path
 import numpy as np
 
 from . import tiles as T
-from .configs import ConfigStore, suggest_thumbnail_mip, suggest_working_mip, set_thumbnail_mip
-from .project import Project
+from .configs import ConfigStore, apply_suggested_mips, suggest_thumbnail_mip, suggest_working_mip
+from .project import Project, forget_cached_resolution
 
 
 def synthetic_sections(n_sections: int = 4, height: int = 730, width: int = 730, seed: int = 0,
@@ -129,15 +129,15 @@ def make_demo_project(project_root: os.PathLike | str, tiles_root: os.PathLike |
     v.dtype = "uint8"
     plan.resolution_nm = v.pixel_size_nm
     T.write_plan(plan, p.stitch_coord_dir, "relative")
+    forget_cached_resolution(p.root, v.pixel_size_nm)
     p.write_general_config()
-    p.save()
     cs = ConfigStore(p.configs_dir)
     w, h = plan.section_bbox(next(iter(plan.sections)))
-    tm = suggest_thumbnail_mip(w, h)
-    cs.set("alignment", "matching.working_mip_level", int(suggest_working_mip(v.pixel_size_nm, v.section_thickness_nm)))
-    set_thumbnail_mip(cs, tm)
+    p.state.suggested, _notes = apply_suggested_mips(cs, p.state.suggested, suggest_thumbnail_mip(w, h),
+                                                     suggest_working_mip(v.pixel_size_nm, v.section_thickness_nm))
     cs.set("stitching", "section_thickness", float(v.section_thickness_nm))
     cs.save()
+    p.save()
     return p
 
 

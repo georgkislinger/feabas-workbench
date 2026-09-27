@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QMessa
 
 from ...core import envs as E
 from ...core.jobs import JobSpec
+from ..threads import ThreadRunner
 from ..widgets import PathPicker, card, hint, form_row, spin, combo
 from .base import Page
 
@@ -79,7 +80,9 @@ class SetupPage(Page):
         r.addWidget(self.mm_btn)
         lay.addLayout(r)
         r = QHBoxLayout()
-        self.torch_index = combo([("auto from driver", ""), ("CUDA 12.6", "https://download.pytorch.org/whl/cu126"),
+        self.torch_index = combo([("auto from GPU and driver", ""),
+                                  ("CUDA 12.8 (needed by RTX 50 series / Blackwell)", "https://download.pytorch.org/whl/cu128"),
+                                  ("CUDA 12.6", "https://download.pytorch.org/whl/cu126"),
                                   ("CUDA 11.8", "https://download.pytorch.org/whl/cu118"), ("CPU only", "https://download.pytorch.org/whl/cpu")], "")
         r.addWidget(QLabel("PyTorch build")); r.addWidget(self.torch_index)
         self.inst_feabas = QPushButton("Install fw-feabas")
@@ -104,7 +107,8 @@ class SetupPage(Page):
         self.gpu_label.setObjectName("Mono")
         lay.addWidget(self.gpu_label)
         lay.addWidget(hint("PyTorch wheels bring their own CUDA runtime; only the NVIDIA driver must be new enough "
-                           "(≥ 528 for CUDA 12.6 builds). FEABAS itself does not use the GPU."))
+                           "(≥ 528 for CUDA 12.6 builds, ≥ 570 for the CUDA 12.8 builds that RTX 50-series cards need). "
+                           "FEABAS itself does not use the GPU."))
         self.body.addWidget(f)
 
         f, lay = card("External viewers")
@@ -141,6 +145,10 @@ class SetupPage(Page):
 
         self._probes: list[E.ProbeResult] = []
         self._thread = None
+        self.runner = ThreadRunner(self)          # checks and downloads that take a while
+        self._install_names: set[str] = set()
+        self._install_last = None
+        self.ctx.jobs.job_finished.connect(self._install_done)
 
     # ------------------------------------------------------------------
     def on_shown(self) -> None:
@@ -214,15 +222,34 @@ class SetupPage(Page):
             target.setText(p)
 
     def _probe_selected(self) -> None:
-        for label, picker in (("FEABAS", self.feabas_py), ("deep-learning", self.dl_py)):
-            if picker.text():
-                r = E.probe_python(picker.text())
+        """Check the chosen interpreters in the background: importing torch alone takes seconds."""
+        chosen = [(label, picker.text()) for label, picker in (("FEABAS", self.feabas_py), ("deep-learning", self.dl_py))
+                  if picker.text()]
+        if self.runner.running:
+            self.warn("a check or download is already running")
+            return
+        self.probe_btn.setEnabled(False)
+        self.info("checking the selected environments…")
+        E.reset_probe_cancel()
+
+        def work(progress=None, cancelled=None):
+            return [(label, E.probe_python(py)) for label, py in chosen], E.detect_gpu()
+
+        def done(res, err):
+            self.probe_btn.setEnabled(True)
+            if err:
+                self.error(f"checking the environments failed: {err.splitlines()[0]}", dialog=False)
+                return
+            results, gpu = res
+            for label, r in results:
                 self.info(f"{label} env: {r.describe()}")
                 if label == "FEABAS" and r.ok and not r.is_feabas_env:
                     self.warn("the FEABAS environment does not import 'feabas'")
                 if label == "deep-learning" and r.ok and not r.is_dl_env:
                     self.warn("the deep-learning environment does not import 'torch'")
-        self._show_gpu(E.detect_gpu())
+            self._show_gpu(gpu)
+
+        self.runner.start(work, on_done=done)
 
     def _save(self) -> None:
         s = self.ctx.settings
@@ -242,12 +269,22 @@ class SetupPage(Page):
             w.apply_interface_settings()
 
     def _micromamba(self) -> None:
-        try:
-            exe = E.download_micromamba(log=self.info)
+        """Download micromamba in the background (verified against its published checksum)."""
+        if self.runner.running:
+            self.warn("a check or download is already running")
+            return
+        self.mm_btn.setEnabled(False)
+        self.info("downloading micromamba (about 15 MB)…")
+
+        def done(exe, err):
+            self.mm_btn.setEnabled(True)
+            if err:
+                self.error(f"micromamba download failed: {err.splitlines()[0]}")
+                return
             self.conda.setText(str(exe))
             self.info(f"micromamba ready at {exe}")
-        except Exception as e:  # noqa: BLE001
-            self.error(f"micromamba download failed: {e}")
+
+        self.runner.start(lambda progress=None, cancelled=None: E.download_micromamba(cancelled=cancelled), on_done=done)
 
     def _install(self, kind: str) -> None:
         conda = self.conda.text()
@@ -272,18 +309,21 @@ class SetupPage(Page):
         for i, cmd in enumerate(pips, 1):
             specs.append(JobSpec(f"pip install into {name} ({i}/{len(pips)})", cmd, cwd=Path.home(), kind="shell"))
         self._install_kind, self._install_plan, self._install_last = kind, plan, specs[-1].name
-        self.ctx.jobs.job_finished.connect(self._install_done)
+        self._install_names = {s.name for s in specs}
         self.submit(specs)
 
     def _install_done(self, res) -> None:
-        if res.spec.name != getattr(self, "_install_last", None):
+        if res.spec.name not in self._install_names:
             return
-        try:
-            self.ctx.jobs.job_finished.disconnect(self._install_done)
-        except (RuntimeError, TypeError):
-            pass
         if not res.ok:
+            self._install_names = set()
+            if not res.cancelled:
+                self.warn(f"installing {self._install_plan.env_name} stopped at '{res.spec.name}'; the log shows why. "
+                          f"Fix the cause and press Install again.")
             return
+        if res.spec.name != self._install_last:
+            return
+        self._install_names = set()
         plan = self._install_plan
         d = E.env_dir_for(plan.conda, plan.env_name)
         py = E.env_python(d) if d else None

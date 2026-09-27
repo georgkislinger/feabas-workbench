@@ -8,7 +8,7 @@ from typing import Callable
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
-from ...core.steps import STEPS_BY_KEY, Step, PipelineScan, clear_error_files
+from ...core.steps import STEPS_BY_KEY, Step, PipelineScan, State, clear_error_files
 from .step_card import StepCard
 
 
@@ -78,6 +78,8 @@ class StepsPanel(QWidget):
         if self.ctx.jobs.running:
             self.ctx.log("a job is already running", "warn")
             return
+        if not self._handle_stale([step]):
+            return
         if self.before_run:
             self.before_run([step])
         try:
@@ -87,6 +89,42 @@ class StepsPanel(QWidget):
             return
         self.ctx.jobs.submit(spec)
 
+    def _handle_stale(self, steps: list[Step]) -> bool:
+        """
+        Offer to clear stale outputs before running: FEABAS skips every output that exists, so
+        running a stale step as it is recomputes nothing. True means: go on and run.
+        """
+        stale = [s for s in steps if s.key in self.cards and self.cards[s.key].status is not None
+                 and self.cards[s.key].status.state is State.STALE]
+        if not stale:
+            return True
+        first = stale[0]
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Stale outputs")
+        more = f" (and {len(stale) - 1} later step(s))" if len(stale) > 1 else ""
+        box.setText(f"'{first.label}'{more} has stale outputs: "
+                    + "; ".join(dict.fromkeys(self.cards[first.key].status.reasons)) + ".")
+        box.setInformativeText("FEABAS skips outputs that already exist, so running now leaves the stale ones as "
+                               "they are. Clear them first (this also clears every later step), then run?")
+        clear_btn = box.addButton("Clear, then run", QMessageBox.AcceptRole)
+        run_btn = box.addButton("Run without clearing", QMessageBox.ActionRole)
+        box.addButton(QMessageBox.Cancel)
+        box.setDefaultButton(clear_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is run_btn:
+            return True
+        if clicked is not clear_btn:
+            return False
+        w = self.window()
+        if not hasattr(w, "confirm_clear") or not w.confirm_clear(first, root=self.root_override):
+            return False
+        if self.ctx.cluster_enabled and self.root_override is None:
+            self.ctx.log(f"clearing '{first.label}' at LRZ was queued; run the step again once it has finished")
+            return False
+        return True
+
     def _cannot_run(self, err: Exception) -> None:
         """A misconfigured environment is a setting to fix, so say so up front."""
         self.ctx.log(str(err), "error")
@@ -94,6 +132,8 @@ class StepsPanel(QWidget):
 
     def _run_all(self) -> None:
         if self.ctx.jobs.running:
+            return
+        if not self._handle_stale([c.step for c in self.cards.values() if not c.step.local]):
             return
         if self.before_run:
             self.before_run([c.step for c in self.cards.values() if not c.step.local])
@@ -118,7 +158,8 @@ class StepsPanel(QWidget):
     def _clear(self, step: Step) -> None:
         w = self.window()
         if hasattr(w, "confirm_clear"):
-            w.confirm_clear(step)
+            # a test-run panel clears its own sandbox, never the project
+            w.confirm_clear(step, root=self.root_override)
 
     def _clear_errors(self, step: Step) -> None:
         if self.ctx.cluster_enabled:

@@ -190,8 +190,31 @@ def _local_section_listing():
     storage.list_folder_content = listed
 
 
+def _chain_next_sitecustomize():
+    """
+    Python imports only the first sitecustomize on sys.path, and PYTHONPATH (where this file is)
+    comes first - so an environment's own sitecustomize (a conda or cluster setup, Debian's) would
+    silently no longer run. Run it here, after ours.
+    """
+    import importlib.machinery
+    import importlib.util
+    here = os.path.dirname(os.path.abspath(__file__))
+    rest = [p for p in sys.path if os.path.abspath(p or os.curdir) != here]
+    spec = importlib.machinery.PathFinder.find_spec("sitecustomize", rest)
+    if spec is None or spec.loader is None or not spec.origin:
+        return
+    if os.path.abspath(spec.origin) == os.path.abspath(__file__):
+        return
+    try:
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except Exception as e:  # noqa: BLE001 - like site.py: report and go on
+        sys.stderr.write(f"Error in sitecustomize {spec.origin}: {e!r}\n")
+
+
 _hook("feabas.config", _local_resources)
 _hook("feabas.storage", _local_section_listing)
 _hook("feabas.matcher", _install_matcher)
 if os.name == "nt":
     _hook("tensorstore", _install)
+_chain_next_sitecustomize()

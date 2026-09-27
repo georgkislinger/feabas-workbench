@@ -11,20 +11,27 @@ is a state machine that the workbench reads back from disk:
 * snapshot/restore: copy the small, expensive-to-recompute state
   (matches, meshes, transforms, configs) aside so a failed re-run can be undone
 
+Output folders follow FEABAS: the rendered sections, the aligned PNG stack and the precomputed
+volume go wherever ``rendering.out_dir`` / ``tensorstore_rendering.out_dir`` say (relative paths
+are relative to the working directory), at the configured mip level.
+
 Nothing here imports Qt.
 """
 
 from __future__ import annotations
 
 import datetime as _dt
+import filecmp
 import json
+import os
+import re
 import shutil
+import stat
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Iterable
 
-from .configs import ConfigStore
+from .configs import ConfigError, ConfigStore
 
 
 class State(str, Enum):
@@ -40,6 +47,7 @@ class Cardinality(str, Enum):
     PER_SECTION = "per_section"
     PER_PAIR = "per_pair"
     SINGLE = "single"
+    PER_LEVEL = "per_level"     # mip levels of one volume (the precomputed volume's mipmaps)
 
 
 @dataclass(frozen=True)
@@ -50,8 +58,8 @@ class Step:
     blurb: str
     script: str = ""            # vendored feabas script relative to vendor dir ('' for local steps)
     mode: str = ""              # --mode value
-    out_subdir: str = ""        # main output folder relative to project root
-    out_glob: str | tuple[str, ...] = "*.h5"
+    out_subdir: str = ""        # main output folder relative to project root (the default for out_base steps)
+    out_glob: str | tuple[str, ...] = "*.h5"   # may use {mip} / {max_mip} (aligned stack levels)
     err_glob: str | None = None
     cardinality: Cardinality = Cardinality.PER_SECTION
     config_kind: str | None = None          # stitching | thumbnail | alignment | material
@@ -62,6 +70,7 @@ class Step:
     optional: bool = False
     clear_paths: tuple[str, ...] = ()       # extra folders/files removed on clear (relative to root)
     snapshot_paths: tuple[str, ...] = ()    # folders worth snapshotting (relative to root)
+    out_base: str = ""                      # "stitched" | "aligned": outputs live in FEABAS's configured render folder
 
 
 STEPS: tuple[Step, ...] = (
@@ -80,7 +89,7 @@ STEPS: tuple[Step, ...] = (
          script="scripts/stitch_main.py", mode="rendering",
          # one output per finished section, whichever driver rendered it: PNG tiles write
          # mip0/<section>/metadata.txt last, the precomputed driver writes <section>/info
-         out_subdir="stitched_sections", out_glob=("mip0/*/metadata.txt", "*/info"),
+         out_subdir="stitched_sections", out_glob=("mip0/*/metadata.txt", "*/info"), out_base="stitched",
          config_kind="stitching", requires=("stitch.optimization",),
          clear_paths=("stitch/ts_specs", "stitch/hist_tf")),
     Step("thumbnail.downsample", "thumbnail", "Make thumbnails",
@@ -114,11 +123,13 @@ STEPS: tuple[Step, ...] = (
          out_subdir="thumbnail_align", out_glob="aligned_thumbnails_*/*.png",
          config_kind="thumbnail", requires=("thumbnail.optimization",), optional=True,
          supports_range=False),
+    # meshing reads the coarse transform (thumbnail_align/tform) as the meshes' starting position,
+    # so a new coarse solution makes the meshes stale and clearing it clears them
     Step("align.meshing", "align", "Generate meshes",
          "Finite-element meshes per section, honouring the material masks.",
          script="scripts/align_main.py", mode="meshing",
          out_subdir="align/mesh", config_kind="alignment",
-         requires=("thumbnail.matching", "masks"), supports_range=False),
+         requires=("thumbnail.matching", "thumbnail.optimization", "masks"), supports_range=False),
     Step("align.matching", "align", "Fine matching",
          "Refine the coarse matches at the working mip level by block matching.",
          script="scripts/align_main.py", mode="matching",
@@ -135,24 +146,27 @@ STEPS: tuple[Step, ...] = (
     Step("align.rendering", "align", "Render aligned stack (PNG tiles)",
          "Write the aligned stack as non-overlapping PNG tiles (VAST-style).",
          script="scripts/align_main.py", mode="rendering",
-         out_subdir="aligned_stack", out_glob="mip0/*", config_kind="alignment",
-         requires=("align.optimization",), optional=True),
+         out_subdir="aligned_stack", out_glob="mip{mip}/*/metadata.txt", out_base="aligned",
+         config_kind="alignment", requires=("align.optimization",), optional=True),
     Step("align.downsample", "align", "Mipmaps for PNG stack",
          "Downsampled levels of the PNG stack for viewing.",
          script="scripts/align_main.py", mode="downsample",
-         out_subdir="aligned_stack", out_glob="mip1/*", config_kind="alignment",
-         requires=("align.rendering",), optional=True, cardinality=Cardinality.SINGLE),
+         # every level of a section is written in turn; the coarsest one comes last
+         out_subdir="aligned_stack", out_glob="mip{max_mip}/*/metadata.txt", out_base="aligned",
+         config_kind="alignment", requires=("align.rendering",), optional=True),
+    # the volume steps are judged by align/ts_spec.json, which FEABAS writes only once the volume (or a
+    # further mip level of it) is complete - the volume folder itself appears as soon as rendering starts
     Step("align.tsr", "align", "Render aligned volume (precomputed)",
          "Write the aligned stack as a Neuroglancer precomputed volume via TensorStore.",
          script="scripts/align_main.py", mode="tensorstore_rendering",
-         out_subdir="aligned_tensorstore", out_glob="*", config_kind="alignment",
+         out_subdir="align", out_glob="ts_spec.json", config_kind="alignment",
          requires=("align.optimization",), optional=True, cardinality=Cardinality.SINGLE,
          clear_paths=("align/render_flags", "align/ts_spec.json", "align/mask.png")),
     Step("align.tsd", "align", "Mipmaps for volume",
          "Downsample the precomputed volume.",
          script="scripts/align_main.py", mode="tensorstore_downsample",
-         out_subdir="aligned_tensorstore", out_glob="*", config_kind="alignment",
-         requires=("align.tsr",), optional=True, cardinality=Cardinality.SINGLE,
+         out_subdir="align", out_glob="ts_spec.json", config_kind="alignment",
+         requires=("align.tsr",), optional=True, cardinality=Cardinality.PER_LEVEL,
          clear_paths=("align/mipmap_flags",)),
 )
 
@@ -164,6 +178,9 @@ STAGE_LABELS = {
     "align": "Fine alignment & rendering",
     "export": "Export",
 }
+
+# steps whose every output depends on all of their inputs (a solve of the whole stack): compared as a whole
+GLOBAL_STEPS = frozenset({"thumbnail.optimization", "align.optimization"})
 
 
 def downstream(key: str) -> list[Step]:
@@ -183,6 +200,181 @@ def downstream(key: str) -> list[Step]:
         if s.key in closed and s.key != key:
             out.append(s)
     return out
+
+
+# ----------------------------------------------------------------------
+# where FEABAS puts things
+# ----------------------------------------------------------------------
+
+def _configs_for(root: Path, configs: ConfigStore | None) -> ConfigStore | None:
+    """The given configs, or the ones in <root>/configs (without the editor's hints), or None."""
+    if configs is not None:
+        return configs
+    d = Path(root) / "configs"
+    if not d.is_dir():
+        return None
+    try:
+        return ConfigStore(d, hints=False)
+    except ConfigError:
+        return None
+
+
+def _conf(configs: ConfigStore | None, kind: str, key: str, default=None):
+    if configs is None:
+        return default
+    try:
+        value = configs.get(kind, key, default)
+    except KeyError:
+        return default
+    return default if value is None else value
+
+
+def _local_folder(root: Path, value, default_name: str) -> Path | None:
+    """A configured output folder as FEABAS resolves it; None for a remote store (gs://, s3://)."""
+    root = Path(root)
+    if not value:
+        return root / default_name
+    text = str(value).replace("\\", "/")
+    if text.startswith("file://"):
+        text = text[len("file://"):]
+        if re.match(r"^/[A-Za-z]:/", text):          # file:///D:/... on Windows
+            text = text[1:]
+    if "://" in text:
+        return None
+    p = Path(os.path.expanduser(os.path.expandvars(text)))
+    return p if p.is_absolute() else root / p
+
+
+def stitched_dir(root, configs: ConfigStore | None = None) -> Path:
+    """Where 'Render montages' writes: stitching rendering.out_dir, else <root>/stitched_sections."""
+    cs = _configs_for(root, configs)
+    return _local_folder(root, _conf(cs, "stitching", "rendering.out_dir"), "stitched_sections") or Path(root) / "stitched_sections"
+
+
+def aligned_dir(root, configs: ConfigStore | None = None) -> Path:
+    """Where the aligned PNG stack goes: alignment rendering.out_dir, else <root>/aligned_stack."""
+    cs = _configs_for(root, configs)
+    return _local_folder(root, _conf(cs, "alignment", "rendering.out_dir"), "aligned_stack") or Path(root) / "aligned_stack"
+
+
+def tensorstore_dir(root, configs: ConfigStore | None = None) -> Path | None:
+    """The precomputed volume: alignment tensorstore_rendering.out_dir, else <root>/aligned_tensorstore."""
+    cs = _configs_for(root, configs)
+    return _local_folder(root, _conf(cs, "alignment", "tensorstore_rendering.out_dir"), "aligned_tensorstore")
+
+
+def aligned_render_mip(configs: ConfigStore | None) -> int:
+    return int(_conf(configs, "alignment", "rendering.mip_level", 0) or 0)
+
+
+def aligned_max_mip(configs: ConfigStore | None) -> int:
+    return int(_conf(configs, "alignment", "downsample.max_mip", 7) or 0)
+
+
+def tensorstore_render_mip(configs: ConfigStore | None) -> int:
+    return int(_conf(configs, "alignment", "tensorstore_rendering.mip_level", 0) or 0)
+
+
+def tensorstore_mip_levels(configs: ConfigStore | None) -> list[int]:
+    """The mip levels 'Mipmaps for volume' adds (above the rendered one)."""
+    levels = _conf(configs, "alignment", "tensorstore_downsample.mip_levels", [1, 3, 5, 7])
+    if not isinstance(levels, (list, tuple)):
+        levels = [levels]
+    base = tensorstore_render_mip(configs)
+    out = set()
+    for lv in levels:
+        try:
+            if int(lv) > base:
+                out.add(int(lv))
+        except (TypeError, ValueError):
+            pass
+    return sorted(out)
+
+
+def _ts_spec(root: Path) -> tuple[Path, set[int]]:
+    """align/ts_spec.json and the mip levels it records as finished."""
+    p = Path(root) / "align" / "ts_spec.json"
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return p, set()
+    levels = set()
+    for k in data if isinstance(data, dict) else ():
+        try:
+            levels.add(int(k))
+        except (TypeError, ValueError):
+            pass
+    return p, levels
+
+
+def step_output_dir(root, step: Step, configs: ConfigStore | None = None) -> Path:
+    cs = _configs_for(root, configs)
+    if step.out_base == "stitched":
+        return stitched_dir(root, cs)
+    if step.out_base == "aligned":
+        return aligned_dir(root, cs)
+    return Path(root) / step.out_subdir
+
+
+def _patterns(step: Step, cs: ConfigStore | None) -> tuple[str, ...]:
+    patterns = (step.out_glob,) if isinstance(step.out_glob, str) else tuple(step.out_glob)
+    if any("{" in p for p in patterns):
+        values = {"mip": aligned_render_mip(cs), "max_mip": aligned_max_mip(cs)}
+        patterns = tuple(p.format(**values) for p in patterns)
+    return patterns
+
+
+_Z_PREFIX = re.compile(r"^\d+_(.+)$")
+
+
+def _item_key(step: Step, path: Path, cs: ConfigStore | None, delim: str):
+    """What one output file stands for: a section name, or a (section, section) pair."""
+    if step.key == "stitch.rendering":
+        return path.parent.name                       # mip0/<sec>/metadata.txt or <sec>/info
+    if step.out_base == "aligned":
+        name = path.parent.name                       # mipN/<zz>_<sec>/metadata.txt
+        m = _Z_PREFIX.match(name) if _conf(cs, "alignment", "rendering.prefix_z_number", True) else None
+        return m.group(1) if m else name
+    if step.cardinality is Cardinality.PER_PAIR:
+        stem = path.stem
+        return tuple(stem.split(delim, 1)) if delim and delim in stem else (stem,)
+    return path.stem
+
+
+def _step_outputs(root: Path, step: Step, configs: ConfigStore | None = None) -> dict:
+    """{item: file} for every finished output of *step*; the file's time is the item's time."""
+    root = Path(root)
+    cs = _configs_for(root, configs)
+    if step.key == "align.tsr":
+        spec, levels = _ts_spec(root)
+        return {"volume": spec} if tensorstore_render_mip(cs) in levels else {}
+    if step.key == "align.tsd":
+        spec, levels = _ts_spec(root)
+        return {lv: spec for lv in tensorstore_mip_levels(cs) if lv in levels}
+    d = step_output_dir(root, step, cs)
+    if not d.exists():
+        return {}
+    delim = str(_conf(cs, "thumbnail", "alignment.match_name_delimiter", "__to__")) if step.cardinality is Cardinality.PER_PAIR else ""
+    out: dict = {}
+    try:
+        for pattern in _patterns(step, cs):         # several patterns: one output layout per render driver
+            for p in d.glob(pattern):
+                if p.name.startswith("."):
+                    continue
+                key = _item_key(step, p, cs, delim)
+                if key in out and _mtime(out[key]) >= _mtime(p):
+                    continue
+                out[key] = p
+    except OSError:
+        return {}
+    return out
+
+
+def _mtime(p: Path) -> float:
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 # ----------------------------------------------------------------------
@@ -207,6 +399,8 @@ class StepStatus:
     def summary(self) -> str:
         if self.step.cardinality is Cardinality.SINGLE:
             base = "present" if self.done else "absent"
+        elif self.step.cardinality is Cardinality.PER_LEVEL:
+            base = f"{self.done}/{self.expected} mip levels"
         else:
             base = f"{self.done}/{self.expected}"
         if self.errors:
@@ -218,7 +412,7 @@ def expected_count(root: Path, n_sections: int, step: Step, configs: ConfigStore
     """
     How many outputs a complete run of *step* leaves: one per section, one per matched pair
     (the coarse compare distance decides how many pairs there are; the fine steps mirror the
-    coarse match list or align/match_name.txt), or a single output.
+    coarse match list or align/match_name.txt), one per requested mip level, or a single output.
     """
     root = Path(root)
     n = int(n_sections)
@@ -241,46 +435,59 @@ def expected_count(root: Path, n_sections: int, step: Step, configs: ConfigStore
                 return len(listed)
             return len(list((root / "thumbnail_align" / "matches").glob("*.h5"))) or max(0, n - 1)
         return max(0, n - 1)
+    if step.cardinality is Cardinality.PER_LEVEL:
+        return len(tensorstore_mip_levels(_configs_for(root, configs)))
     return 1
 
 
-def _iter_outputs(root: Path, step: Step) -> list[Path]:
-    d = root / step.out_subdir
-    if not d.exists():
-        return []
-    patterns = (step.out_glob,) if isinstance(step.out_glob, str) else tuple(step.out_glob)
-    hits: list[Path] = []
-    seen: set[Path] = set()
-    try:
-        for pattern in patterns:          # several patterns: one output layout per render driver
-            for p in d.glob(pattern):
-                if p.name.startswith(".") or p in seen:
-                    continue
-                seen.add(p)
-                hits.append(p)
-    except OSError:
-        return []
-    return hits
-
-
-def count_outputs(root: Path, step: Step) -> int:
-    hits = _iter_outputs(root, step)
+def count_outputs(root: Path, step: Step, configs: ConfigStore | None = None) -> int:
+    n = len(_step_outputs(root, step, configs))
     if step.cardinality is Cardinality.SINGLE:
-        return 1 if hits else 0
-    return len(hits)
+        return 1 if n else 0
+    return n
 
 
-def _mtimes(paths: Iterable[Path]) -> tuple[float, float]:
-    newest = 0.0
-    oldest = 0.0
-    for p in paths:
-        try:
-            m = p.stat().st_mtime
-        except OSError:
+def _item_kind(step: Step) -> str:
+    if step.key in GLOBAL_STEPS or step.cardinality in (Cardinality.SINGLE, Cardinality.PER_LEVEL):
+        return "global"
+    return "pair" if step.cardinality is Cardinality.PER_PAIR else "section"
+
+
+def _sections(key) -> tuple:
+    return key if isinstance(key, tuple) else (key,)
+
+
+def _newer_inputs(down: dict, up: dict, down_kind: str, up_kind: str) -> bool:
+    """
+    Whether an input that an output depends on is newer than that output ({item: mtime} each).
+
+    Section-wise outputs are compared with the inputs of the same section (a pair with both of
+    its sections, a section with every pair it takes part in), so running an earlier step for a
+    few more sections leaves the finished ones alone. A stack solve depends on everything and is
+    compared as a whole.
+    """
+    if not down or not up:
+        return False
+    if down_kind == "global" or up_kind == "global":
+        return max(up.values()) > min(down.values()) + 1
+    if up_kind == "pair":
+        by_section: dict = {}
+        for k, t in up.items():
+            for s in _sections(k):
+                by_section[s] = max(by_section.get(s, 0.0), t)
+    else:
+        by_section = up
+    for k, t in down.items():
+        if down_kind == "pair" and up_kind == "pair":
+            u = up.get(k)
+            if u is not None and u > t + 1:
+                return True
             continue
-        newest = max(newest, m)
-        oldest = m if oldest == 0.0 else min(oldest, m)
-    return newest, oldest
+        for s in _sections(k):
+            u = by_section.get(s)
+            if u is not None and u > t + 1:
+                return True
+    return False
 
 
 class PipelineScan:
@@ -298,16 +505,22 @@ class PipelineScan:
 
     def scan(self) -> None:
         self.status = {}
+        locations = _configs_for(self.root, self.configs)      # output folders, even without staleness configs
+        items: dict[str, dict] = {}
         for step in STEPS:
             st = StepStatus(step)
-            outs = _iter_outputs(self.root, step)
+            outs = _step_outputs(self.root, step, locations)
+            times = {k: _mtime(p) for k, p in outs.items()}
+            items[step.key] = times
             st.done = (1 if outs else 0) if step.cardinality is Cardinality.SINGLE else len(outs)
             st.expected = self.expected_for(step)
             if step.err_glob:
                 d = self.root / step.out_subdir
                 st.errors = len(list(d.glob(step.err_glob))) if d.exists() else 0
-            st.newest_output, st.oldest_output = _mtimes(outs)
+            if times:
+                st.newest_output, st.oldest_output = max(times.values()), min(times.values())
             self.status[step.key] = st
+        coords = {p.stem: _mtime(p) for p in (self.root / "stitch" / "stitch_coord").glob("*.txt")}
         # states, in order so upstream is known
         for step in STEPS:
             st = self.status[step.key]
@@ -321,23 +534,34 @@ class PipelineScan:
                     st.reasons.append(f"waiting for '{up.step.label}'")
             if st.errors:
                 st.state = State.ERROR
-            elif st.done == 0:
+                continue
+            if st.done == 0:
                 st.state = State.BLOCKED if blocked else State.EMPTY
+                continue
+            if step.cardinality is Cardinality.SINGLE:
+                st.state = State.COMPLETE
             else:
                 st.state = State.COMPLETE if (st.expected and st.done >= st.expected) else State.PARTIAL
-                if step.cardinality is Cardinality.SINGLE:
-                    st.state = State.COMPLETE
-                # staleness: config newer than oldest output, or upstream newer than our oldest
-                if self.configs is not None and step.config_kind:
-                    cm = self.configs.modified_time(step.config_kind)
-                    if cm and st.oldest_output and cm > st.oldest_output + 1:
-                        st.state = State.STALE
-                        st.reasons.append(f"{step.config_kind} config edited after these outputs")
-                for r in step.requires:
-                    up = self.status.get(r)
-                    if up and up.newest_output and st.oldest_output and up.newest_output > st.oldest_output + 1:
-                        st.state = State.STALE
-                        st.reasons.append(f"'{up.step.label}' produced newer outputs")
+            mine = items[step.key]
+            if self.configs is not None and step.config_kind:
+                cm = self.configs.modified_time(step.config_kind)
+                if cm and st.oldest_output and cm > st.oldest_output + 1:
+                    self._stale(st, f"{step.config_kind} config edited after these outputs")
+            if step.key == "stitch.matching" and _newer_inputs(mine, coords, "section", "section"):
+                self._stale(st, "coordinate files changed after these outputs")
+            for r in step.requires:
+                up = self.status.get(r)
+                if up is None:
+                    continue
+                if _newer_inputs(mine, items[r], _item_kind(step), _item_kind(up.step)):
+                    self._stale(st, f"'{up.step.label}' produced newer outputs")
+                elif up.state is State.STALE:
+                    self._stale(st, f"'{up.step.label}' is stale")
+
+    @staticmethod
+    def _stale(st: StepStatus, reason: str) -> None:
+        st.state = State.STALE
+        st.reasons.append(reason)
 
     def __getitem__(self, key: str) -> StepStatus:
         return self.status[key]
@@ -370,7 +594,7 @@ def expected_outputs(root: Path, step: Step, start: int | None = None, stop: int
     """How many outputs a run of *step* should leave behind (sections, pairs, or one), for a range too."""
     root = Path(root)
     n = len([p for p in (root / "stitch" / "stitch_coord").glob("*.txt")])
-    configs = ConfigStore(root / "configs") if (root / "configs").is_dir() else None
+    configs = _configs_for(root, None)
     expected = expected_count(root, n, step, configs)
     if start is not None or stop is not None:
         s0 = start or 0
@@ -417,16 +641,16 @@ def thumbnail_progress(root: Path, configs: ConfigStore | None, n_sections: int)
     FEABAS first builds the intermediate mip levels of every stitched section - by far the
     slowest part - and only then writes the thumbnails, so counting thumbnails alone shows
     nothing until the run is almost over. Every finished mip level of a section leaves a
-    ``stitched_sections/mipN/<sec>/metadata.txt`` behind, so those are counted too.
+    ``<stitched sections>/mipN/<sec>/metadata.txt`` behind, so those are counted too.
     """
     root = Path(root)
     n = max(0, int(n_sections))
-    thumbs = count_outputs(root, STEPS_BY_KEY["thumbnail.downsample"])
+    thumbs = count_outputs(root, STEPS_BY_KEY["thumbnail.downsample"], configs)
     driver = configs.get("stitching", "rendering.driver", "image") if configs is not None else "image"
     max_mip = thumbnail_max_mip(configs) if driver == "image" else 0
     if max_mip <= 0 or n == 0:
         return thumbs, n, f"thumbnails {thumbs}/{n}"
-    ss = root / "stitched_sections"
+    ss = stitched_dir(root, configs)
     levels = 0
     for m in range(1, max_mip + 1):
         d = ss / f"mip{m}"
@@ -503,39 +727,182 @@ def write_fine_match_list(root: Path, section_names: list[str], compare_distance
 # clearing
 # ----------------------------------------------------------------------
 
-def clear_targets(root: Path, step: Step, cascade: bool = True) -> list[Path]:
-    """Paths that would be removed when clearing *step* (and downstream)."""
+_MOUNT_POINT = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003)
+
+
+def is_link(p: Path) -> bool:
+    """A symbolic link, or a directory junction on Windows (what test runs use to share folders)."""
+    try:
+        if Path(p).is_symlink():
+            return True
+        if os.name == "nt":
+            return getattr(os.lstat(p), "st_reparse_tag", 0) == _MOUNT_POINT
+    except OSError:
+        return False
+    return False
+
+
+def _through_link(root: Path, p: Path) -> bool:
+    """True when *p* is a link or is reached through one below *root*: its data belongs elsewhere."""
+    if is_link(p):
+        return True
+    try:
+        rel = p.relative_to(root)
+    except ValueError:
+        return False
+    cur = root
+    for part in rel.parts[:-1]:
+        cur = cur / part
+        if is_link(cur):
+            return True
+    return False
+
+
+def _mip_dirs(folder: Path) -> list[Path]:
+    if not folder.is_dir():
+        return []
+    return sorted(p for p in folder.glob("mip*") if p.is_dir() and p.name[3:].isdigit())
+
+
+def _render_folder_targets(root: Path, folder: Path, default_name: str) -> list[Path]:
+    """
+    Everything a render step wrote into its folder. The workbench's own default folder goes as a
+    whole; a folder chosen in the settings may hold other data, so only the mip levels and the
+    per-section volumes (<section>/info) FEABAS put there are removed.
+    """
+    if folder == root / default_name:
+        return [folder]
+    out = _mip_dirs(folder)
+    if folder.is_dir():
+        out += sorted(p for p in folder.iterdir() if p.is_dir() and (p / "info").is_file())
+    return out
+
+
+def _volume_scales(volume: Path) -> list[dict]:
+    try:
+        info = json.loads((volume / "info").read_text(encoding="utf-8"))
+        scales = info.get("scales") or []
+        return sorted(scales, key=lambda s: float((s.get("resolution") or [0])[0]))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return []
+
+
+def _scale_dir(volume: Path, scale: dict) -> Path | None:
+    key = str(scale.get("key") or "")
+    if not key or key.startswith(("/", "\\")) or ".." in key.replace("\\", "/").split("/") or ":" in key:
+        return None
+    return volume / key
+
+
+def _step_clear_candidates(root: Path, step: Step, cs: ConfigStore | None) -> list[Path]:
+    key = step.key
+    if key == "stitch.rendering":
+        return _render_folder_targets(root, stitched_dir(root, cs), "stitched_sections") + [root / p for p in step.clear_paths]
+    if key == "thumbnail.downsample":
+        out = [root / "thumbnail_align" / "thumbnails"] + [root / p for p in step.clear_paths]
+        # the intermediate mip levels of the stitched sections are made by this step too
+        out += [p for p in _mip_dirs(stitched_dir(root, cs)) if p.name != "mip0"]
+        # and the workbench's masks are drawn on these thumbnails: made again, they no longer fit
+        out += [root / "masks" / n for n in ("roi", "tissue", "folds", "structures", "manifest.json")]
+        return out
+    if key == "masks":
+        # the hand-edited flags describe material masks that are gone
+        return [root / step.out_subdir, root / "align" / "material_masks", root / "masks" / "manifest.json"]
+    if key == "thumbnail.render":
+        return sorted((root / "thumbnail_align").glob("aligned_thumbnails_*"))
+    if key == "align.rendering":
+        return _render_folder_targets(root, aligned_dir(root, cs), "aligned_stack")
+    if key == "align.downsample":
+        mip = aligned_render_mip(cs)
+        return [p for p in _mip_dirs(aligned_dir(root, cs)) if int(p.name[3:]) > mip]
+    if key == "align.tsr":
+        out = []
+        vol = tensorstore_dir(root, cs)
+        if vol is not None:
+            if vol == root / "aligned_tensorstore":
+                out.append(vol)
+            else:
+                scales = [_scale_dir(vol, s) for s in _volume_scales(vol)]
+                out += [s for s in scales if s is not None] + [vol / "info"]
+        return out + [root / p for p in step.clear_paths] + sorted((root / "align").glob("ts_spec_*.json"))
+    if key == "align.tsd":
+        out = []
+        vol = tensorstore_dir(root, cs)
+        if vol is not None:
+            out += [s for s in (_scale_dir(vol, sc) for sc in _volume_scales(vol)[1:]) if s is not None]
+        return out + [root / p for p in step.clear_paths]
+    return [root / step.out_subdir] + [root / p for p in step.clear_paths]
+
+
+def clear_targets(root: Path, step: Step, cascade: bool = True, configs: ConfigStore | None = None,
+                  skipped: list | None = None) -> list[Path]:
+    """
+    Paths that would be removed when clearing *step* (and downstream). Nothing is removed through
+    a link: an alignment test run links the project's stitched sections, which are not its own.
+    Such paths are left out (and listed in *skipped*, if given).
+    """
+    root = Path(root)
+    cs = _configs_for(root, configs)
     steps = [step] + (downstream(step.key) if cascade else [])
     targets: list[Path] = []
     seen = set()
     for s in steps:
-        cand = [root / s.out_subdir] + [root / p for p in s.clear_paths]
-        if s.key == "thumbnail.render":
-            cand = list((root / "thumbnail_align").glob("aligned_thumbnails_*"))
-        if s.key == "stitch.rendering":
-            # mipmaps live next to mip0 inside stitched_sections; whole folder goes
-            cand = [root / "stitched_sections", root / "stitch" / "ts_specs", root / "stitch" / "hist_tf"]
-        if s.key == "thumbnail.downsample":
-            cand = [root / "thumbnail_align" / "thumbnails", root / "thumbnail_align" / "material_masks",
-                    root / "thumbnail_align" / "region_masks"]
-            # mip levels generated inside stitched_sections beyond mip0 are also downsample outputs
-            ss = root / "stitched_sections"
-            if ss.is_dir():
-                cand += [p for p in ss.glob("mip*") if p.name != "mip0"]
-        for c in cand:
+        for c in _step_clear_candidates(root, s, cs):
             if c in seen:
                 continue
             seen.add(c)
-            if c.exists():
-                targets.append(c)
-    return targets
+            if not (c.exists() or c.is_symlink()):
+                continue
+            if _through_link(root, c):
+                if skipped is not None:
+                    skipped.append(c)
+                continue
+            targets.append(c)
+    # something inside another target goes with it
+    return [t for t in targets if not any(o in t.parents for o in targets if o != t)]
 
 
-def clear_step(root: Path, step: Step, cascade: bool = True, log=None) -> list[Path]:
-    removed = []
-    for p in clear_targets(root, step, cascade):
+def cleared_keys(step: Step, cascade: bool = True) -> list[str]:
+    return [step.key] + ([s.key for s in downstream(step.key)] if cascade else [])
+
+
+def finish_clear(root: Path, keys, configs: ConfigStore | None = None) -> None:
+    """
+    Bookkeeping after the files of *keys* were removed. Clearing only the volume's mipmaps
+    removes their scale folders; the volume's info file and align/ts_spec.json still list them,
+    so both are cut back to the rendered level.
+    """
+    keys = set(keys)
+    if "align.tsd" not in keys or "align.tsr" in keys:
+        return
+    root = Path(root)
+    cs = _configs_for(root, configs)
+    vol = tensorstore_dir(root, cs)
+    if vol is not None and (vol / "info").is_file() and not is_link(vol):
         try:
-            if p.is_dir():
+            info = json.loads((vol / "info").read_text(encoding="utf-8"))
+            scales = sorted(info.get("scales") or [], key=lambda s: float((s.get("resolution") or [0])[0]))
+            if len(scales) > 1:
+                info["scales"] = scales[:1]
+                (vol / "info").write_text(json.dumps(info, indent=2), encoding="utf-8")
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+    spec = root / "align" / "ts_spec.json"
+    try:
+        data = json.loads(spec.read_text(encoding="utf-8"))
+        base = str(tensorstore_render_mip(cs))
+        kept = {k: v for k, v in data.items() if str(k) == base}
+        if kept != data:
+            spec.write_text(json.dumps(kept, indent=2), encoding="utf-8")
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
+def clear_step(root: Path, step: Step, cascade: bool = True, log=None, configs: ConfigStore | None = None) -> list[Path]:
+    removed = []
+    for p in clear_targets(root, step, cascade, configs):
+        try:
+            if p.is_dir() and not is_link(p):
                 shutil.rmtree(p)
             else:
                 p.unlink()
@@ -545,6 +912,38 @@ def clear_step(root: Path, step: Step, cascade: bool = True, log=None) -> list[P
         except OSError as e:
             if log:
                 log(f"could not remove {p}: {e}")
+    finish_clear(root, cleared_keys(step, cascade), configs)
+    return removed
+
+
+def drop_unreadable_outputs(root: Path, step: Step, since: float, configs: ConfigStore | None = None) -> list[Path]:
+    """
+    After a step was killed (Cancel): remove the .h5 outputs written since *since* that do not open.
+
+    FEABAS writes its .h5 files in place and skips every output that exists, so a file cut short
+    by the kill would count as finished and break the next step. Complete files written before
+    the cancel are kept, as are all files from earlier runs.
+    """
+    root = Path(root)
+    if not any(p.endswith(".h5") for p in ((step.out_glob,) if isinstance(step.out_glob, str) else step.out_glob)):
+        return []
+    try:
+        import h5py
+    except ImportError:
+        return []
+    removed = []
+    for p in _step_outputs(root, step, configs).values():
+        try:
+            if p.suffix != ".h5" or p.stat().st_mtime < since - 1:
+                continue
+            with h5py.File(p, "r") as f:
+                list(f.keys())
+        except OSError:
+            try:
+                p.unlink()
+                removed.append(p)
+            except OSError:
+                pass
     return removed
 
 
@@ -648,24 +1047,66 @@ def list_snapshots(root: Path) -> list[dict]:
     return out
 
 
+def _sync_file(src: Path, dst: Path) -> bool:
+    """Copy *src* over *dst* unless they are identical already. True if *dst* changed."""
+    if dst.is_file() and filecmp.cmp(src, dst, shallow=False):
+        return False
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, dst)
+    return True
+
+
+def _sync_tree(src: Path, dst: Path) -> int:
+    """Make *dst* hold exactly the files of *src*; identical files are left untouched. Files changed."""
+    changed = 0
+    wanted = set()
+    for f in sorted(src.rglob("*")):
+        if f.is_file():
+            rel = f.relative_to(src)
+            wanted.add(rel)
+            changed += _sync_file(f, dst / rel)
+    if dst.is_dir():
+        for f in sorted(dst.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+            rel = f.relative_to(dst)
+            if f.is_file() or f.is_symlink():
+                if rel not in wanted:
+                    f.unlink()
+                    changed += 1
+            elif f.is_dir() and not any(f.iterdir()) and not (src / rel).is_dir():
+                f.rmdir()
+    return changed
+
+
 def restore_snapshot(root: Path, snapshot_dir: Path, log=None) -> list[str]:
-    """Replace the snapshotted folders with the snapshot's copies."""
+    """
+    Put the snapshotted folders back as they were.
+
+    Only files that differ are written, and they get the current time: whatever was computed
+    from other inputs after the snapshot (later steps, rendered images) is then older than the
+    restored inputs and shows as stale, while outputs whose inputs did not change stay done.
+    """
     root = Path(root)
-    meta = json.loads((Path(snapshot_dir) / "snapshot.json").read_text(encoding="utf-8"))
+    snapshot_dir = Path(snapshot_dir)
+    meta = json.loads((snapshot_dir / "snapshot.json").read_text(encoding="utf-8"))
+    order = {rel: i for i, rel in enumerate(SNAPSHOT_PATHS)}
     restored = []
-    for rel in meta.get("paths", []):
-        src = Path(snapshot_dir) / rel
-        dst = root / rel
+    for rel in sorted((r for r in meta.get("paths", []) if r in order), key=order.get):
+        src, dst = snapshot_dir / rel, root / rel
+        if _through_link(root, dst):
+            if log:
+                log(f"not restored (a link): {rel}")
+            continue
         if src.is_dir():
-            if dst.exists():
-                shutil.rmtree(dst)
-            shutil.copytree(src, dst)
+            n = _sync_tree(src, dst)
         elif src.is_file():
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(src, dst)
+            n = int(_sync_file(src, dst))
+        else:
+            continue
         restored.append(rel)
         if log:
-            log(f"restored {rel}")
+            log(f"restored {rel}" + (f" ({n} file(s) changed)" if n else " (unchanged)"))
+    from .project import repair_working_directory
+    repair_working_directory(root)          # the snapshot may come from before the project was moved
     return restored
 
 

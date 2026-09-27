@@ -29,6 +29,9 @@ import numpy as np
 
 LABEL_DEFAULT = 0
 LABEL_EXCLUDE = 255
+LABEL_WRINKLE = 50
+LABEL_SOFT = 100
+LABEL_SPLIT = 200
 
 # The fold U-Net that ships inside the package (fp16 weights only, 49 MB). Projects record it as
 # the sentinel BUNDLED_FOLD_CKPT rather than as an absolute path: the path changes with every
@@ -70,9 +73,6 @@ def store_fold_checkpoint(path: str | None) -> str:
     except OSError:
         pass
     return v
-LABEL_WRINKLE = 50
-LABEL_SOFT = 100
-LABEL_SPLIT = 200
 
 
 TISSUE_METHODS = ("all", "border", "manual", "auto", "texture", "intensity")
@@ -248,11 +248,11 @@ def border_band(tissue: np.ndarray, margin: int) -> np.ndarray:
     # fill enclosed holes: background components that do not touch the image border
     inv = (1 - t).astype(np.uint8)
     n, lab, _, _ = cv2.connectedComponentsWithStats(inv, connectivity=4)
-    border = set(np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]])))
-    filled = t.copy()
-    for i in range(1, n):
-        if i not in border:
-            filled[lab == i] = 1
+    enclosed = np.ones(n, bool)
+    enclosed[0] = False
+    enclosed[np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]]))] = False
+    filled = (t > 0) | enclosed[lab]
+    filled = filled.astype(np.uint8)
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * int(margin) + 1, 2 * int(margin) + 1))
     return (t > 0) & ~(cv2.erode(filled, k, borderValue=0) > 0)
 
@@ -482,19 +482,16 @@ def remove_thin(mask: np.ndarray, min_width: int) -> np.ndarray:
 
 
 def fill_holes(mask: np.ndarray, max_px: int) -> np.ndarray:
+    """Background components enclosed by *mask* and at most *max_px* large become part of it."""
+    mask = np.asarray(mask).astype(bool)
     inv = ~mask
     # holes touching the border are background, not holes
     cv2 = _cv2()
     n, lab, stats, _ = cv2.connectedComponentsWithStats(inv.astype(np.uint8), connectivity=4)
-    h, w = mask.shape
-    border = set(np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]])))
-    out = mask.copy()
-    for i in range(1, n):
-        if i in border:
-            continue
-        if stats[i, cv2.CC_STAT_AREA] <= max_px:
-            out[lab == i] = True
-    return out
+    fill = stats[:, cv2.CC_STAT_AREA] <= max_px
+    fill[0] = False
+    fill[np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]]))] = False
+    return mask | fill[lab]
 
 
 def tissue_score(img: np.ndarray, params: TissueParams) -> np.ndarray:
@@ -540,6 +537,9 @@ def detect_tissue(img: np.ndarray, params: TissueParams | None = None,
             m = fill_holes(m, params.fill_holes_px)
         return m
 
+    if roi is not None and np.asarray(roi).shape[:2] != img.shape[:2]:
+        # a footprint made for thumbnails of another size (they were made again at another mip)
+        roi = resize_mask(np.asarray(roi).astype(np.uint8), img.shape[:2]) > 0
     footprint = np.asarray(roi).astype(bool) if roi is not None else footprint_mask(img, params.nodata_value)
     if params.method == "all":
         return finish(footprint), float("nan")
@@ -640,7 +640,7 @@ def write_mask(path: Path, mask: np.ndarray) -> None:
     import os
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp.png")
+    tmp = path.with_name("." + path.name + ".tmp")     # hidden and not *.png: never counted as a mask
     ok, buf = cv2.imencode(".png", np.ascontiguousarray(mask.astype(np.uint8)))
     if not ok:
         raise IOError(f"could not encode {path}")
@@ -649,8 +649,12 @@ def write_mask(path: Path, mask: np.ndarray) -> None:
 
 
 def paint_split_line(mask: np.ndarray, p0: tuple[int, int], p1: tuple[int, int], width: int = 3,
-                     label: int = LABEL_EXCLUDE) -> np.ndarray:
-    """Draw a line of *label* through the mask: FEABAS's documented way to split a broken section."""
+                     label: int = LABEL_SPLIT) -> np.ndarray:
+    """
+    Draw a line of *label* through the mask: FEABAS's documented way to split a broken section.
+    The default is FEABAS's 'split' material (200): still meshed and rendered, but the mesh is
+    broken along it, so the pieces move independently without a blank strip in the output.
+    """
     import cv2
     out = mask.copy()
     cv2.line(out, (int(p0[0]), int(p0[1])), (int(p1[0]), int(p1[1])), int(label), int(width))

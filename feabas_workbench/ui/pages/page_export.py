@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineE
                                QTabWidget, QVBoxLayout, QWidget)
 
 from ...core.images import TiledSectionSource
+from ...core.steps import aligned_dir, aligned_render_mip, tensorstore_dir
 from ...core.httpserve import VolumeServer
 from ..widgets import PathPicker, ImageView, ConfigEditor, card, hint, spin, combo
 from ..widgets.steps_panel import StepsPanel
@@ -176,21 +177,24 @@ class ExportPage(Page):
     def _aligned_base(self) -> Path | None:
         if not self.project:
             return None
-        out = self.ctx.configs.get("alignment", "rendering.out_dir", None)
-        return Path(out) if out else self.project.root / "aligned_stack"
+        return aligned_dir(self.project.root, self.ctx.configs)
+
+    def _render_mip(self) -> int:
+        """The mip level the PNG stack was rendered at: the export's full resolution."""
+        return aligned_render_mip(self.ctx.configs) if self.ctx.configs else 0
 
     def _ts_dir(self) -> Path | None:
         if not self.project:
             return None
-        out = self.ctx.configs.get("alignment", "tensorstore_rendering.out_dir", None)
-        return Path(out) if out else self.project.root / "aligned_tensorstore"
+        return tensorstore_dir(self.project.root, self.ctx.configs)
 
     # -- export ------------------------------------------------------------
     def _export(self) -> None:
         if not self.require_project():
             return
         base = self._aligned_base()
-        rendered = self.ctx.scan()["align.rendering"].done > 0 if self.ctx.cluster_enabled else bool(base and (base / "mip0").is_dir())
+        mip = self._render_mip()
+        rendered = self.ctx.scan()["align.rendering"].done > 0 if self.ctx.cluster_enabled else bool(base and (base / f"mip{mip}").is_dir())
         if not rendered:
             QMessageBox.information(self, "Export", "Render the PNG tile stack first (Render tab).")
             return
@@ -201,7 +205,7 @@ class ExportPage(Page):
         v = self.project.state.volume
         payload = {"aligned_stack": str(base), "out_dir": str(out), "name": self.e_name.text().strip() or "aligned",
                    "voxel_nm": [v.pixel_size_nm, v.pixel_size_nm, v.section_thickness_nm], "what": self.e_what.currentData(),
-                   "chunk": self.e_chunk.value()}
+                   "chunk": self.e_chunk.value(), "base_mip": mip}
         import sys
         self.submit(self.ctx.worker_spec("export_vast", payload, f"Export ({self.e_what.currentData()})", python=sys.executable))
 
@@ -244,16 +248,18 @@ class ExportPage(Page):
 
     def _fiji(self) -> None:
         base = self._aligned_base(); sec = self.q_sec.currentText()
-        if base and sec and (base / "mip0" / sec).is_dir():
-            open_in_fiji_folder(self.ctx.settings, base / "mip0" / sec, self.info)
+        d = base / f"mip{self._render_mip()}" / sec if base and sec else None
+        if d is not None and d.is_dir():
+            open_in_fiji_folder(self.ctx.settings, d, self.info)
 
     # -- viewer ------------------------------------------------------------
     def _refresh_sections(self) -> None:
         base = self._aligned_base()
         cur = self.q_sec.currentText()
         self.q_sec.blockSignals(True); self.q_sec.clear()
-        if base and (base / "mip0").is_dir():
-            self.q_sec.addItems(sorted(p.name for p in (base / "mip0").iterdir() if p.is_dir()))
+        level = base / f"mip{self._render_mip()}" if base else None
+        if level is not None and level.is_dir():
+            self.q_sec.addItems(sorted(p.name for p in level.iterdir() if p.is_dir()))
         self.q_sec.blockSignals(False)
         i = self.q_sec.findText(cur)
         if i >= 0:

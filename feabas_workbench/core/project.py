@@ -47,6 +47,86 @@ USER_CONFIG_NAMES = (
     "material_table.yaml",
 )
 
+_KEEP = object()        # write_general_config: leave the setting as it is in the file
+_GENERAL_HEADER = "# Written by FEABAS Workbench. working_directory points at this project.\n"
+
+
+def _read_general(path: Path) -> dict:
+    if not Path(path).is_file():
+        return {}
+    try:
+        data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_general(path: Path, conf: dict) -> None:
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path(path).with_name(Path(path).name + ".tmp")
+    tmp.write_text(_GENERAL_HEADER + yaml.safe_dump(conf, sort_keys=False), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _same_folder(value, root: Path) -> bool:
+    """Whether a working_directory value names *root*, the way FEABAS expands it (relative to the root)."""
+    if not value:
+        return False
+    text = os.path.expanduser(os.path.expandvars(str(value)))
+    p = Path(text) if Path(text).is_absolute() else Path(root) / text
+    try:
+        return p.resolve() == Path(root).resolve()
+    except OSError:
+        return False
+
+
+def repair_working_directory(root: os.PathLike | str) -> bool:
+    """
+    Point <root>/configs/general_configs.yaml at *root* again if it names another folder.
+
+    FEABAS takes its working directory - where it reads the user configs and writes every output -
+    from that file, not from the folder it is started in. A project folder that was copied, moved,
+    renamed or opened through another path (a different drive letter or mount point) still names
+    the old place, and a step run there would read and write the original project. Works for any
+    FEABAS working directory (projects and test runs). Returns True when the file was changed.
+    """
+    root = Path(root)
+    path = root / "configs" / "general_configs.yaml"
+    conf = _read_general(path)
+    if not conf or _same_folder(conf.get("working_directory"), root):
+        return False
+    old = str(conf.get("working_directory") or "")
+    conf["working_directory"] = root.resolve().as_posix()
+    logs = str(conf.get("logging_directory") or "")
+    if old and logs and Path(logs).is_absolute():
+        try:
+            Path(logs).relative_to(Path(old))
+            conf["logging_directory"] = None       # a log folder inside the old location: use <root>/logs
+        except ValueError:
+            pass
+    _write_general(path, conf)
+    return True
+
+
+def forget_cached_resolution(root: os.PathLike | str, resolution_nm: float) -> bool:
+    """
+    FEABAS caches the tile resolution of the first run in <root>/configs/resolutions.yaml and
+    never reads the coordinate files again. Remove that cache when the coordinate files now
+    carry a different resolution, so a corrected pixel size is actually used. True if removed.
+    """
+    path = Path(root) / "configs" / "resolutions.yaml"
+    if not path.is_file():
+        return False
+    try:
+        cached = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("DATA_RESOLUTION")
+        same = cached is not None and abs(float(cached) - float(resolution_nm)) <= 1e-6 * max(1.0, abs(float(resolution_nm)))
+    except (OSError, yaml.YAMLError, AttributeError, TypeError, ValueError):
+        same = False
+    if same:
+        return False
+    path.unlink()
+    return True
+
 
 @dataclass
 class SourceSettings:
@@ -127,6 +207,7 @@ class ProjectState:
     alignment: dict = field(default_factory=dict)     # workbench-side alignment choices (fine compare distance ...)
     export: dict = field(default_factory=dict)
     local_execution: dict = field(default_factory=dict)  # opt-in per-stage workstation section scheduling
+    suggested: dict = field(default_factory=dict)        # config values the workbench filled in itself (configs.apply_suggested_mips)
     notes: str = ""
     feabas_version: str = "3.0.5"
 
@@ -252,6 +333,7 @@ class Project:
         st.alignment = raw.get("alignment") or {}
         st.export = raw.get("export") or {}
         st.local_execution = raw.get("local_execution") or {}
+        st.suggested = raw.get("suggested") or {}
         st.notes = raw.get("notes", "")
         st.feabas_version = raw.get("feabas_version", "3.0.5")
         p.state = st
@@ -259,6 +341,10 @@ class Project:
         if not (p.configs_dir / "general_configs.yaml").is_file():
             p.install_default_configs()
             p.write_general_config()
+        else:
+            # a project that was copied, moved or opened through another path still names its old
+            # folder: FEABAS would read and write there instead of here
+            repair_working_directory(p.root)
         return p
 
     def save(self) -> None:
@@ -275,6 +361,7 @@ class Project:
             "alignment": self.state.alignment,
             "export": self.state.export,
             "local_execution": self.state.local_execution,
+            "suggested": self.state.suggested,
             "notes": self.state.notes,
             "feabas_version": self.state.feabas_version,
         }
@@ -302,33 +389,31 @@ class Project:
     def general_config_path(self) -> Path:
         return self.configs_dir / "general_configs.yaml"
 
-    def write_general_config(self, cpu_budget: int | None = None, parallel_framework: str = "process",
-                             logfile_level: str = "INFO") -> Path:
-        """(Re)write configs/general_configs.yaml so FEABAS points at this project."""
+    def write_general_config(self, cpu_budget=_KEEP, parallel_framework: str | None = None,
+                             logfile_level: str | None = None) -> Path:
+        """
+        (Re)write configs/general_configs.yaml so FEABAS points at this project.
+
+        The compute settings are kept as they are unless given: *cpu_budget* ``None`` means all
+        physical cores (FEABAS's default), an int limits them. The file is only rewritten when
+        something in it changes.
+        """
         v = self.state.volume
-        existing = {}
-        if self.general_config_path().is_file():
-            try:
-                existing = yaml.safe_load(self.general_config_path().read_text(encoding="utf-8")) or {}
-            except Exception:
-                existing = {}
+        existing = _read_general(self.general_config_path())
         conf = {
             "working_directory": self.root.as_posix(),
-            "cpu_budget": cpu_budget if cpu_budget is not None else existing.get("cpu_budget"),
-            "parallel_framework": existing.get("parallel_framework", parallel_framework),
+            "cpu_budget": existing.get("cpu_budget") if cpu_budget is _KEEP else cpu_budget,
+            "parallel_framework": parallel_framework or existing.get("parallel_framework") or "process",
             "full_resolution": float(v.pixel_size_nm),
             "section_thickness": float(v.section_thickness_nm),
             "logging_directory": None,
-            "logfile_level": existing.get("logfile_level", logfile_level),
+            "logfile_level": logfile_level or existing.get("logfile_level") or "INFO",
             "console_level": existing.get("console_level", "INFO"),
             "archive_level": existing.get("archive_level", "INFO"),
             "tensorstore_timeout": existing.get("tensorstore_timeout"),
         }
-        text = (
-            "# Written by FEABAS Workbench. working_directory points at this project.\n"
-            + yaml.safe_dump(conf, sort_keys=False)
-        )
-        self.general_config_path().write_text(text, encoding="utf-8")
+        if conf != existing or not self.general_config_path().is_file():
+            _write_general(self.general_config_path(), conf)
         return self.general_config_path()
 
     # ------------------------------------------------------------------
@@ -341,7 +426,8 @@ class Project:
         if order_file.is_file():
             ordered = [ln.strip() for ln in order_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
             known = set(names)
-            names = [n for n in ordered if n in known] + [n for n in names if n not in set(ordered)]
+            listed = set(ordered)
+            names = list(dict.fromkeys(n for n in ordered if n in known)) + [n for n in names if n not in listed]
         return names
 
     # ------------------------------------------------------------------

@@ -61,7 +61,7 @@ if [ -z "$PY" ] || [ ! -x "$PY" ]; then
   echo "Could not determine the python of environment $ENVNAME."; exit 1
 fi
 echo "Installing the workbench from $HERE into $PY"
-"$PY" -m pip install --index-url https://pypi.org/simple -e "$HERE"
+"$PY" -m pip install -e "$HERE"
 
 # Hard-wire the launcher to this installation: start_gui.sh sources start_gui.local.sh before it
 # searches for environments; if this interpreter ever disappears, its own search takes over.

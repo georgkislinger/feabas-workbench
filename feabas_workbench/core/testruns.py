@@ -21,6 +21,22 @@ from pathlib import Path
 import yaml
 
 from .project import Project, DEFAULT_CONFIG_NAMES, USER_CONFIG_NAMES
+from .steps import is_link, stitched_dir
+
+# a sandbox writes its outputs into itself, never into the project's configured render folders
+_SANDBOX_OUTPUTS = {"stitching": {"rendering": {"out_dir": None}},
+                    "alignment": {"rendering": {"out_dir": None}, "tensorstore_rendering": {"out_dir": None}}}
+
+
+def _remove_sandbox(root: Path) -> None:
+    """Delete a test-run folder; a linked folder inside it is unlinked, never emptied."""
+    link = root / "stitched_sections"
+    if is_link(link):
+        if os.name == "nt":
+            os.rmdir(link)          # junction (or directory symlink): removes the link only
+        else:
+            link.unlink()
+    shutil.rmtree(root, ignore_errors=True)
 
 
 def _link_dir(src: Path, dst: Path) -> None:
@@ -120,17 +136,22 @@ def parse_stitch_coord(path: Path) -> dict:
 
 def create_montage_test(project: Project, name: str, sections: list[str],
                         bbox: tuple[float, float, float, float] | None = None,
-                        force_image_driver: bool = True) -> TestRun:
+                        force_image_driver: bool = True, settings: dict[str, dict] | None = None) -> TestRun:
     """
     bbox: (x0, y0, x1, y1) in section pixel coordinates; tiles whose nominal
-    rectangle intersects it are kept. None keeps all tiles.
+    rectangle intersects it are kept. None keeps all tiles. *settings* ({kind: {nested keys}})
+    are applied to the test's copy of the configs only - the project's stay as they are.
     """
+    import copy
     safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in name.strip()) or "test"
     root = project.tests_dir / safe
     if root.exists():
-        shutil.rmtree(root)
+        _remove_sandbox(root)
     (root / "stitch" / "stitch_coord").mkdir(parents=True)
-    overrides = {"stitching": {"rendering": {"driver": "image", "out_dir": None}}} if force_image_driver else None
+    overrides = copy.deepcopy(settings or {})
+    _deep_update(overrides, copy.deepcopy(_SANDBOX_OUTPUTS))
+    if force_image_driver:
+        _deep_update(overrides, {"stitching": {"rendering": {"driver": "image"}}})
     _prepare_configs(project, root, overrides)
     for sec in sections:
         src = project.stitch_coord_dir / f"{sec}.txt"
@@ -162,12 +183,14 @@ def create_montage_test(project: Project, name: str, sections: list[str],
 
 def create_align_test(project: Project, name: str, sections: list[str]) -> TestRun:
     """Sandbox for coarse/fine alignment on a subset: links stitch results, fresh alignment folders."""
+    import copy
     safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in name.strip()) or "test"
     root = project.tests_dir / safe
     if root.exists():
-        shutil.rmtree(root)
+        _remove_sandbox(root)
     root.mkdir(parents=True)
-    _prepare_configs(project, root)
+    # the stitched sections are read through the link below, wherever the project renders them
+    _prepare_configs(project, root, copy.deepcopy(_SANDBOX_OUTPUTS))
     (root / "stitch").mkdir()
     (root / "stitch" / "stitch_coord").mkdir()
     (root / "stitch" / "tform").mkdir()
@@ -181,7 +204,7 @@ def create_align_test(project: Project, name: str, sections: list[str]) -> TestR
             (root / "stitch" / "ts_specs").mkdir(exist_ok=True)
             shutil.copyfile(spec, root / "stitch" / "ts_specs" / spec.name)
     # stitched images are large: link, do not copy
-    ss = project.root / "stitched_sections"
+    ss = stitched_dir(project.root)
     if ss.is_dir():
         _link_dir(ss, root / "stitched_sections")
     # thumbnails and masks of the chosen sections are small: copy them so the test can start at matching
@@ -205,39 +228,55 @@ def create_align_test(project: Project, name: str, sections: list[str]) -> TestR
 
 
 def delete_test_run(tr: TestRun) -> None:
-    # remove junctions/symlinks without following them
-    for p in tr.root.rglob("*"):
-        pass
-    link = tr.root / "stitched_sections"
-    if link.exists() and (link.is_symlink() or _is_junction(link)):
-        if os.name == "nt":
-            os.rmdir(link)
-        else:
-            link.unlink()
-    shutil.rmtree(tr.root, ignore_errors=True)
+    _remove_sandbox(tr.root)
 
 
-def _is_junction(p: Path) -> bool:
-    try:
-        return bool(os.lstat(p).st_file_attributes & 0x400)   # FILE_ATTRIBUTE_REPARSE_POINT
-    except (AttributeError, OSError):
-        return False
+def _tile_roots(project: Project) -> list[Path]:
+    """Every folder the coordinate files of *project* can point into: raw tiles and preprocessed copies."""
+    roots = [Path(project.state.source.root_dir)] if project.state.source.root_dir else []
+    roots += [project.preprocessed_dir / "histmatch", project.preprocessed_dir / "denoised"]
+    out = []
+    for r in roots:
+        try:
+            out.append(r.resolve())
+        except OSError:
+            out.append(r)
+    return out
+
+
+def retarget_tile_path(project: Project, tile: str, new_root: Path) -> Path | None:
+    """Where an absolute tile path of a coordinate file lives under *new_root* (None: not in a tile folder)."""
+    t = Path(tile)
+    for r in _tile_roots(project):
+        try:
+            return Path(new_root) / t.relative_to(r)
+        except ValueError:
+            continue
+    return None
 
 
 def retarget_stitch_coords(project: Project, new_root: Path) -> int:
-    """Rewrite the {ROOT_DIR} line of every coordinate file (raw <-> preprocessed tiles)."""
+    """
+    Point every coordinate file at another tile folder (raw <-> preprocessed tiles): the
+    {ROOT_DIR} line of relative files, and each tile path of files written with absolute paths.
+    Returns the number of files changed.
+    """
     n = 0
     for p in project.stitch_coord_dir.glob("*.txt"):
         lines = p.read_text(encoding="utf-8").splitlines()
         out = []
-        changed = False
         for ln in lines:
             if ln.startswith("{ROOT_DIR}"):
-                out.append(f"{{ROOT_DIR}}\t{Path(new_root).as_posix()}")
-                changed = True
-            else:
-                out.append(ln)
-        if changed:
+                ln = f"{{ROOT_DIR}}\t{Path(new_root).as_posix()}"
+            elif ln.strip() and not ln.startswith("{"):
+                parts = ln.split("\t")
+                if Path(parts[0]).is_absolute():
+                    moved = retarget_tile_path(project, parts[0], new_root)
+                    if moved is not None:
+                        parts[0] = moved.as_posix()
+                        ln = "\t".join(parts)
+            out.append(ln)
+        if out != lines:
             p.write_text("\n".join(out) + "\n", encoding="utf-8")
             n += 1
     return n

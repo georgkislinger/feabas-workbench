@@ -40,7 +40,10 @@ class StepRun:
 def run_step(root: Path, step: Step, python: str = sys.executable, log: Callable[[str], None] = print,
              timeout: float | None = None) -> StepRun:
     """Run one FEABAS step in *python* with the project as working directory; stream its output to *log*."""
+    from .project import repair_working_directory
     root = Path(root)
+    if repair_working_directory(root):
+        log(f"== configs/general_configs.yaml pointed at another folder; now {root}")
     env = os.environ.copy()
     env.update(feabas_env())
     env["PYTHONUNBUFFERED"] = "1"

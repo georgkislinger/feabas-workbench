@@ -9,7 +9,7 @@ import numpy as np
 from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
                                QSplitter, QTabWidget, QVBoxLayout, QWidget)
 
-from ...core.steps import PipelineScan, write_fine_match_list, read_fine_match_list
+from ...core.steps import PipelineScan, stitched_dir, write_fine_match_list, read_fine_match_list
 from ...core.testruns import create_align_test, list_test_runs, delete_test_run, TestRun
 from ...core.maskstore import MaskStore
 from ...core.images import imread, to_uint8, compose_two_color
@@ -492,7 +492,7 @@ class AlignPage(Page):
         cur = self.y_src.currentData()
         self.y_src.blockSignals(True); self.y_src.clear(); self.y_src.addItem("thumbnails", "thumb")
         if self.project:
-            base = self.project.root / "stitched_sections"
+            base = stitched_dir(self.project.root, self.ctx.configs)
             for d in sorted(base.glob("mip*")) if base.is_dir() else []:
                 if d.name[3:].isdigit():
                     self.y_src.addItem(f"stitched sections {d.name}", int(d.name[3:]))
@@ -527,7 +527,7 @@ class AlignPage(Page):
                 if p:
                     items.append({"section": s, "image": str(p), "mip": self.store.thumbnail_mip()})
             else:
-                items.append({"section": s, "tiled_base": str(self.project.root / "stitched_sections"), "mip": int(src)})
+                items.append({"section": s, "tiled_base": str(stitched_dir(self.project.root, self.ctx.configs)), "mip": int(src)})
         if not items:
             QMessageBox.information(self, "Sections", "No thumbnails for the checked sections (run the Masks → Thumbnails step).")
             return
@@ -535,7 +535,9 @@ class AlignPage(Page):
         payload = {"model": str(m), "items": items, "out_dir": str(self.store.structures_dir), "classes": classes,
                    "conf": self.y_conf.value(), "tile": self.y_tile.value(), "overlap": max(64, self.y_tile.value() // 8)}
         self.submit(self.ctx.worker_spec("yolo_detect", payload, f"Structure detection ({len(items)} sections)",
-                                         count_outputs=lambda: len(list(self.store.structures_dir.glob("*.json"))) - 1, expected=len(items)))
+                                         count_outputs=lambda: sum(1 for p in self.store.structures_dir.glob("*.json")
+                                                                   if p.name != "structures.json"),
+                                         expected=len(items)))
 
     def _pairs(self) -> list[list[str]]:
         names = self.project.section_names()

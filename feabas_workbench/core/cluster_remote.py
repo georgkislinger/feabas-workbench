@@ -16,7 +16,8 @@ from .cluster_bundle import ClusterResources, MAX_BUNDLE_BYTES, file_hash, _port
 from .cluster_workspace import CONTROL, read_json, write_json, section_tasks
 from .configs import ConfigStore, CONFIG_FILES, dump_yaml, load_yaml
 from .project import VENDOR_DIR
-from .steps import (STEPS_BY_KEY, PipelineScan, clear_targets, count_outputs, expected_outputs, step_argv, write_fine_match_list, create_snapshot)
+from .steps import (STEPS_BY_KEY, PipelineScan, cleared_keys, clear_targets, count_outputs, expected_outputs, finish_clear,
+                    step_argv, write_fine_match_list, create_snapshot)
 
 
 def archive_outputs(root, keys, run_id):
@@ -33,6 +34,7 @@ def archive_outputs(root, keys, run_id):
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src), str(dest))
         moved.append(src)
+    finish_clear(root, {k for key in keys for k in cleared_keys(STEPS_BY_KEY[key])})
     return [str(p.relative_to(root)) for p in moved]
 
 
@@ -152,6 +154,12 @@ def install_workspace_inputs(bundle, root, manifest):
         b = load_yaml(bundle / "inputs/configs/general_configs.yaml")
         if any(a.get(k) != b.get(k) for k in ("full_resolution", "section_thickness")):
             keys.add("stitch.matching")
+        if "stitch.matching" in keys:
+            # FEABAS caches the tile resolution of its first run here and never reads the
+            # coordinate files again; new coordinates may carry a corrected pixel size
+            cache = root / "configs" / "resolutions.yaml"
+            if cache.is_file() and not cache.is_symlink():
+                cache.unlink()
         archived = archive_outputs(root, keys, manifest["run_id"])
         if archived:
             print("Changed inputs: previous downstream outputs moved to " + CONTROL + "/previous/" + manifest["run_id"], flush=True)

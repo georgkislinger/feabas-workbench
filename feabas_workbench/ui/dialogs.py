@@ -111,7 +111,10 @@ class StandardPipelineDialog(QDialog):
         v = p.state.volume
         tm = int(cs.get("thumbnail", "thumbnail_mip_level", 2) or 0)
         wm = int(cs.get("alignment", "matching.working_mip_level", 2) or 0)
-        mm = int(cs.get("alignment", "meshing.mask_mip_level", tm) or 0)
+        # FEABAS reads meshing.mask_mip_level only for higher-resolution masks in align/material_masks;
+        # without them the thumbnail masks are used, at the thumbnail mip
+        hires = (p.root / "align" / "material_masks").is_dir() and any((p.root / "align" / "material_masks").glob("*.png"))
+        mm = int(cs.get("alignment", "meshing.mask_mip_level", tm) or 0) if hires else tm
         px = float(v.pixel_size_nm or 0)
         w = v.tile_w * max(1, v.grid_cols) * 0.95 / 2 ** tm
         h = v.tile_h * max(1, v.grid_rows) * 0.95 / 2 ** tm

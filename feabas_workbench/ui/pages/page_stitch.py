@@ -7,7 +7,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSplitter,
                                QTabWidget, QVBoxLayout, QWidget, QCheckBox)
 
-from ...core.steps import PipelineScan
+from ...core.steps import PipelineScan, stitched_dir
 from ...core.testruns import create_montage_test, list_test_runs, delete_test_run, parse_stitch_coord, TestRun
 from ...core.images import TiledSectionSource, TensorStoreSource
 from ..widgets import ConfigEditor, ImageView, SectionPicker, TileGridWidget, card, hint, spin, dspin, combo
@@ -84,18 +84,31 @@ class QuickStitchSettings(QWidget):
         self.margin.setValue(int(g("matching.margin", 1000)))
         self.cache.setValue(int(g("matching.loader_config.cache_size", 150)))
 
+    def values(self) -> dict:
+        """The quick settings as {dotted stitching key: value}."""
+        return {"matching.num_workers": self.w_match.value(), "optimization.num_workers": self.w_opt.value(),
+                "rendering.num_workers": self.w_render.value(), "rendering.driver": self.driver.currentData(),
+                "rendering.loader_settings.apply_CLAHE": self.clahe.isChecked(),
+                "rendering.loader_settings.inverse": self.inverse.isChecked(),
+                "rendering.render_settings.blend": self.blend.currentData(),
+                "matching.matcher_config.conf_thresh": float(self.conf.value()), "matching.margin": self.margin.value(),
+                "matching.loader_config.cache_size": self.cache.value()}
+
+    def as_settings(self) -> dict:
+        """The quick settings as nested config overrides ({"stitching": {...}}), e.g. for a test run."""
+        from ...core.configs import set_dotted
+        nested: dict = {}
+        for k, v in self.values().items():
+            set_dotted(nested, k, v)
+        return {"stitching": nested}
+
     def apply(self) -> None:
         cs = self.ctx.configs
         if not cs:
             return
-        s = lambda k, v: cs.set("stitching", k, v)
-        s("matching.num_workers", self.w_match.value()); s("optimization.num_workers", self.w_opt.value())
-        s("rendering.num_workers", self.w_render.value()); s("rendering.driver", self.driver.currentData())
-        s("rendering.loader_settings.apply_CLAHE", self.clahe.isChecked()); s("rendering.loader_settings.inverse", self.inverse.isChecked())
-        s("rendering.render_settings.blend", self.blend.currentData())
-        s("matching.matcher_config.conf_thresh", float(self.conf.value())); s("matching.margin", self.margin.value())
-        s("matching.loader_config.cache_size", self.cache.value())
-        cs.save("stitching")
+        for k, v in self.values().items():
+            cs.set("stitching", k, v)
+        cs.save("stitching")          # only written when something actually changed
 
 
 class StitchPage(Page):
@@ -289,8 +302,8 @@ class StitchPage(Page):
             tw, th = self.project.state.volume.tile_w, self.project.state.volume.tile_h
             xs = [k[0] for k in self.test_grid.selected]; ys = [k[1] for k in self.test_grid.selected]
             bbox = (min(xs) + 1, min(ys) + 1, max(xs) + tw - 1, max(ys) + th - 1)
-        self.quick.apply()
-        tr = create_montage_test(self.project, self.test_name.text(), secs, bbox)
+        # the settings on screen go into the test's own copy of the configs; the project's stay untouched
+        tr = create_montage_test(self.project, self.test_name.text(), secs, bbox, settings=self.quick.as_settings())
         self.info(f"test run created: {tr.root}")
         self._refresh_tests(select=tr.name)
         self._qc_refresh_sources()
@@ -379,13 +392,18 @@ class StitchPage(Page):
         d = self.qc_source.currentData()
         return Path(d) if d else None
 
+    def _stitched(self, root: Path) -> Path:
+        """The rendered sections of the project (its configured render folder) or of a test run."""
+        project = self.project and root == self.project.root
+        return stitched_dir(root, self.ctx.configs if project else None)
+
     def _qc_refresh_sections(self) -> None:
         root = self._qc_root()
         cur = self.qc_sec.currentText()
         self.qc_sec.blockSignals(True)
         self.qc_sec.clear()
         if root:
-            base = root / "stitched_sections"
+            base = self._stitched(root)
             names = set()
             if (base / "mip0").is_dir():
                 names |= {p.name for p in (base / "mip0").iterdir() if p.is_dir()}
@@ -413,7 +431,7 @@ class StitchPage(Page):
         if not root or not name:
             self.qc_view.clear()
             return
-        base = root / "stitched_sections"
+        base = self._stitched(root)
         try:
             if (base / "mip0" / name).is_dir():
                 src = TiledSectionSource(base, name)
@@ -462,7 +480,7 @@ class StitchPage(Page):
         if not root or not name:
             return
         from ..external import open_in_fiji_folder
-        d = root / "stitched_sections" / "mip0" / name
+        d = self._stitched(root) / "mip0" / name
         if d.is_dir():
             open_in_fiji_folder(self.ctx.settings, d, self.info)
         else:

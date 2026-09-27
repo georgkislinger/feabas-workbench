@@ -76,8 +76,49 @@ class MaskStore:
 
     def thumbnail_mip(self) -> int:
         from .configs import ConfigStore
-        cs = ConfigStore(self.project.configs_dir)
+        cs = ConfigStore(self.project.configs_dir, hints=False)
         return int(cs.get("thumbnail", "thumbnail_mip_level", 2))
+
+    def thumbnail_shape(self, sec: str) -> tuple[int, int] | None:
+        """(height, width) of the thumbnail, from its header."""
+        p = self.thumbnail_path(sec)
+        if p is None:
+            return None
+        try:
+            from PIL import Image
+            with Image.open(p) as im:
+                return im.size[1], im.size[0]
+        except Exception:  # noqa: BLE001
+            img = imread(p)
+            return img.shape[:2]
+
+    def _thumbnail_time(self, sec: str) -> float:
+        p = self.thumbnail_path(sec)
+        try:
+            return p.stat().st_mtime if p else 0.0
+        except OSError:
+            return 0.0
+
+    def older_than_thumbnail(self, path: Path, sec: str) -> bool:
+        """A mask made from an earlier thumbnail of the section (the thumbnails were made again since)."""
+        try:
+            return Path(path).stat().st_mtime + 1 < self._thumbnail_time(sec)
+        except OSError:
+            return False
+
+    def tissue_is_stale(self, sec: str) -> bool:
+        p = self.tissue_dir / f"{sec}.png"
+        return p.is_file() and self.older_than_thumbnail(p, sec)
+
+    def folds_are_stale(self, sec: str) -> bool:
+        """Fold masks detected on thumbnails that have been replaced since (finer-mip detections are kept)."""
+        p = self.folds_dir / f"{sec}.png"
+        if not p.is_file():
+            return False
+        fm = self.fold_mip()
+        if fm is not None and fm < self.thumbnail_mip():
+            return False                       # made from the stitched sections, not from the thumbnails
+        return self.older_than_thumbnail(p, sec)
 
     def sections_with_thumbnails(self) -> list[str]:
         return [s for s in self.project.section_names() if self.thumbnail_path(s)]
@@ -125,7 +166,11 @@ class MaskStore:
         """
         p = self.roi_dir / f"{sec}.png"
         if p.is_file():
-            return read_mask(p) == LABEL_DEFAULT
+            m = read_mask(p)
+            shape = self.thumbnail_shape(sec)
+            if shape is None or (m.shape[:2] == tuple(shape) and not self.older_than_thumbnail(p, sec)):
+                return m == LABEL_DEFAULT
+            p.unlink()                         # kept for thumbnails that have been made again since
         src = self.thumb_mask_dir / f"{sec}.png"
         if src.is_file() and not self.manifest.get(sec, {}).get("composed"):
             m = read_mask(src)
@@ -170,6 +215,21 @@ class MaskStore:
         if save:
             write_mask(self.tissue_dir / f"{sec}.png", (m * 255).astype(np.uint8))
         return m, thr
+
+    def ensure_tissue(self, sec: str, params: TissueParams) -> bool:
+        """
+        Make sure masks/tissue fits the current thumbnail before composing: computed when missing
+        or older than the thumbnail; an imported tissue mask is resampled from its full-resolution
+        copy instead of being replaced by a computed one. True if it was (re)made.
+        """
+        if self.tissue_mask(sec) is not None and not self.tissue_is_stale(sec):
+            return False
+        ext = self.external_mask("tissue", sec)
+        shape = self.thumbnail_shape(sec)
+        if ext is not None and shape is not None:
+            write_mask(self.tissue_dir / f"{sec}.png", ((resize_mask(ext, shape) > 0) * 255).astype(np.uint8))
+            return True
+        return self.compute_tissue(sec, params, save=True) is not None
 
     # -- external masks -------------------------------------------------------
     def _ext_meta(self) -> dict:

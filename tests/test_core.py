@@ -504,7 +504,7 @@ def test_worker_package_root_holds_only_the_package(tmp_path, monkeypatch):
     from feabas_workbench.core import envs, jobs
     monkeypatch.setattr(envs, "settings_dir", lambda: tmp_path)
     root = jobs.worker_package_root()
-    assert root == tmp_path / "worker_pkg"
+    assert root.parent == tmp_path / "worker_pkg"        # one folder per version of the files
     entries = sorted(p.name for p in root.iterdir())
     assert entries == ["feabas_workbench", "stamp.json"]
     pkg = root / "feabas_workbench"
@@ -516,10 +516,11 @@ def test_worker_package_root_holds_only_the_package(tmp_path, monkeypatch):
     assert not list(pkg.rglob("__pycache__"))
     env = jobs.python_env_for_package_root(root)
     assert env["PYTHONPATH"].split(__import__("os").pathsep)[0] == str(root)
-    # a second call with unchanged sources reuses the staged copy
-    stamp = (root / "stamp.json").stat().st_mtime_ns
+    # a second call with unchanged sources reuses the staged copy (the files are not copied again)
+    ino = (pkg / "__init__.py").stat().st_ino
     assert jobs.worker_package_root() == root
-    assert (root / "stamp.json").stat().st_mtime_ns == stamp
+    assert (pkg / "__init__.py").stat().st_ino == ino
+    assert sorted(p.name for p in root.parent.iterdir()) == [root.name]    # no temporary folder left behind
 
 
 def test_cancel_probes_unblocks_a_thread_stuck_in_a_probe_subprocess():
@@ -715,7 +716,8 @@ def test_demo_project_is_ready_for_stitching(tmp_path):
     # small sections -> thumbnail mip 0, where FEABAS cannot build the high-pass filter: it must be off
     assert cs.get("thumbnail", "thumbnail_mip_level") == 0
     assert cs.get("thumbnail", "downsample.thumbnail_highpass") is False
-    assert cs.get("alignment", "meshing.mask_mip_level") == 0
+    # the mask mip only describes align/material_masks (none yet): it is not tied to the thumbnails
+    assert not cs["alignment"].is_overridden("meshing.mask_mip_level")
     assert expected_outputs(p.root, STEPS_BY_KEY["stitch.matching"]) == 3
     assert expected_outputs(p.root, STEPS_BY_KEY["thumbnail.matching"]) == 2 + 1     # compare distance 2
     # the tiles really overlap by the declared amount: neighbouring tiles share their overlap strip
@@ -734,7 +736,10 @@ def test_set_thumbnail_mip_switches_highpass_off_at_mip0(tmp_path):
     assert set_thumbnail_mip(cs, 2) is False and cs.get("thumbnail", "downsample.thumbnail_highpass") is True
     assert set_thumbnail_mip(cs, 0) is True and cs.get("thumbnail", "downsample.thumbnail_highpass") is False
     assert set_thumbnail_mip(cs, 0, highpass=False) is False
-    assert cs.get("alignment", "meshing.mask_mip_level") == 0
+    # high-resolution masks keep their own mip level whatever the thumbnails do
+    cs.set("alignment", "meshing.mask_mip_level", 1)
+    set_thumbnail_mip(cs, 3)
+    assert cs.get("alignment", "meshing.mask_mip_level") == 1
 
 
 def test_install_plan_runs_pip_inside_the_env_without_an_interpreter_path(tmp_path):

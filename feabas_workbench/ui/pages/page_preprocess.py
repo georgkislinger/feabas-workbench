@@ -393,6 +393,18 @@ class PreprocessPage(Page):
         self.hm_status.setText(f"left: {tile.name} raw, right: matched to {tmpl.name}")
         self._save_hm()
 
+    def _missing_preprocessed(self, root: Path) -> list[str]:
+        """Tiles named in the coordinate files that the folder *root* has no copy of (relative paths)."""
+        from ...core.testruns import retarget_tile_path
+        missing = []
+        for coord in sorted(self.project.stitch_coord_dir.glob("*.txt")):
+            info = parse_stitch_coord(coord)
+            for rel, _x, _y in info["tiles"]:
+                target = retarget_tile_path(self.project, rel, root) if Path(rel).is_absolute() else root / rel
+                if target is None or not target.is_file():
+                    missing.append(rel)
+        return missing
+
     def _hm_run(self) -> None:
         if not self.require_project():
             return
@@ -606,11 +618,21 @@ class PreprocessPage(Page):
             return
         p = self.project
         choice = "histmatch" if self.src_hm.isChecked() else ("denoise" if self.src_dn.isChecked() else "raw")
+        previous = p.state.preprocessing.active_source
         p.state.preprocessing.active_source = choice
         root = p.active_tile_root()
+        p.state.preprocessing.active_source = previous      # not switched until the folder checks out
         if root is None or (not self.ctx.cluster_enabled and not root.is_dir()):
             self.error(f"tile folder not found: {root}")
             return
+        if choice != "raw" and not self.ctx.cluster_enabled:
+            missing = self._missing_preprocessed(root)
+            if missing and not self.confirm(
+                    "Preprocessed tiles incomplete",
+                    f"{len(missing)} tile(s) of the coordinate files have no preprocessed copy in {root} "
+                    f"(e.g. {missing[0]}): stitching would fail on them. Switch anyway?"):
+                return
+        p.state.preprocessing.active_source = choice
         n = retarget_stitch_coords(p, root)
         p.save()
         self.info(f"{n} coordinate files now point at {root}")

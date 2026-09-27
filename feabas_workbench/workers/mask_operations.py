@@ -25,9 +25,15 @@ def main():
         elif spec["operation"] == "compose":
             if spec["skip_edited"] and store.is_hand_edited(section):
                 continue
-            if store.tissue_mask(section) is None:
-                store.compute_tissue(section, params, save=True)
-            results.append(store.compose(section, **spec["compose"]))
+            store.ensure_tissue(section, params)
+            options = dict(spec["compose"])
+            stale_folds = options.get("use_folds", True) and store.folds_are_stale(section)
+            if stale_folds:
+                options["use_folds"] = False      # drawn on an earlier thumbnail: they may not line up
+            row = store.compose(section, **options)
+            if row is not None:
+                row["stale_folds_skipped"] = bool(stale_folds)
+            results.append(row)
         else:
             raise ValueError("Unknown mask operation.")
         progress(i, len(sections), section)
