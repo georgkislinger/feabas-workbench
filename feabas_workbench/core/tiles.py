@@ -154,24 +154,52 @@ def parse_sequential(stem: str, order: str) -> Coord | None:
 # --------------------------------------------------------------------------
 
 def list_image_files(root: os.PathLike | str, ext: str = "tif", recursive: bool = True,
-                     limit: int | None = None) -> list[Path]:
+                     limit: int | None = None, exclude: Iterable[os.PathLike | str] = ()) -> list[Path]:
+    """
+    Image files under *root*, sorted. Folders in *exclude* are skipped with everything below them:
+    a project folder that lies inside the tile folder holds preprocessed copies of the tiles with
+    the same names and extension, which must not be taken for more raw tiles.
+    """
     root = Path(root)
     ext = ext.strip().lstrip(".").lower()
     if not root.is_dir():
         return []
+    skip: dict[str, set[Path]] = {}
+    for e in exclude:
+        try:
+            r = Path(e).resolve()
+        except OSError:
+            continue
+        skip.setdefault(r.name, set()).add(r)
+
+    def excluded(folder: Path) -> bool:
+        if folder.name not in skip:
+            return False
+        try:
+            return folder.resolve() in skip[folder.name]
+        except OSError:
+            return False
+
+    def wanted(name: str) -> bool:
+        suf = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        return suf == ext if ext else suf in IMAGE_EXTS
+
     out: list[Path] = []
-    it = root.rglob("*") if recursive else root.glob("*")
-    for p in it:
-        if not p.is_file():
-            continue
-        suf = p.suffix.lower().lstrip(".")
-        if ext and suf != ext:
-            continue
-        if not ext and suf not in IMAGE_EXTS:
-            continue
-        out.append(p)
-        if limit and len(out) >= limit:
-            break
+    if recursive:
+        for dirpath, dirnames, filenames in os.walk(root):
+            here = Path(dirpath)
+            dirnames[:] = sorted(n for n in dirnames if not excluded(here / n))
+            for name in sorted(filenames):
+                if wanted(name):
+                    out.append(here / name)
+                    if limit and len(out) >= limit:
+                        return sorted(out)
+    else:
+        for p in sorted(root.iterdir()):
+            if p.is_file() and wanted(p.name):
+                out.append(p)
+                if limit and len(out) >= limit:
+                    break
     out.sort()
     return out
 
@@ -376,6 +404,42 @@ def _parse_fibics(xml: str, info: TileInfo) -> None:
         info.scan_rotation_rad = math.radians(rot)
 
 
+# pixel sizes a tile can plausibly have, in nm (the Project page accepts the same range)
+PIXEL_SIZE_RANGE_NM = (0.01, 10000.0)
+_IMAGEJ_UNIT_NM = {"nm": 1.0, "nanometer": 1.0, "nanometers": 1.0, "micron": 1e3, "microns": 1e3, "um": 1e3,
+                   "µm": 1e3, "μm": 1e3, "mm": 1e6, "cm": 1e7, "m": 1e9}
+
+
+def _generic_pixel_size_nm(tif, tags) -> float | None:
+    """
+    Pixel size from a TIFF without vendor metadata: the resolution tags, in ImageJ's unit when
+    ImageJ wrote the file. A resolution in pixels per inch is almost always a print or screen
+    setting (72, 300 dpi ...) that says nothing about the sample, so whole-number dpi values are
+    ignored, and so is anything outside PIXEL_SIZE_RANGE_NM.
+    """
+    xres = tags.get("XResolution")
+    if xres is None:
+        return None
+    num, den = xres.value
+    ppu = num / den if den else 0
+    if ppu <= 0:
+        return None
+    unit = tags.get("ResolutionUnit")
+    u = getattr(unit.value, "value", unit.value) if unit is not None else 2
+    size = None
+    ij = getattr(tif, "imagej_metadata", None) or {}
+    ij_unit = str(ij.get("unit", "")).strip().lower().replace("\\u00b5", "µ")
+    if ij_unit in _IMAGEJ_UNIT_NM:
+        size = _IMAGEJ_UNIT_NM[ij_unit] / ppu
+    elif u == 3:                                   # centimeter
+        size = 1e7 / ppu
+    elif u == 2 and abs(ppu - round(ppu)) > 1e-6:  # inch, and not a round dpi number
+        size = 2.54e7 / ppu
+    if size is None or not (PIXEL_SIZE_RANGE_NM[0] <= size <= PIXEL_SIZE_RANGE_NM[1]):
+        return None
+    return size
+
+
 def read_tile_info(path: os.PathLike | str) -> TileInfo:
     path = str(path)
     info = TileInfo()
@@ -408,23 +472,10 @@ def read_tile_info(path: os.PathLike | str) -> TileInfo:
                     xml = xml.decode("latin-1", errors="replace")
                 _parse_fibics(str(xml), info)
             else:
-                # generic TIFF resolution tag (pixels per unit)
                 try:
-                    xres = tags.get("XResolution")
-                    unit = tags.get("ResolutionUnit")
-                    if xres is not None:
-                        num, den = xres.value
-                        ppu = num / den if den else 0
-                        if ppu > 0 and unit is not None:
-                            u = unit.value
-                            u = getattr(u, "value", u)
-                            if u == 3:        # centimeter
-                                info.pixel_size_nm = 1e7 / ppu
-                            elif u == 2:      # inch
-                                info.pixel_size_nm = 2.54e7 / ppu
-                    # ImageJ / OME metadata could be added here
-                except Exception:
-                    pass
+                    info.pixel_size_nm = _generic_pixel_size_nm(t, tags)
+                except Exception:  # noqa: BLE001 - metadata is a convenience, never a reason to fail
+                    info.pixel_size_nm = None
             return info
     except Exception:
         pass
@@ -515,9 +566,10 @@ class LayoutParams:
         return float(self.overlap_x), float(self.overlap_y)
 
 
-def scan_tiles(root: os.PathLike | str, rule: NamingRule) -> tuple[list[Tile], list[Path]]:
-    """Return (matched tiles, unmatched files)."""
-    files = list_image_files(root, rule.ext, rule.recursive)
+def scan_tiles(root: os.PathLike | str, rule: NamingRule,
+               exclude: Iterable[os.PathLike | str] = ()) -> tuple[list[Tile], list[Path]]:
+    """Return (matched tiles, unmatched files). Folders in *exclude* are not searched."""
+    files = list_image_files(root, rule.ext, rule.recursive, exclude=exclude)
     tiles: list[Tile] = []
     unmatched: list[Path] = []
     for p in files:
@@ -714,9 +766,9 @@ class CoordPlan:
 
 def build_plan(root: os.PathLike | str, rule: NamingRule, layout: LayoutParams,
                resolution_nm: float | None = None, read_stage: bool | None = None,
-               z_pad: int | None = None) -> CoordPlan:
+               z_pad: int | None = None, exclude: Iterable[os.PathLike | str] = ()) -> CoordPlan:
     root = Path(root)
-    tiles, unmatched = scan_tiles(root, rule)
+    tiles, unmatched = scan_tiles(root, rule, exclude=exclude)
     plan = CoordPlan(root_dir=root)
     if not tiles:
         plan.warnings.append(f"No files matched rule '{rule.describe()}' under {root}.")

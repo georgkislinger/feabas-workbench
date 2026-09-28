@@ -51,6 +51,9 @@ class JobSpec:
     tag: str = ""                                       # free-form (e.g. test-run name)
     log_file: Path | None = None
     remote: dict | None = None                         # portable command for the cluster execution backend
+    # called with the job's start time after it was cancelled (the process tree is killed, so files it
+    # was writing may be cut short); returns lines for the log
+    after_cancel: Callable[[float], list[str]] | None = None
 
     def cmdline(self) -> str:
         return " ".join(shlex.quote(a) for a in self.argv)
@@ -223,6 +226,12 @@ class Job:
     def _finish(self, code: int) -> None:
         self._stop_poll.set()
         secs = time.time() - self.started_at
+        if self.cancelled and self.spec.after_cancel is not None:
+            try:
+                for line in self.spec.after_cancel(self.started_at) or []:
+                    self._emit("err", line.rstrip("\n") + "\n")
+            except Exception as e:  # noqa: BLE001 - clean-up must never keep the queue from moving on
+                self._emit("err", f"clean-up after cancelling failed: {e}\n")
         if self._logfh:
             try:
                 self._logfh.write(f"===== exit {code} after {secs:.0f}s\n")
@@ -362,8 +371,10 @@ def worker_argv(python: str, module: str, spec_file: Path | None = None, *extra:
 
 
 def write_spec_file(directory: Path, name: str, payload: dict) -> Path:
+    """A new spec file for one job. Names are unique: two jobs queued in the same second keep their own."""
+    import uuid
     directory.mkdir(parents=True, exist_ok=True)
-    p = directory / f"{name}_{int(time.time())}.json"
+    p = directory / f"{name}_{time.strftime('%Y%m%d-%H%M%S')}_{uuid.uuid4().hex[:8]}.json"
     p.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
     return p
 
@@ -410,14 +421,18 @@ def worker_package_root() -> Path:
     PyInstaller bundle - both full of numpy, cv2, h5py ... compiled for *this* Python. Put at
     the front of another interpreter's path they shadow its own copies, and the worker dies
     importing numpy. So the pure-Python parts a worker needs are staged into a private
-    folder under the settings directory and that is used instead. The copy is under 1 MB
-    and is refreshed whenever the installed files change.
+    folder under the settings directory and that is used instead. The copy is under 1 MB.
+
+    Every version of the files gets its own folder (named after them), created complete under a
+    temporary name and renamed into place: a second installation, another version, or edits in a
+    development checkout never replace files a running worker is importing. Folders unused for
+    two weeks are removed.
     """
+    import hashlib
+    import uuid
     from .envs import settings_dir
     src = package_root() / "feabas_workbench"
-    dst_root = settings_dir() / "worker_pkg"
-    dst = dst_root / "feabas_workbench"
-    stamp_file = dst_root / "stamp.json"
+    base = settings_dir() / "worker_pkg"
     files: list[Path] = []
     for part in WORKER_PACKAGE_PARTS:
         p = src / part
@@ -425,20 +440,51 @@ def worker_package_root() -> Path:
             files.append(p)
         elif p.is_dir():
             files += [f for f in p.rglob("*") if f.is_file() and "__pycache__" not in f.parts]
+    files.sort()
     stamp = {"src": str(src), "n": len(files),
-             "newest": max((f.stat().st_mtime for f in files), default=0.0)}
+             "newest": max((f.stat().st_mtime for f in files), default=0.0),
+             "size": sum(f.stat().st_size for f in files)}
+    name = hashlib.sha1(json.dumps(stamp, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    dst_root = base / name
+    stamp_file = dst_root / "stamp.json"
     try:
-        if dst.is_dir() and json.loads(stamp_file.read_text(encoding="utf-8")) == stamp:
+        if (dst_root / "feabas_workbench").is_dir() and json.loads(stamp_file.read_text(encoding="utf-8")) == stamp:
+            os.utime(stamp_file)                  # in use: keep it from the clean-up below
             return dst_root
     except (OSError, ValueError):
         pass
-    shutil.rmtree(dst, ignore_errors=True)
+    if dst_root.exists():                         # an unusable leftover (no or broken stamp)
+        shutil.rmtree(dst_root, ignore_errors=True)
+    tmp = base / f".{name}-{uuid.uuid4().hex[:8]}"
     for f in files:
-        out = dst / f.relative_to(src)
+        out = tmp / "feabas_workbench" / f.relative_to(src)
         out.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(f, out)
-    stamp_file.write_text(json.dumps(stamp), encoding="utf-8")
+    (tmp / "stamp.json").write_text(json.dumps(stamp), encoding="utf-8")
+    try:
+        os.replace(tmp, dst_root)                 # appears complete or not at all
+    except OSError:
+        shutil.rmtree(tmp, ignore_errors=True)
+        if not (dst_root / "feabas_workbench").is_dir():
+            raise
+        # another process staged the same files meanwhile: use its copy
+    _forget_old_worker_packages(base, keep=dst_root)
     return dst_root
+
+
+def _forget_old_worker_packages(base: Path, keep: Path, max_age_days: float = 14) -> None:
+    """Remove staged copies that have not been used for a while (best effort)."""
+    cutoff = time.time() - max_age_days * 86400
+    for d in base.iterdir() if base.is_dir() else []:
+        if d == keep or not d.is_dir():
+            continue
+        marker = d / "stamp.json"
+        try:
+            last = marker.stat().st_mtime if marker.is_file() else d.stat().st_mtime
+        except OSError:
+            continue
+        if last < cutoff:
+            shutil.rmtree(d, ignore_errors=True)
 
 
 def worker_env() -> dict[str, str]:

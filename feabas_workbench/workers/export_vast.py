@@ -48,10 +48,14 @@ def link_or_copy(src: Path, dst: Path) -> None:
 
 
 def export_vast(base: Path, out: Path, name: str, voxel: tuple[float, float, float], mips: list[int],
-                fmt_bytes: int = 1, progress_cb=None) -> dict:
-    secs0 = section_dirs(base, 0)
+                fmt_bytes: int = 1, progress_cb=None, base_mip: int = 0) -> dict:
+    """*base_mip*: the level the stack was rendered at, which becomes VAST's mip0 (voxel size scaled to match)."""
+    secs0 = section_dirs(base, base_mip)
     if not secs0:
-        raise RuntimeError(f"no rendered sections under {base / 'mip0'}")
+        raise RuntimeError(f"no rendered sections under {base / f'mip{base_mip}'}")
+    mips = sorted(m for m in mips if m >= base_mip)
+    scale = 2 ** base_mip
+    voxel = (voxel[0] * scale, voxel[1] * scale, voxel[2])
     # geometry from mip0 metadata
     W = H = 0
     tile = None
@@ -83,7 +87,7 @@ def export_vast(base: Path, out: Path, name: str, voxel: tuple[float, float, flo
                     continue
                 r, c = int(mm.group(1)), int(mm.group(2))
                 ext = ext or mm.group(3).lower()
-                dst = out / f"mip{m}" / f"slice{z:04d}" / f"{z:04d}_tr{r}-tc{c}.{ext}"
+                dst = out / f"mip{m - base_mip}" / f"slice{z:04d}" / f"{z:04d}_tr{r}-tc{c}.{ext}"
                 link_or_copy(p, dst)
                 done += 1
                 if progress_cb and done % 50 == 0:
@@ -95,7 +99,7 @@ def export_vast(base: Path, out: Path, name: str, voxel: tuple[float, float, flo
         "SourceParamSequence": "ssrc", "SourceMinS": z0, "SourceMaxS": z1,
         "SourceMinR": 1, "SourceMaxR": rows, "SourceMinC": 1, "SourceMaxC": cols,
         "MipMapFileNameTemplate": f".\\mip%d\\slice%04d\\%04d_tr%d-tc%d.{ext or 'png'}",
-        "MipMapParamSequence": "mssrc", "SourceMinM": 1, "SourceMaxM": max(mips) if mips else 0,
+        "MipMapParamSequence": "mssrc", "SourceMinM": 1, "SourceMaxM": (max(mips) - base_mip) if mips else 0,
         "SourceTileSizeX": ts, "SourceTileSizeY": ts, "SourceBytesPerPixel": fmt_bytes,
         "MissingImagePolicy": "nearest",
         "TargetDataSizeX": W, "TargetDataSizeY": H, "TargetDataSizeZ": z1 - z0 + 1,
@@ -109,11 +113,13 @@ def export_vast(base: Path, out: Path, name: str, voxel: tuple[float, float, flo
 
 
 def export_omezarr(base: Path, out: Path, name: str, voxel: tuple[float, float, float], mips: list[int],
-                   chunk: int = 256, progress_cb=None) -> dict:
-    """Write OME-Zarr 0.4 (zarr v2) from the PNG tile pyramid; dtype uint8/uint16 from the tiles."""
-    secs0 = section_dirs(base, 0)
+                   chunk: int = 256, progress_cb=None, base_mip: int = 0) -> dict:
+    """Write OME-Zarr 0.4 (zarr v2) from the PNG tile pyramid; dtype uint8/uint16 from the tiles.
+    *base_mip* is the rendered level: dataset "0" holds it, "1" the next level and so on."""
+    secs0 = section_dirs(base, base_mip)
     if not secs0:
-        raise RuntimeError(f"no rendered sections under {base / 'mip0'}")
+        raise RuntimeError(f"no rendered sections under {base / f'mip{base_mip}'}")
+    mips = sorted(m for m in mips if m >= base_mip)
     zs = sorted(z_of(d.name) for d in secs0)
     z0 = zs[0]; nz = zs[-1] - z0 + 1
     sample = imread(next(secs0[0].glob("*_tr*-tc*.*")))
@@ -129,20 +135,21 @@ def export_omezarr(base: Path, out: Path, name: str, voxel: tuple[float, float, 
                 if info["tiles"]:
                     W = max(W, int(max(t[3] for t in info["tiles"]))); H = max(H, int(max(t[4] for t in info["tiles"])))
         if W == 0:
-            W = int(math.ceil(sizes[0][0] / 2 ** m)); H = int(math.ceil(sizes[0][1] / 2 ** m))
+            W = int(math.ceil(sizes[base_mip][0] / 2 ** (m - base_mip))); H = int(math.ceil(sizes[base_mip][1] / 2 ** (m - base_mip)))
         sizes[m] = (W, H)
     out.mkdir(parents=True, exist_ok=True)
     (out / ".zgroup").write_text(json.dumps({"zarr_format": 2}, indent=2), encoding="utf-8")
     datasets = []
     for m in mips:
-        datasets.append({"path": str(m), "coordinateTransformations": [{"type": "scale",
+        level = str(m - base_mip)
+        datasets.append({"path": level, "coordinateTransformations": [{"type": "scale",
                          "scale": [1.0, voxel[2] / 1000.0, voxel[1] * 2 ** m / 1000.0, voxel[0] * 2 ** m / 1000.0]}]})
         W, H = sizes[m]
         arr = {"chunks": [1, 1, chunk, chunk], "compressor": None, "dimension_separator": "/", "dtype": zdtype,
                "fill_value": 0, "filters": None, "order": "C", "shape": [1, nz, H, W], "zarr_format": 2}
-        (out / str(m)).mkdir(exist_ok=True)
-        (out / str(m) / ".zarray").write_text(json.dumps(arr, indent=2), encoding="utf-8")
-        (out / str(m) / ".zattrs").write_text(json.dumps({"_ARRAY_DIMENSIONS": ["c", "z", "y", "x"]}), encoding="utf-8")
+        (out / level).mkdir(exist_ok=True)
+        (out / level / ".zarray").write_text(json.dumps(arr, indent=2), encoding="utf-8")
+        (out / level / ".zattrs").write_text(json.dumps({"_ARRAY_DIMENSIONS": ["c", "z", "y", "x"]}), encoding="utf-8")
     attrs = {"multiscales": [{"version": "0.4", "name": name,
                               "axes": [{"name": "c", "type": "channel"}, {"name": "z", "type": "space", "unit": "micrometer"},
                                        {"name": "y", "type": "space", "unit": "micrometer"}, {"name": "x", "type": "space", "unit": "micrometer"}],
@@ -174,7 +181,7 @@ def export_omezarr(base: Path, out: Path, name: str, voxel: tuple[float, float, 
                 cx0, cx1 = x0 // chunk, min(W - 1, x0 + a.shape[1] - 1) // chunk
                 for cy in range(cy0, cy1 + 1):
                     for cx in range(cx0, cx1 + 1):
-                        cpath = out / str(m) / "0" / str(z) / str(cy) / str(cx)
+                        cpath = out / str(m - base_mip) / "0" / str(z) / str(cy) / str(cx)
                         if cpath.exists():
                             blk = np.fromfile(cpath, dtype=dtype).reshape(chunk, chunk)
                         else:
@@ -190,7 +197,7 @@ def export_omezarr(base: Path, out: Path, name: str, voxel: tuple[float, float, 
             done += 1
             if progress_cb:
                 progress_cb(done, total, f"mip{m} z{z + z0}")
-    return {"zarr": str(out), "levels": mips, "shape": [nz, sizes[0][1], sizes[0][0]]}
+    return {"zarr": str(out), "levels": mips, "shape": [nz, sizes[base_mip][1], sizes[base_mip][0]]}
 
 
 def main() -> int:
@@ -201,12 +208,14 @@ def main() -> int:
     voxel = tuple(float(v) for v in spec.get("voxel_nm", (4, 4, 50)))
     mips = [int(m) for m in spec.get("mips", [])] or sorted(int(p.name[3:]) for p in base.glob("mip*") if p.name[3:].isdigit())
     what = spec.get("what", "vast")
+    base_mip = int(spec.get("base_mip", 0))
     res = {}
     if what in ("vast", "both"):
-        res["vast"] = export_vast(base, out / "vast", name, voxel, mips, progress_cb=progress)
+        res["vast"] = export_vast(base, out / "vast", name, voxel, mips, progress_cb=progress, base_mip=base_mip)
         log(f"VAST export: {res['vast']}")
     if what in ("omezarr", "both"):
-        res["omezarr"] = export_omezarr(base, out / f"{name}.ome.zarr", name, voxel, mips, int(spec.get("chunk", 256)), progress_cb=progress)
+        res["omezarr"] = export_omezarr(base, out / f"{name}.ome.zarr", name, voxel, mips, int(spec.get("chunk", 256)),
+                                        progress_cb=progress, base_mip=base_mip)
         log(f"OME-Zarr export: {res['omezarr']}")
     result(res)
     return 0

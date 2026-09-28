@@ -15,7 +15,7 @@ from feabas_workbench.core.configs import ConfigStore
 from feabas_workbench.core.jobs import kill_tree, feabas_env
 from feabas_workbench.core.local_parallel import SECTION_STEPS, input_sections, selected_indices, plan
 from feabas_workbench.core.project import Project
-from feabas_workbench.core.steps import STEPS_BY_KEY, step_argv
+from feabas_workbench.core.steps import STEPS_BY_KEY, aligned_dir, stitched_dir, step_argv
 from feabas_workbench.workers.common import load_spec, log, progress, result, run
 
 
@@ -37,11 +37,8 @@ def verify_section(root, key, source, configs):
             raise RuntimeError(f"{name}: thumbnail or its material mask missing after processing.")
         return
     kind = "stitching" if key == "stitch.rendering" else "alignment"
-    folder = "stitched_sections" if kind == "stitching" else "aligned_stack"
-    base = Path(configs.get(kind, "rendering.out_dir") or root / folder)
-    if not base.is_absolute():
-        base = root / base
-    mip = int(configs.get(kind, "rendering.mip_level", 0))
+    base = stitched_dir(root, configs) if kind == "stitching" else aligned_dir(root, configs)
+    mip = int(configs.get(kind, "rendering.mip_level", 0) or 0)
     if key == "align.downsample":
         if int(configs.get(kind, "downsample.max_mip", 8)) <= mip:
             return

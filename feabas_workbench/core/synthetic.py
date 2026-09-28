@@ -23,8 +23,8 @@ from pathlib import Path
 import numpy as np
 
 from . import tiles as T
-from .configs import ConfigStore, suggest_thumbnail_mip, suggest_working_mip, set_thumbnail_mip
-from .project import Project
+from .configs import ConfigStore, apply_suggested_mips, suggest_thumbnail_mip, suggest_working_mip
+from .project import Project, forget_cached_resolution
 
 
 def synthetic_sections(n_sections: int = 4, height: int = 730, width: int = 730, seed: int = 0,
@@ -97,6 +97,19 @@ def make_synthetic_tiles(root: os.PathLike | str, n_sections: int = 4, rows: int
             "overlap_px": ov, "overlap_pct": overlap_pct, "section_w": width, "section_h": height, "n_tiles": n}
 
 
+def demo_alignment_grid(section_px: float, working_mip: int) -> tuple[int, list[int]]:
+    """
+    Mesh size (mip0 px) and fine-matching grid spacings (working-mip px) for a small section.
+
+    FEABAS's defaults (600 px meshes, 400/100 px matching grids) are made for sections tens of
+    thousands of pixels wide; on a demo section of a few hundred they leave one match point per
+    section pair, and a fine alignment from one point passes any check. About five mesh cells
+    and seven grid points across the section keep the demo a real test of the fine alignment.
+    """
+    at_mip = max(1.0, float(section_px) / 2 ** int(working_mip))
+    return max(64, int(round(section_px / 5))), [max(32, int(round(at_mip / 2))), max(12, int(round(at_mip / 7)))]
+
+
 def make_demo_project(project_root: os.PathLike | str, tiles_root: os.PathLike | str | None = None,
                       pixel_nm: float = 10.0, thickness_nm: float = 50.0, **tile_kwargs) -> Project:
     """
@@ -129,15 +142,18 @@ def make_demo_project(project_root: os.PathLike | str, tiles_root: os.PathLike |
     v.dtype = "uint8"
     plan.resolution_nm = v.pixel_size_nm
     T.write_plan(plan, p.stitch_coord_dir, "relative")
+    forget_cached_resolution(p.root, v.pixel_size_nm)
     p.write_general_config()
-    p.save()
     cs = ConfigStore(p.configs_dir)
     w, h = plan.section_bbox(next(iter(plan.sections)))
-    tm = suggest_thumbnail_mip(w, h)
-    cs.set("alignment", "matching.working_mip_level", int(suggest_working_mip(v.pixel_size_nm, v.section_thickness_nm)))
-    set_thumbnail_mip(cs, tm)
+    p.state.suggested, _notes = apply_suggested_mips(cs, p.state.suggested, suggest_thumbnail_mip(w, h),
+                                                     suggest_working_mip(v.pixel_size_nm, v.section_thickness_nm))
     cs.set("stitching", "section_thickness", float(v.section_thickness_nm))
+    mesh, spacings = demo_alignment_grid(max(w, h), int(cs.get("alignment", "matching.working_mip_level", 2)))
+    cs.set("alignment", "meshing.mesh_size", mesh)
+    cs.set("alignment", "matching.matcher_config.spacings", spacings)
     cs.save()
+    p.save()
     return p
 
 

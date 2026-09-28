@@ -222,9 +222,10 @@ _MISSING = object()
 class ConfigStore:
     """All four FEABAS config documents of a project."""
 
-    def __init__(self, configs_dir: Path):
+    def __init__(self, configs_dir: Path, hints: bool = True):
         self.configs_dir = Path(configs_dir)
         self.docs: dict[str, ConfigDoc] = {}
+        self._hints = hints
         self.reload()
 
     def reload(self) -> None:
@@ -235,21 +236,39 @@ class ConfigStore:
             doc = ConfigDoc(kind, dpath, upath)
             doc.defaults = load_yaml(dpath)
             doc.overrides = load_yaml(upath)
-            doc.hints = harvest_hints(dpath)
+            doc.hints = harvest_hints(dpath) if self._hints else {}
             self.docs[kind] = doc
 
     def __getitem__(self, kind: str) -> ConfigDoc:
         return self.docs[kind]
 
     def save(self, kind: str | None = None) -> None:
+        """
+        Write the overrides that changed. A file is only rewritten when its content changes: the
+        pipeline marks outputs stale when their config file is newer than they are, so pressing
+        Apply with nothing changed must not touch it. When every override is removed the file is
+        kept as ``{}`` rather than deleted - going back to the defaults is a change too, and its
+        timestamp is what tells the pipeline so (FEABAS also fails on an empty override file,
+        which parses to None, but reads ``{}`` fine).
+        """
         for k, doc in self.docs.items():
             if kind and k != kind:
                 continue
-            if doc.overrides:
-                dump_yaml(doc.user_path, doc.overrides,
-                          header=f"Project overrides for {doc.default_path.name}; unspecified keys use the defaults.")
-            elif doc.user_path.is_file():
-                doc.user_path.unlink()
+            if not doc.user_path.is_file():
+                if doc.overrides:
+                    self._write(doc)
+                continue
+            try:
+                current = yaml.safe_load(doc.user_path.read_text(encoding="utf-8"))
+            except (OSError, yaml.YAMLError):
+                current = None
+            if not isinstance(current, dict) or current != doc.overrides:
+                self._write(doc)
+
+    @staticmethod
+    def _write(doc: ConfigDoc) -> None:
+        dump_yaml(doc.user_path, doc.overrides,
+                  header=f"Project overrides for {doc.default_path.name}; unspecified keys use the defaults.")
 
     def get(self, kind: str, dotted: str, default=None):
         return get_dotted(self.docs[kind].merged, dotted, default)
@@ -287,21 +306,60 @@ def suggest_thumbnail_mip(section_w_px: float, section_h_px: float, target_px: f
 
 def set_thumbnail_mip(cs: "ConfigStore", mip: int, highpass: bool | None = None) -> bool:
     """
-    Set the thumbnail mip level (and the mask mip level that goes with it) consistently.
+    Set the thumbnail mip level consistently with the high-pass filter.
 
     FEABAS builds high-pass filtered thumbnails from a coarser intermediate mip level and asserts
     that this level is *below* the thumbnail mip (``highpass_inter_mip_lvl < thumbnail_mip_lvl``).
     At mip 0 no such level exists and the thumbnail step dies with an AssertionError, so the
     high-pass is switched off there. Returns True when it had to be switched off.
+
+    ``meshing.mask_mip_level`` is deliberately left alone: FEABAS only reads it for the
+    higher-resolution masks in align/material_masks (the thumbnail masks always use the thumbnail
+    resolution), and those masks keep their own mip level whatever the thumbnails do. Setting it
+    to the thumbnail mip made FEABAS read existing high-resolution masks at the wrong scale.
     """
     mip = int(mip)
     cs.set("thumbnail", "thumbnail_mip_level", mip)
-    cs.set("alignment", "meshing.mask_mip_level", mip)
     if highpass is None:
         highpass = bool(cs.get("thumbnail", "downsample.thumbnail_highpass", True))
     forced_off = mip <= 0 and highpass
     cs.set("thumbnail", "downsample.thumbnail_highpass", False if forced_off else bool(highpass))
     return forced_off
+
+
+# the mip levels the workbench fills in from the pixel size and section size: (config kind, key, label)
+SUGGESTED_MIPS = (("thumbnail", "thumbnail_mip_level", "thumbnail mip"),
+                  ("alignment", "matching.working_mip_level", "fine-alignment working mip"))
+
+
+def apply_suggested_mips(cs: "ConfigStore", suggested: dict, thumbnail_mip: int, working_mip: int) -> tuple[dict, list[str]]:
+    """
+    Fill in the suggested thumbnail and working mip levels, but never over a value the user chose.
+
+    *suggested* records what the workbench set last time ({"thumbnail.thumbnail_mip_level": 5, ...}).
+    A key is updated when it still has FEABAS's default or still holds the value the workbench put
+    there; anything else was changed by hand and is kept (a note says what would have been
+    suggested). Returns the updated record and the notes.
+    """
+    record = dict(suggested or {})
+    notes: list[str] = []
+    wanted = {"thumbnail.thumbnail_mip_level": int(thumbnail_mip), "alignment.matching.working_mip_level": int(working_mip)}
+    for kind, key, label in SUGGESTED_MIPS:
+        name = f"{kind}.{key}"
+        value = wanted[name]
+        current = cs.get(kind, key, None)
+        mine = not cs[kind].is_overridden(key) or (name in record and current == record[name])
+        if not mine:
+            if current != value:
+                notes.append(f"kept your {label} {current} (suggested for this data: {value})")
+            continue
+        if kind == "thumbnail":
+            if set_thumbnail_mip(cs, value):
+                notes.append("thumbnail mip 0: the high-pass filter is switched off (FEABAS needs a coarser level to build it from)")
+        else:
+            cs.set(kind, key, value)
+        record[name] = value
+    return record, notes
 
 
 def parse_value(text: str, like):

@@ -493,7 +493,7 @@ never modified.</p>
 </tr>
 <tr>
 <td><span class="chip chip-stale"><strong>stale</strong></span></td>
-<td>outputs exist, but the config file or an upstream step is newer than they are</td>
+<td>outputs exist, but something they were computed from changed afterwards: the step's config file, the coordinate files (for <em>Match tiles</em>) or the outputs of a step it depends on — or that step is stale itself</td>
 </tr>
 <tr>
 <td><span class="chip chip-err"><strong>errors</strong></span></td>
@@ -505,8 +505,15 @@ never modified.</p>
 </tr>
 </tbody>
 </table></div>
-<p>"Stale" is a warning, not a lock: nothing stops you from running a stale step, but the result can mix
-old and new settings. The honest fix is <strong>Clear…</strong> on the earliest stale step and re-run.</p>
+<p>Steps that work section by section are compared section by section: running an earlier step for a few
+more sections leaves the sections that were already finished alone, and only outputs whose own inputs
+changed count. Staleness is passed on — when <em>Match tiles</em> is stale, so is everything built on it. A
+config file counts as changed only when its content changes: pressing <em>Apply</em> without changing anything
+makes nothing stale.</p>
+<p>"Stale" is a warning, not a lock, but running a stale step as it is recomputes nothing: FEABAS skips
+every output that already exists. <strong>Run</strong> (and <em>Run all steps below in order</em>) on a stale step therefore
+asks first: <strong>Clear, then run</strong> removes the stale outputs and everything after them (after showing the
+list) and runs the step again; <strong>Run without clearing</strong> only fills in what is missing.</p>
 <p>Press <strong>F5</strong> (Pipeline → Re-read pipeline state) after changing files outside the GUI.</p>
 <h3 id="23-every-step-card-works-the-same-way">2.3 Every step card works the same way</h3>
 <ul>
@@ -517,7 +524,11 @@ old and new settings. The honest fix is <strong>Clear…</strong> on the earlies
 <li><strong>Remove error files</strong> – appears only when <code>*_err</code> markers exist; deleting them makes the next run
   retry exactly those sections.</li>
 <li><strong>Clear…</strong> – deletes this step's outputs <strong>and every later step's outputs</strong>, after showing the list.
-  Snapshot first if the old state was expensive.</li>
+  Snapshot first if the old state was expensive. On a test run's card it clears that test run only. It
+  removes what the step writes and nothing else: clearing a mipmap step keeps the full-resolution level
+  the mipmaps were made from, an output folder you pointed elsewhere loses only FEABAS's folders in it,
+  and a link or junction to data outside the folder (a test run's view of the project's montages, say)
+  is never followed — the list names what was left alone.</li>
 <li><strong>Run all steps below in order</strong> – queues the steps of that panel that are not already <em>done</em>.</li>
 </ul>
 <p>Only one job runs at a time; further submissions queue. The status bar shows progress and a <strong>Cancel
@@ -650,7 +661,7 @@ key is visible as such in the <em>All settings</em> tree. Resetting a key delete
 </tr>
 <tr>
 <td><strong>PyTorch build</strong></td>
-<td><code>auto from driver</code> picks the wheel index from your NVIDIA driver version; pin CUDA 12.6 / 11.8 / CPU-only if you know better. CUDA 12.6 wheels need driver ≥ 528.</td>
+<td><code>auto from driver</code> picks the wheel index from your GPU and NVIDIA driver version; pin CUDA 12.8 / 12.6 / 11.8 / CPU-only if you know better. CUDA 12.6 wheels need driver ≥ 528. RTX 50-series (Blackwell) cards only run with the CUDA 12.8 build, which needs driver ≥ 570; <em>auto</em> picks it for them.</td>
 </tr>
 <tr>
 <td><strong>Install fw-feabas</strong></td>
@@ -844,8 +855,11 @@ name…</strong> first so the section number lands in the filename.</p>
 <li>saves source folder, rule, layout and volume info into <code>workbench_project.json</code>;</li>
 <li>writes <code>configs/general_configs.yaml</code> (working directory, full resolution, section thickness);</li>
 <li>points the coordinate files at the preprocessed tiles if you activated one (Window 2);</li>
-<li>seeds sensible defaults: <code>alignment.matching.working_mip_level</code>, <code>thumbnail.thumbnail_mip_level</code>,
-   <code>alignment.meshing.mask_mip_level</code>, <code>stitching.section_thickness</code>.</li>
+<li>seeds the suggested mip levels, <code>thumbnail.thumbnail_mip_level</code> and
+   <code>alignment.matching.working_mip_level</code>, where you have not chosen a value yourself (a level you set
+   on the Masks or Alignment page is kept, and the log says what it would have suggested), plus
+   <code>stitching.section_thickness</code>. When the pixel size changed, it also deletes FEABAS's cached
+   <code>configs/resolutions.yaml</code>, which would otherwise keep the old one.</li>
 </ol>
 <p>The line underneath shows the suggested working mip and thumbnail mip for your voxel size — those are
 the numbers Windows 3–5 refer to.</p>
@@ -864,7 +878,9 @@ your tiles are already consistent and clean.</p>
 <h3 id="tiles-used-by-the-pipeline">Tiles used by the pipeline</h3>
 <p>Radio buttons <strong>raw tiles / histogram-matched tiles / denoised tiles</strong> plus <strong>Apply to coordinate
 files</strong>. Applying rewrites the <code>stitch_coord</code> files to point at the chosen folder — that is the whole
-switch. The info line counts the files available in each variant.</p>
+switch. The info line counts the files available in each variant. Nothing is switched when the folder
+does not exist, and if some tiles of the coordinate files have no preprocessed copy it asks first
+(stitching would fail on them).</p>
 <p>If stitching outputs already exist when you switch, the log warns you: clear <em>Match tiles</em> on the
 Stitching page, otherwise you mix montages made from different pixel data.</p>
 <h3 id="histogram-matching">Histogram matching</h3>
@@ -1314,7 +1330,13 @@ is optional.</p>
 </table></div>
 <p><strong>Make thumbnails</strong> also builds the intermediate mip levels of the stitched sections that fine alignment
 reads, and writes FEABAS's default masks (everything imaged = tissue), which the next tab replaces.
-Pressing <strong>Apply</strong> here also sets <code>alignment.meshing.mask_mip_level</code> to the same mip.</p>
+<strong>Apply</strong> leaves <code>alignment.meshing.mask_mip_level</code> alone: FEABAS reads it only for the
+higher-resolution masks in <code>align/material_masks</code>, which keep their own mip.</p>
+<p>Thumbnails made again (at another mip, say) outdate the masks drawn on them: <em>Clear…</em> on <em>Make
+thumbnails</em> removes the tissue, fold and footprint masks with them. A tissue mask older than its
+thumbnail is computed again when you compose, and when fold masks are older than their thumbnails
+<em>Compose</em> asks whether to compose those sections without folds (detect them again afterwards) or to
+use the old fold masks anyway.</p>
 <p>The progress bar in the status bar counts both phases: the mip levels (the slow part — one entry per
 section and level, <code>mip levels 120/453</code>) and then the thumbnails themselves (<code>thumbnails 40/151</code>).</p>
 <h3 id="masks-tab">Masks tab</h3>
@@ -2046,7 +2068,10 @@ J. W. (2026), <em>FEABAS: A Stitching and Alignment Tool for Serial EM Data</em>
 <p><strong>Snapshots</strong> (Pipeline → <em>Create snapshot of current state…</em>) copy the small, expensive things —
 matches, meshes, transforms, configs — into <code>snapshots/&lt;timestamp&gt;/</code>. Rendered images are <em>not</em> included
 (they are large and reproducible). The dialog tells you how much will be copied. <em>Restore snapshot…</em>
-puts them back and reloads the configs.</p>
+puts them back and reloads the configs. Only files that differ are written, so what the restore really
+changed becomes new: steps computed from other inputs after the snapshot (including rendered images)
+show as <em>stale</em>, everything else keeps its state. A snapshot taken before the project was moved or
+copied still points FEABAS at the project's current folder.</p>
 <p><strong>Clear</strong> (Pipeline → <em>Clear a step and everything after it…</em>, or <strong>Clear…</strong> on any step card) deletes a
 step's outputs and everything downstream, after listing exactly what will go. This is the supported way
 to re-run a FEABAS step: FEABAS skips work whose output already exists, so stale outputs would otherwise
@@ -2122,7 +2147,7 @@ checkout.</p>
 </tr>
 <tr>
 <td>Step card says <strong>stale</strong></td>
-<td>A config or an upstream step is newer than these outputs. Clear this step and re-run.</td>
+<td>A config, the coordinate files or an upstream step changed after these outputs (the card's reason line says which). Run it and choose <em>Clear, then run</em>, or Clear it yourself and re-run.</td>
 </tr>
 <tr>
 <td>Many <code>*_err</code> files after matching</td>

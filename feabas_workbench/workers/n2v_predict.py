@@ -56,12 +56,10 @@ def main() -> int:
             if np.issubdtype(dtype, np.integer):
                 info = np.iinfo(dtype)
                 arr = np.clip(np.rint(arr), info.min, info.max).astype(dtype)
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            if dst.suffix.lower() in (".tif", ".tiff"):
-                tifffile.imwrite(str(dst), arr, photometric="minisblack")
-            else:
-                from PIL import Image
-                Image.fromarray(arr).save(dst)
+            # write under a temporary name: files that exist are skipped next time, so a tile cut
+            # short by Cancel must never carry the final name
+            from feabas_workbench.core.histmatch import write_gray
+            write_gray(dst, arr)
         except Exception as e:  # noqa: BLE001
             n_fail += 1
             log(f"FAILED {src}: {e}")

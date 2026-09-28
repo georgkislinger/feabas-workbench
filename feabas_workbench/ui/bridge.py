@@ -14,8 +14,9 @@ from PySide6.QtCore import QObject, Signal
 from ..core.configs import ConfigStore
 from ..core.envs import Settings, check_imports
 from ..core.jobs import JobQueue, JobSpec, worker_env, feabas_env
-from ..core.project import Project, VENDOR_DIR
-from ..core.steps import PipelineScan, Step, count_outputs, thumbnail_progress, step_argv, expected_outputs
+from ..core.project import Project, VENDOR_DIR, repair_working_directory
+from ..core.steps import (PipelineScan, Step, count_outputs, drop_unreadable_outputs, thumbnail_progress, step_argv,
+                          expected_outputs)
 
 
 class QtJobQueue(QObject):
@@ -113,9 +114,12 @@ class AppContext(QObject):
             s("job-err" if stream == "err" else "job", text)
 
     # -- project ---------------------------------------------------------
-    def open_project(self, path: Path) -> Project:
+    def open_project(self, path: Path, create: bool = True) -> Project:
+        """Open the project in *path*; with *create*, a folder without one becomes a new project."""
         if self.jobs.running:
             raise RuntimeError("Wait for the current operation before changing projects. Cluster jobs continue if you close Workbench.")
+        if not Project.exists(path) and not create:
+            raise RuntimeError(f"There is no FEABAS Workbench project in {path}.")
         if self.cluster:
             self.cluster.shutdown()
             self.cluster = None
@@ -243,6 +247,9 @@ class AppContext(QObject):
         if self.cluster_enabled and root != self.project.root:
             raise RuntimeError("For cluster experiments use the section range on the main pipeline. Local test-run folders run in This PC mode.")
         py = "python" if self.cluster_enabled else self.require_feabas_python()
+        if not self.cluster_enabled and repair_working_directory(root):
+            self.log(f"{root}: configs/general_configs.yaml named another folder (a copied or moved project); "
+                     f"FEABAS now works here again")
         argv = step_argv(py, step, start, stop, stride, filt, extra_args)
         n = len([p for p in (root / "stitch" / "stitch_coord").glob("*.txt")])
         expected = expected_outputs(root, step, start, stop, stride)
@@ -263,7 +270,8 @@ class AppContext(QObject):
                     return JobSpec(name=step.label + (f" [{tag}]" if tag else ""),
                         argv=[py, "-m", "feabas_workbench.workers.local_parallel", "--spec", str(spec_file)],
                         cwd=root, env=worker_env(), kind="feabas", step_key=step.key, tag=tag,
-                        expected=expected, log_file=root / "workbench.log")
+                        expected=expected, log_file=root / "workbench.log",
+                        after_cancel=self._after_cancel(root, step))
         full_run = start is None and stop is None
         progress_fn = None
         if step.key == "thumbnail.downsample" and full_run:
@@ -275,13 +283,25 @@ class AppContext(QObject):
             argv=argv, cwd=root, kind="feabas", step_key=step.key, tag=tag, env=feabas_env(),
             count_outputs=lambda: count_outputs(root, step), expected=expected, progress_fn=progress_fn,
             progress_absolute=full_run, log_file=root / "workbench.log",
+            after_cancel=None if self.cluster_enabled else self._after_cancel(root, step),
             remote=dict(kind="step", step=step.key, name=step.label, start=start, stop=stop, stride=stride,
                         filter=filt, extra_args=extra_args or []) if self.cluster_enabled else None,
         )
 
+    @staticmethod
+    def _after_cancel(root: Path, step: Step):
+        """A killed FEABAS step may leave an .h5 file cut short, which FEABAS would skip as finished."""
+        def clean(started: float) -> list[str]:
+            removed = drop_unreadable_outputs(root, step, started)
+            return [f"-- removed {len(removed)} incomplete output(s) of '{step.label}' left by the cancelled run: "
+                    + ", ".join(p.name for p in removed[:8]) + (" …" if len(removed) > 8 else "")] if removed else []
+        return clean
+
     def feabas_tool_spec(self, tool: str, args: list[str], name: str, root: Path | None = None) -> JobSpec:
         root = root or self.project.root
         py = "python" if self.cluster_enabled else self.require_feabas_python()
+        if not self.cluster_enabled:
+            repair_working_directory(root)
         argv = [py, str(VENDOR_DIR / "tools" / tool)] + list(args)
         return JobSpec(name=name, argv=argv, cwd=root, kind="feabas", env=feabas_env(), log_file=root / "workbench.log",
                        remote=dict(kind="tool", tool=tool, args=args, name=name) if self.cluster_enabled else None)

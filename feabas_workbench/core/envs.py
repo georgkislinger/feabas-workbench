@@ -4,7 +4,7 @@ Python environments, GPU detection and installation.
 The workbench needs up to three interpreters:
 
 * the GUI's own (this process);
-* a *FEABAS* environment (feabas + tensorstore, numpy<2);
+* a *FEABAS* environment (feabas 3.0.5 + tensorstore; numpy 2.x works);
 * a *deep-learning* environment (torch + segmentation-models-pytorch +
   ultralytics + careamics) for the fold U-Net, YOLO-seg and N2V workers.
 
@@ -167,7 +167,10 @@ class Settings:
         return s
 
     def save(self) -> None:
-        SETTINGS_FILE.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+        # a half-written file would be unreadable, and load() then starts over with empty settings
+        tmp = SETTINGS_FILE.with_name(SETTINGS_FILE.name + ".tmp")
+        tmp.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+        os.replace(tmp, SETTINGS_FILE)
 
     def remember_project(self, path: str) -> None:
         path = str(Path(path))
@@ -193,6 +196,7 @@ def find_conda() -> Path | None:
                 cands.append(base / dist / "Scripts" / "conda.exe")
                 cands.append(base / dist / "condabin" / "conda.bat")
         cands.append(settings_dir() / "micromamba" / "micromamba.exe")
+        cands.append(settings_dir() / "micromamba" / "Library" / "bin" / "micromamba.exe")   # older downloads
     else:
         for dist in ("miniforge3", "mambaforge", "miniconda3", "anaconda3"):
             cands.append(home / dist / "bin" / "conda")
@@ -375,15 +379,22 @@ class GpuInfo:
     name: str = ""
     driver: str = ""
     memory_mb: int = 0
+    compute_cap: float = 0.0        # e.g. 8.6; 0 when the driver cannot report it
 
     def torch_index(self) -> str:
-        """Pick a PyTorch wheel index from the driver version (coarse, conservative)."""
+        """
+        Pick a PyTorch wheel index from the GPU generation and driver version (conservative).
+        Blackwell GPUs (compute capability 10 and 12: RTX 50 series, B100/B200) only have kernels
+        in the CUDA 12.8+ builds; with a CUDA 12.6 build PyTorch sees the card but cannot run on it.
+        """
         try:
             major = float(self.driver.split(".")[0]) if self.driver else 0
         except ValueError:
             major = 0
         if not self.found or major == 0:
             return "https://download.pytorch.org/whl/cpu"
+        if self.compute_cap >= 10.0:
+            return "https://download.pytorch.org/whl/cu128" if major >= 570 else "https://download.pytorch.org/whl/cpu"
         if major >= 528:
             return "https://download.pytorch.org/whl/cu126"
         if major >= 452:
@@ -401,14 +412,25 @@ def detect_gpu() -> GpuInfo:
                 break
     if exe is None:
         return GpuInfo()
-    try:
-        r = _run_probe([exe, "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader,nounits"],
-                       timeout=20)
-        line = r.stdout.strip().splitlines()[0]
-        name, drv, mem = [s.strip() for s in line.split(",")]
-        return GpuInfo(True, name, drv, int(float(mem)))
-    except Exception:
-        return GpuInfo()
+    # compute_cap is only known to newer drivers; older ones reject the whole query, so ask without it then
+    for fields in ("name,driver_version,memory.total,compute_cap", "name,driver_version,memory.total"):
+        try:
+            r = _run_probe([exe, f"--query-gpu={fields}", "--format=csv,noheader,nounits"], timeout=20)
+        except Exception:  # noqa: BLE001
+            return GpuInfo()
+        lines = r.stdout.strip().splitlines()
+        if r.returncode != 0 or not lines:
+            continue
+        values = [s.strip() for s in lines[0].split(",")]
+        try:
+            cap = float(values[3]) if len(values) > 3 else 0.0
+        except ValueError:
+            cap = 0.0
+        try:
+            return GpuInfo(True, values[0], values[1], int(float(values[2])), cap)
+        except (IndexError, ValueError):
+            continue
+    return GpuInfo()
 
 
 # ----------------------------------------------------------------------
@@ -460,7 +482,9 @@ class InstallPlan:
         return [self.run_prefix() + cmd for cmd in self.pip_commands("python")]
 
     def pip_commands(self, python: str) -> list[list[str]]:
-        base = [python, "-m", "pip", "install", "--index-url", "https://pypi.org/simple"]
+        # pip's own index configuration is respected (institutional mirrors, proxies); only PyTorch
+        # comes from its dedicated index, which selects the CPU/CUDA build
+        base = [python, "-m", "pip", "install"]
         if self.kind == "feabas":
             return [base + FEABAS_PIP]
         cmds = []
@@ -479,41 +503,62 @@ def env_dir_for(conda: Path, name: str) -> Path | None:
     return None
 
 
-MICROMAMBA_URLS = {
-    ("Windows", "AMD64"): "https://micro.mamba.pm/api/micromamba/win-64/latest",
-    ("Linux", "x86_64"): "https://micro.mamba.pm/api/micromamba/linux-64/latest",
-    ("Linux", "aarch64"): "https://micro.mamba.pm/api/micromamba/linux-aarch64/latest",
-    ("Darwin", "arm64"): "https://micro.mamba.pm/api/micromamba/osx-arm64/latest",
-    ("Darwin", "x86_64"): "https://micro.mamba.pm/api/micromamba/osx-64/latest",
+# the standalone micromamba binaries of the official release repository; each has a .sha256 beside it
+MICROMAMBA_RELEASES = "https://github.com/mamba-org/micromamba-releases/releases/latest/download/"
+MICROMAMBA_ASSETS = {
+    ("Windows", "AMD64"): "micromamba-win-64",
+    ("Linux", "x86_64"): "micromamba-linux-64",
+    ("Linux", "aarch64"): "micromamba-linux-aarch64",
+    ("Darwin", "arm64"): "micromamba-osx-arm64",
+    ("Darwin", "x86_64"): "micromamba-osx-64",
 }
 
 
-def download_micromamba(log=None) -> Path:
-    """Fetch a standalone micromamba into the settings folder (tar.bz2 archives)."""
-    import tarfile
+class DownloadCancelled(Exception):
+    pass
+
+
+def _fetch(url: str, dest: Path, cancelled=None, timeout: float = 60) -> None:
+    """Download *url* to *dest* in chunks, stopping when *cancelled()* turns true."""
+    with urllib.request.urlopen(url, timeout=timeout) as r, open(dest, "wb") as out:
+        while chunk := r.read(1 << 20):
+            if cancelled and cancelled():
+                raise DownloadCancelled("download stopped")
+            out.write(chunk)
+
+
+def download_micromamba(log=None, cancelled=None) -> Path:
+    """
+    Fetch the standalone micromamba binary into the settings folder and check it against the
+    SHA-256 published next to it. A single file, nothing is unpacked; a failed check leaves
+    nothing behind.
+    """
+    import hashlib
     key = (platform.system(), platform.machine())
-    url = MICROMAMBA_URLS.get(key)
-    if url is None:
+    asset = MICROMAMBA_ASSETS.get(key)
+    if asset is None:
         raise RuntimeError(f"No micromamba build known for {key}")
     dest_dir = settings_dir() / "micromamba"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    archive = dest_dir / "micromamba.tar.bz2"
+    exe = dest_dir / "micromamba.exe" if os.name == "nt" else dest_dir / "bin" / "micromamba"
+    exe.parent.mkdir(parents=True, exist_ok=True)
+    part = exe.with_name(exe.name + ".part")
     if log:
-        log(f"downloading micromamba from {url}")
-    urllib.request.urlretrieve(url, archive)
-    with tarfile.open(archive, "r:bz2") as tf:
-        tf.extractall(dest_dir)
-    exe = dest_dir / ("Library/bin/micromamba.exe" if os.name == "nt" else "bin/micromamba")
-    if not exe.is_file():
-        # some archives put it at the top level
-        for c in dest_dir.rglob("micromamba*"):
-            if c.is_file() and c.suffix in ("", ".exe"):
-                exe = c
-                break
-    if not exe.is_file():
-        raise RuntimeError("micromamba archive did not contain an executable")
-    if os.name != "nt":
-        exe.chmod(0o755)
+        log(f"downloading micromamba from {MICROMAMBA_RELEASES}{asset}")
+    try:
+        with urllib.request.urlopen(MICROMAMBA_RELEASES + asset + ".sha256", timeout=60) as r:
+            expected = r.read().decode("ascii", "replace").split()[0].strip().lower()
+        _fetch(MICROMAMBA_RELEASES + asset, part, cancelled)
+        h = hashlib.sha256()
+        with open(part, "rb") as f:
+            for block in iter(lambda: f.read(1 << 20), b""):
+                h.update(block)
+        if h.hexdigest() != expected:
+            raise RuntimeError("the downloaded micromamba does not match its published SHA-256 checksum; nothing was installed")
+        if os.name != "nt":
+            part.chmod(0o755)
+        os.replace(part, exe)
+    finally:
+        part.unlink(missing_ok=True)
     return exe
 
 

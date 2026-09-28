@@ -5,7 +5,8 @@ every step with the configured FEABAS interpreter.
 
     python tools/run_demo_pipeline_gui.py D:/demo_gui --feabas-python C:/envs/fw-feabas/python.exe
 
-Exit code 0 only if the queue finished with every job ok and every step has its outputs.
+Exit code 0 only if the queue finished with every job ok, every step has its outputs and the
+match files hold matches (core.pipeline.match_problems).
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from PySide6.QtWidgets import QApplication, QDialog
     from feabas_workbench.core import envs
+    from feabas_workbench.core.pipeline import match_problems
     from feabas_workbench.core.synthetic import make_demo_project
     from feabas_workbench.core.steps import STEPS_BY_KEY, STANDARD_PIPELINE, RENDER_PIPELINE, count_outputs, expected_outputs
     from feabas_workbench.ui.main_window import MainWindow
@@ -79,6 +81,10 @@ def main(argv: list[str] | None = None) -> int:
         done, exp = count_outputs(root, step), expected_outputs(root, step)
         print(f"   {step.label:<38} {done}/{exp} outputs")
         ok = ok and done >= exp
+    problems = match_problems(root)
+    for line in problems:
+        print("!! " + line)
+    ok = ok and not problems
     print(f"\n{'GUI PIPELINE OK' if ok else 'GUI PIPELINE FAILED'} in {(time.time() - t0) / 60:.1f} min "
           f"({len(results)} jobs{'' if finished['done'] else ', queue did not finish'})")
     win.shutdown()

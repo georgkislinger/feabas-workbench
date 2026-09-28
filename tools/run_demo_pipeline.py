@@ -6,8 +6,10 @@ End-to-end check: build a small synthetic dataset and run the whole FEABAS pipel
 
 Run it with any interpreter that has the workbench installed; --feabas-python is the one with
 FEABAS (default: the same interpreter, which is how CI runs it). Exit code 0 only if every step
-ran and produced what it should. A project that already exists is reused (finished steps are
-skipped), so a failed run can be repeated after a fix.
+ran and produced what it should - output files for every section and pair, and matches in them:
+every montage connected, coarse and fine matches with several points per section pair. A
+project that already exists is reused (finished steps are skipped), so a failed run can be
+repeated after a fix.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from feabas_workbench.core.pipeline import run_standard_pipeline, summary   # noqa: E402
+from feabas_workbench.core.pipeline import match_problems, run_standard_pipeline, summary   # noqa: E402
 from feabas_workbench.core.project import Project                              # noqa: E402
 from feabas_workbench.core.synthetic import make_demo_project                  # noqa: E402
 
@@ -52,6 +54,10 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print(summary(runs))
     ok = bool(runs) and all(r.ok for r in runs) and len(runs) >= 10
+    problems = match_problems(root)
+    for line in problems:
+        print("!! " + line)
+    ok = ok and not problems
     print(f"\n{'PIPELINE OK' if ok else 'PIPELINE FAILED'} in {(time.time() - t0) / 60:.1f} min")
     return 0 if ok else 1
 

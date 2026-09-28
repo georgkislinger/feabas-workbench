@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .configs import ConfigStore, load_yaml
+from .steps import aligned_dir, aligned_render_mip, stitched_dir
 
 # Configuration kind, worker key, supports work within one section.
 SECTION_STEPS = {
@@ -117,15 +118,13 @@ def input_sections(root, key, configs=None):
     if key == "thumbnail.downsample":
         if cs.get("stitching", "rendering.driver", "image") != "image":
             return sorted((root / "stitch/ts_specs").glob("*.json"))
-        base = Path(cs.get("stitching", "rendering.out_dir") or root / "stitched_sections")
+        base = stitched_dir(root, cs)
         mip = int(cs.get("thumbnail", "downsample.min_mip", 0))
     elif key == "align.downsample":
-        base = Path(cs.get("alignment", "rendering.out_dir") or root / "aligned_stack")
-        mip = int(cs.get("alignment", "rendering.mip_level", 0))
+        base = aligned_dir(root, cs)
+        mip = aligned_render_mip(cs)
     else:
         raise ValueError("This stage cannot be split into independent sections.")
-    if not base.is_absolute():
-        base = root / base
     return sorted((base / f"mip{mip}").rglob("metadata.txt"))
 
 

@@ -5,12 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal, QObject
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
                                QMessageBox, QPushButton, QPlainTextEdit)
 
 from ...core import tiles as T
-from ...core.project import Project
-from ...core.configs import suggest_working_mip, suggest_thumbnail_mip, set_thumbnail_mip
+from ...core.project import Project, forget_cached_resolution
+from ...core.configs import apply_suggested_mips, suggest_working_mip, suggest_thumbnail_mip
 from ..widgets import PathPicker, TileGridWidget, card, hint, form_row, spin, dspin, combo
 from .base import Page
 
@@ -18,13 +18,14 @@ from .base import Page
 class _ScanWorker(QObject):
     done = Signal(object, object)   # plan or None, error text
 
-    def __init__(self, root, rule, layout, resolution):
+    def __init__(self, root, rule, layout, resolution, exclude=()):
         super().__init__()
         self.args = (root, rule, layout, resolution)
+        self.exclude = tuple(exclude)
 
     def run(self) -> None:
         try:
-            plan = T.build_plan(*self.args)
+            plan = T.build_plan(*self.args, exclude=self.exclude)
             self.done.emit(plan, "")
         except Exception as e:  # noqa: BLE001
             self.done.emit(None, str(e))
@@ -232,14 +233,10 @@ class ProjectPage(Page):
 
     # -- project ---------------------------------------------------------
     def _new(self) -> None:
-        p = QFileDialog.getExistingDirectory(self, "Choose an empty folder for the new project")
-        if p:
-            self.window().open_project(Path(p))
+        self.window().new_project()
 
     def _open(self) -> None:
-        p = QFileDialog.getExistingDirectory(self, "Open project folder")
-        if p:
-            self.window().open_project(Path(p))
+        self.window().choose_project()
 
     def _name_changed(self) -> None:
         if self.project:
@@ -264,12 +261,17 @@ class ProjectPage(Page):
                               overlap_unit=self.ov_unit.currentData(), mode=self.mode.currentData(),
                               z_offset=self.z_off.value(), flip_x=self.flip_x.isChecked(), flip_y=self.flip_y.isChecked())
 
+    def _exclude(self) -> tuple:
+        """The project folder when it lies inside the tile folder: its preprocessed tiles are not raw tiles."""
+        return (self.project.root,) if self.project else ()
+
     def _files(self, limit=None):
         root = self.src.path()
         if not root or not root.is_dir():
             QMessageBox.information(self, "Tile folder", "Choose an existing tile folder first.")
             return None
-        files = T.list_image_files(root, self.ext.text().strip().lstrip("."), self.recursive.isChecked(), limit=limit)
+        files = T.list_image_files(root, self.ext.text().strip().lstrip("."), self.recursive.isChecked(), limit=limit,
+                                   exclude=self._exclude())
         if not files:
             QMessageBox.information(self, "Tile folder", f"No *.{self.ext.text().strip()} files found under {root}.")
             return None
@@ -307,9 +309,12 @@ class ProjectPage(Page):
         info = T.read_tile_info(files[0])
         self.tile_w.setValue(info.width); self.tile_h.setValue(info.height)
         msg = f"{files[0].name}: {info.width}×{info.height} {info.dtype}"
-        if info.pixel_size_nm:
+        if info.pixel_size_nm and self.pix.minimum() <= info.pixel_size_nm <= self.pix.maximum():
             self.pix.setValue(info.pixel_size_nm)
             msg += f", pixel size {info.pixel_size_nm:g} nm"
+        elif info.pixel_size_nm:
+            msg += (f", metadata says {info.pixel_size_nm:g} nm per pixel, which is outside "
+                    f"{self.pix.minimum():g}–{self.pix.maximum():g} nm: not used (enter the pixel size manually)")
         else:
             msg += ", no pixel size in metadata (enter it manually)"
         if info.stage_xy_m:
@@ -324,7 +329,7 @@ class ProjectPage(Page):
         if not files:
             return
         rule = self._rule()
-        tiles, _ = T.scan_tiles(self.src.path(), rule)
+        tiles, _ = T.scan_tiles(self.src.path(), rule, exclude=self._exclude())
         if not tiles:
             self.warn("no tiles matched the naming rule")
             return
@@ -365,7 +370,7 @@ class ProjectPage(Page):
             self._read_meta()
         self.scan_btn.setEnabled(False)
         self.scan_info.setText("scanning…")
-        self._worker = _ScanWorker(root, self._rule(), self._layout(), self.pix.value())
+        self._worker = _ScanWorker(root, self._rule(), self._layout(), self.pix.value(), self._exclude())
         self._thread = QThread(self)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
@@ -483,20 +488,21 @@ class ProjectPage(Page):
         if root_dir != Path(st.source.root_dir):
             plan = _retarget_plan(plan, Path(st.source.root_dir), root_dir)
         files = T.write_plan(plan, p.stitch_coord_dir, st.source.path_mode)
+        if forget_cached_resolution(p.root, v.pixel_size_nm):
+            self.info("FEABAS's cached pixel size (configs/resolutions.yaml) differed from the new coordinates and was removed")
         p.write_general_config()
-        p.save()
-        # default config suggestions
+        # suggested mip levels - only where the user has not chosen a value
         cs = self.ctx.configs
         if cs is not None:
             wm = suggest_working_mip(v.pixel_size_nm, v.section_thickness_nm)
             name = next(iter(plan.sections))
             w, h = plan.section_bbox(name)
-            tm = suggest_thumbnail_mip(w, h)
-            cs.set("alignment", "matching.working_mip_level", int(wm))
-            if set_thumbnail_mip(cs, tm):
-                self.info("thumbnail mip 0: the high-pass filter is switched off (FEABAS needs a coarser level to build it from)")
+            st.suggested, notes = apply_suggested_mips(cs, st.suggested, suggest_thumbnail_mip(w, h), wm)
+            for note in notes:
+                self.info(note)
             cs.set("stitching", "section_thickness", float(v.section_thickness_nm))
             cs.save()
+        p.save()
         self.write_info.setText(f"wrote {len(files)} coordinate files to {p.stitch_coord_dir}")
         self.info(f"wrote {len(files)} stitch coordinate files; tile root {root_dir}")
         self.ctx.project_changed.emit(p)

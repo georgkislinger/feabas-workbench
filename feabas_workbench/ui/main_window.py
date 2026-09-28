@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QDialog, QDockWidget, QFileDialog, QHBoxLayout, Q
 from .. import APP_NAME, __version__, WORKBENCH_REPO, FEABAS_REPO, FEABAS_PAPER, MANUAL_URL
 from ..core.envs import Settings
 from ..core.jobs import package_root
+from ..core.project import Project
 from ..core.steps import STEPS, clear_targets, clear_step, create_snapshot, list_snapshots, restore_snapshot, estimate_snapshot_size
 from .bridge import AppContext
 from .widgets.log_panel import LogPanel
@@ -299,23 +300,47 @@ class MainWindow(QMainWindow):
         if not s.feabas_python:
             self.ctx.log("No FEABAS environment configured yet: open the Setup page to detect or install one.", "warn")
             self.show_page(0)
-        elif s.last_project and Path(s.last_project).is_dir():
-            self.open_project(Path(s.last_project))
+        elif s.last_project and Project.exists(Path(s.last_project)):
+            self.open_project(Path(s.last_project), create=False)
+        elif s.last_project:
+            self.ctx.log(f"the last project is not available: {s.last_project}", "warn")
 
     # -- project -------------------------------------------------------
     def new_project(self) -> None:
         p = QFileDialog.getExistingDirectory(self, "Choose an (ideally empty) folder for the new project")
-        if p:
-            self.open_project(Path(p))
+        if not p:
+            return
+        path = Path(p)
+        if Project.exists(path):
+            QMessageBox.information(self, "Existing project", f"{path} already holds a project; it is opened as it is.")
+            self.open_project(path, create=False)
+            return
+        if any(path.iterdir()) and QMessageBox.question(
+                self, "Folder not empty",
+                f"{path} is not empty. The project adds its own folders (configs, stitch, align, …) next to what is "
+                f"there; keep raw tiles elsewhere.\n\nCreate the project in this folder anyway?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        self.open_project(path, create=True)
 
     def choose_project(self) -> None:
         p = QFileDialog.getExistingDirectory(self, "Open project folder")
-        if p:
-            self.open_project(Path(p))
+        if not p:
+            return
+        path = Path(p)
+        if not Project.exists(path):
+            if QMessageBox.question(
+                    self, "Not a project",
+                    f"{path} is not a FEABAS Workbench project (it has no workbench_project.json).\n\n"
+                    f"Create a new project in this folder? It adds folders such as configs, stitch and align"
+                    + (" next to the files that are there." if any(path.iterdir()) else "."),
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+        self.open_project(path, create=True)
 
-    def open_project(self, path: Path) -> None:
+    def open_project(self, path: Path, create: bool = True) -> None:
         try:
-            self.ctx.open_project(path)
+            self.ctx.open_project(path, create=create)
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Could not open project", str(e))
             self.ctx.log(f"could not open {path}: {e}", "error")
@@ -323,6 +348,20 @@ class MainWindow(QMainWindow):
         self._refresh_recent()
         if self.nav.currentRow() == 0:
             self.show_page(1)
+
+    def _open_recent(self, p: str) -> None:
+        path = Path(p)
+        if not Project.exists(path):
+            if QMessageBox.question(self, "Project not found",
+                                    f"There is no project at {path} (moved, deleted, or on a drive that is not "
+                                    f"connected).\n\nRemove it from the recent projects?",
+                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes:
+                s = self.ctx.settings
+                s.recent_projects = [x for x in s.recent_projects if x != p]
+                s.save()
+                self._refresh_recent()
+            return
+        self.open_project(path, create=False)
 
     def _on_project(self, project) -> None:
         if project is None:
@@ -340,7 +379,7 @@ class MainWindow(QMainWindow):
         self.recent_menu.clear()
         for p in self.ctx.settings.recent_projects:
             a = QAction(p, self)
-            a.triggered.connect(lambda _c=False, pp=p: self.open_project(Path(pp)))
+            a.triggered.connect(lambda _c=False, pp=p: self._open_recent(pp))
             self.recent_menu.addAction(a)
 
     def _reveal(self) -> None:
@@ -486,8 +525,11 @@ class MainWindow(QMainWindow):
         if not ok:
             return
         snap = snaps[names.index(choice)]
-        if QMessageBox.question(self, "Restore", f"Replace the current matches/meshes/transforms/configs with snapshot {snap['name']}?\n"
-                                                 f"Rendered images are not part of snapshots.") != QMessageBox.Yes:
+        if QMessageBox.question(self, "Restore",
+                                f"Put the matches, meshes, transforms, masks and configs of snapshot {snap['name']} back?\n\n"
+                                f"Files that differ are replaced. Rendered images are not part of snapshots: outputs that "
+                                f"were computed later from other inputs show as stale afterwards - clear those steps "
+                                f"before running them again.") != QMessageBox.Yes:
             return
         restore_snapshot(self.ctx.project.root, snap["path"], log=lambda t: self.ctx.log(t))
         self.ctx.reload_configs()
@@ -504,36 +546,58 @@ class MainWindow(QMainWindow):
             step = STEPS[labels.index(choice)]
         self.confirm_clear(step)
 
-    def confirm_clear(self, step, cascade: bool = True) -> bool:
-        if self.ctx.cluster_enabled:
+    def confirm_clear(self, step, cascade: bool = True, root: Path | None = None) -> bool:
+        """
+        Clear *step* (and everything after it) in *root*: the project, or a test run's sandbox.
+        Test runs are always folders on this PC, also in cluster mode.
+        """
+        project_root = self.ctx.project.root
+        root = Path(root) if root else project_root
+        sandbox = root != project_root
+        if self.ctx.cluster_enabled and not sandbox:
             if QMessageBox.question(self, "Clear cluster outputs", f"Move '{step.label}' and downstream cluster outputs "
                                     "into the remote history folder? Raw images are preserved.", QMessageBox.Yes | QMessageBox.No,
                                     QMessageBox.No) != QMessageBox.Yes:
                 return False
             from ..core.jobs import JobSpec
-            self.ctx.jobs.submit(JobSpec("Clear " + step.label, [], self.ctx.project.root,
+            self.ctx.jobs.submit(JobSpec("Clear " + step.label, [], project_root,
                                          remote=dict(kind="clear", step=step.key)))
             return True
-        targets = clear_targets(self.ctx.project.root, step, cascade)
+        configs = None if sandbox else self.ctx.configs
+        skipped: list[Path] = []
+        targets = clear_targets(root, step, cascade, configs=configs, skipped=skipped)
+        where = f" in test run '{root.name}'" if sandbox else ""
+        linked = ""
+        if skipped:
+            linked = ("\n\nLeft alone because they are links to data outside this folder: "
+                      + ", ".join(self._display_path(p) for p in skipped[:5]) + ("…" if len(skipped) > 5 else ""))
         if not targets:
-            QMessageBox.information(self, "Nothing to clear", f"No outputs of '{step.label}' found.")
+            QMessageBox.information(self, "Nothing to clear", f"No outputs of '{step.label}' found{where}.{linked}")
             return False
-        listing = "\n".join(str(t.relative_to(self.ctx.project.root)) for t in targets[:30])
+        listing = "\n".join(self._display_path(t) for t in targets[:30])
         if len(targets) > 30:
             listing += f"\n… and {len(targets) - 30} more"
         dlg = QMessageBox(self)
         dlg.setIcon(QMessageBox.Warning)
         dlg.setWindowTitle("Clear outputs")
-        dlg.setText(f"Delete the outputs of '{step.label}'" + (" and all later steps" if cascade else "") + "?")
-        dlg.setInformativeText("Consider creating a snapshot first (Pipeline menu). This removes:\n\n" + listing)
+        dlg.setText(f"Delete the outputs of '{step.label}'" + (" and all later steps" if cascade else "") + where + "?")
+        dlg.setInformativeText(("Consider creating a snapshot first (Pipeline menu). " if not sandbox else "")
+                               + "This removes:\n\n" + listing + linked)
         dlg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         dlg.setDefaultButton(QMessageBox.No)
         if dlg.exec() != QMessageBox.Yes:
             return False
-        removed = clear_step(self.ctx.project.root, step, cascade, log=lambda t: self.ctx.log(t))
-        self.ctx.log(f"cleared {len(removed)} item(s) for '{step.label}'")
+        removed = clear_step(root, step, cascade, log=lambda t: self.ctx.log(t), configs=configs)
+        self.ctx.log(f"cleared {len(removed)} item(s) for '{step.label}'{where}")
         self.ctx.state_changed.emit()
         return True
+
+    def _display_path(self, p: Path) -> str:
+        """Relative to the project where possible; a folder elsewhere (a configured output folder) in full."""
+        try:
+            return str(Path(p).relative_to(self.ctx.project.root))
+        except ValueError:
+            return str(p)
 
     def shutdown(self) -> None:
         """Stop every page's background threads and persist state. Idempotent: it also

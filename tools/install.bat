@@ -79,7 +79,7 @@ if not defined PY (
 )
 echo Installing the workbench from %HERE%
 echo                       into %PY%
-"%PY%" -m pip install --index-url https://pypi.org/simple -e "%HERE%"
+"%PY%" -m pip install -e "%HERE%"
 if errorlevel 1 goto :fail
 
 rem --- hard-wire the launcher to this installation ----------------------------------------------

@@ -1,14 +1,19 @@
 <h1 align="center">FEABAS Workbench</h1>
 
-> **Version 0.3.4:** adds persistent LRZ execution through the usual Run buttons,
-> guided SSH setup with home-folder or DSS storage (with a storage estimate), image synchronization
-> over SSH or Globus, remote previews and export downloads.
-> See [cluster setup and data transfer](docs/CLUSTER_GUIDE.md). Cluster mode is explicit and green;
-> **Leave cluster mode** restores workstation execution.
-> This build also adds local within/across-section parallelism with resource estimates, pixel-based N2V
-> selection, training and validation loss curves, and a live best-model preview with graceful stopping.
-> See the [user guide](docs/USER_GUIDE.md#local-parallelism). Full FEABAS image processing at LRZ
-> has not yet been validated; local pipeline and cluster transport tests are described in the changelog.
+> **Version 0.3.5** is a bug-fix release: *Clear* on a test run no longer deletes project outputs,
+> clearing mipmaps keeps the full-resolution render, configured output folders and render mips are
+> respected, *stale* is judged per section (and *Run* offers to clear stale outputs first), a copied or
+> moved project no longer makes FEABAS work in the original folder, split lines use FEABAS's split
+> material, and RTX 50-series GPUs get a PyTorch build that runs on them. See the [changelog](CHANGELOG.md).
+>
+> Since 0.3.4: persistent LRZ execution through the usual Run buttons, guided SSH setup with
+> home-folder or DSS storage (with a storage estimate), image synchronization over SSH or Globus,
+> remote previews and export downloads - see [cluster setup and data transfer](docs/CLUSTER_GUIDE.md).
+> Cluster mode is explicit and green; **Leave cluster mode** restores workstation execution. Local
+> within/across-section parallelism with resource estimates, pixel-based N2V selection, training and
+> validation loss curves and a live best-model preview with graceful stopping are in the
+> [user guide](docs/USER_GUIDE.md#local-parallelism). Full FEABAS image processing at LRZ has not yet
+> been validated; local pipeline and cluster transport tests are described in the changelog.
 
 <p align="center">
   A desktop app for stitching and aligning serial-section EM volumes with
@@ -224,5 +229,5 @@ Cite FEABAS for the stitching and alignment – that is where the science is:
 and, if the workbench was useful in your work, the workbench too (GitHub's *Cite this repository*
 button uses [CITATION.cff](CITATION.cff)):
 
-> Kislinger, G. (2026). *FEABAS Workbench* (version 0.3.4) [Computer software].
+> Kislinger, G. (2026). *FEABAS Workbench* (version 0.3.5) [Computer software].
 > https://github.com/georgkislinger/feabas-workbench — ORCID 0000-0002-6559-7421

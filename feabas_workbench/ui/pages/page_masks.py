@@ -8,11 +8,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
                                QSlider, QSplitter, QVBoxLayout, QWidget, QTabWidget)
 
-from ...core.masks import (TissueParams, LABEL_WRINKLE, LABEL_EXCLUDE, LABEL_SOFT, bundled_fold_checkpoint,
+from ...core.masks import (TissueParams, LABEL_WRINKLE, LABEL_EXCLUDE, LABEL_SOFT, LABEL_SPLIT, bundled_fold_checkpoint,
                            resolve_fold_checkpoint, store_fold_checkpoint)
 from ...core.maskstore import MaskStore
 from ...core.images import colorize_labels, to_uint8
-from ...core.steps import STEPS_BY_KEY
+from ...core.steps import STEPS_BY_KEY, stitched_dir
 from ..widgets import (PathPicker, ImageView, SectionPicker, ConfigEditor, card, hint, form_row, spin, dspin, combo,
                        labelled, row_widget, Collapsible)
 from ..widgets.steps_panel import StepsPanel
@@ -52,8 +52,7 @@ class MasksPage(Page):
         r.addWidget(self.th_hp)
         r.addWidget(labelled("workers", self.th_workers, "Parallel processes for mip-mapping and thumbnailing."))
         apply_b = QPushButton("Apply"); apply_b.setObjectName("Primary"); r.addWidget(apply_b); r.addStretch(1)
-        apply_b.setToolTip("Save these three settings to thumbnail_configs.yaml (and the mask mip level to the "
-                           "alignment config).")
+        apply_b.setToolTip("Save these three settings to thumbnail_configs.yaml.")
         lay.addLayout(r)
         self.th_hint = QLabel(""); self.th_hint.setObjectName("Hint"); self.th_hint.setWordWrap(True)
         lay.addWidget(self.th_hint)
@@ -552,7 +551,7 @@ class MasksPage(Page):
         self.fold_src.clear()
         self.fold_src.addItem("thumbnails", "thumb")
         if self.project:
-            base = self.project.root / "stitched_sections"
+            base = stitched_dir(self.project.root, self.ctx.configs)
             for d in sorted(base.glob("mip*")) if base.is_dir() else []:
                 if d.name[3:].isdigit():
                     self.fold_src.addItem(f"stitched sections {d.name}", int(d.name[3:]))
@@ -857,7 +856,7 @@ class MasksPage(Page):
                 if p:
                     items.append({"section": s, "image": str(p), "mip": self.store.thumbnail_mip()})
             else:
-                items.append({"section": s, "tiled_base": str(self.project.root / "stitched_sections"), "mip": int(src)})
+                items.append({"section": s, "tiled_base": str(stitched_dir(self.project.root, self.ctx.configs)), "mip": int(src)})
         if not items:
             QMessageBox.information(self, "Folds", "No input images for the checked sections.")
             return
@@ -893,11 +892,16 @@ class MasksPage(Page):
     def _job_finished(self, res) -> None:
         if res.spec.remote and res.spec.remote.get("module") == "mask_operations" and res.ok:
             self.store._manifest = None
-            for row in res.result.get("masks", []):
-                if row and row.get("hires"):
+            rows = [row for row in res.result.get("masks", []) if row]
+            for row in rows:
+                if row.get("hires"):
                     self.ctx.configs.set("alignment", "meshing.mask_mip_level", row["hires_mip"])
                     self.ctx.configs.save("alignment")
                     break
+            skipped = [row["section"] for row in rows if row.get("stale_folds_skipped")]
+            if skipped:
+                self.warn(f"{len(skipped)} section(s) (e.g. {skipped[0]}) were composed without folds: their fold masks were "
+                          f"detected on an earlier thumbnail. Detect the folds again, then compose those sections.")
             self._refresh_sections()
         if res.spec.name.startswith("Fold detection"):
             self.ov_folds.setChecked(True)
@@ -921,6 +925,7 @@ class MasksPage(Page):
         smode = self.project.state.structure.get("material_mode", "off")
         sdil = int(self.project.state.structure.get("material_dilate", 0))
         store = self.store
+        params = self._tissue_params()          # read the widgets here, on the GUI thread
 
         if self.ctx.cluster_enabled:
             self._cluster_masks("compose", secs, skip_edited=skip,
@@ -928,6 +933,25 @@ class MasksPage(Page):
                                              structure_dilate=sdil, write_hires=hires, clip_folds=clip,
                                              margin_px=margin, margin_label=margin_label))
             return
+
+        without_folds: set[str] = set()
+        if use_folds:
+            stale = [s for s in secs if store.folds_are_stale(s) and not (skip and store.is_hand_edited(s))]
+            if stale:
+                box = QMessageBox(self)
+                box.setIcon(QMessageBox.Warning)
+                box.setWindowTitle("Fold masks older than the thumbnails")
+                box.setText(f"{len(stale)} section(s) (e.g. {stale[0]}) have fold masks that were detected on an earlier "
+                            f"thumbnail; the thumbnails have been made again since, so they may no longer line up.")
+                box.setInformativeText("Detect the folds again for those sections, or compose them without folds now.")
+                skip_btn = box.addButton("Compose them without folds", QMessageBox.AcceptRole)
+                use_btn = box.addButton("Use the old fold masks", QMessageBox.ActionRole)
+                box.addButton(QMessageBox.Cancel)
+                box.exec()
+                if box.clickedButton() is skip_btn:
+                    without_folds = set(stale)
+                elif box.clickedButton() is not use_btn:
+                    return
 
         def work(progress=None, cancelled=None):
             out = []
@@ -937,9 +961,8 @@ class MasksPage(Page):
                 if skip and store.is_hand_edited(s):
                     progress(i, len(secs), f"{s} (kept)")
                     continue
-                if store.tissue_mask(s) is None:
-                    store.compute_tissue(s, self._tissue_params(), save=True)
-                r = store.compose(s, use_folds, label, smode, sdil, hires, clip_folds=clip,
+                store.ensure_tissue(s, params)          # missing, or made for an earlier thumbnail
+                r = store.compose(s, use_folds and s not in without_folds, label, smode, sdil, hires, clip_folds=clip,
                                   margin_px=margin, margin_label=margin_label)
                 out.append(r)
                 progress(i, len(secs), s)
@@ -1088,7 +1111,9 @@ class MasksPage(Page):
             m = self.store.material_mask(sec)
             if m is not None:
                 from ...core.masks import paint_split_line
-                m2 = paint_split_line(m, self._split_pts[0], self._split_pts[1], width=max(3, m.shape[0] // 300))
+                # FEABAS's 'split' material (200): the mesh breaks along it, but the pixels are still rendered
+                m2 = paint_split_line(m, self._split_pts[0], self._split_pts[1], width=max(3, m.shape[0] // 300),
+                                      label=LABEL_SPLIT)
                 from ...core.masks import write_mask
                 write_mask(self.store.thumb_mask_dir / f"{sec}.png", m2)
                 self.store.set_hand_edited(sec, True)
