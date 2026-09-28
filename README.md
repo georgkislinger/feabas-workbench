@@ -1,6 +1,10 @@
 <h1 align="center">FEABAS Workbench</h1>
 
-> **Version 0.3.5** is a bug-fix release: *Clear* on a test run no longer deletes project outputs,
+> **Version 0.3.6:** local parallelism can use hyper-threads when you set a total CPU budget (before, a
+> 32-core / 64-thread PC never ran more than 32 workers), and it says which limit lowered the number of
+> sections at once.
+>
+> **Version 0.3.5** was a bug-fix release: *Clear* on a test run no longer deletes project outputs,
 > clearing mipmaps keeps the full-resolution render, configured output folders and render mips are
 > respected, *stale* is judged per section (and *Run* offers to clear stale outputs first), a copied or
 > moved project no longer makes FEABAS work in the original folder, split lines use FEABAS's split
@@ -229,5 +233,5 @@ Cite FEABAS for the stitching and alignment – that is where the science is:
 and, if the workbench was useful in your work, the workbench too (GitHub's *Cite this repository*
 button uses [CITATION.cff](CITATION.cff)):
 
-> Kislinger, G. (2026). *FEABAS Workbench* (version 0.3.5) [Computer software].
+> Kislinger, G. (2026). *FEABAS Workbench* (version 0.3.6) [Computer software].
 > https://github.com/georgkislinger/feabas-workbench — ORCID 0000-0002-6559-7421

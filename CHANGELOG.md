@@ -3,7 +3,7 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.6] – 2026-09-28
 
 ### Fixed
 - Local parallelism never used hyper-threads: the CPU budget was capped at the physical cores even
@@ -12,6 +12,14 @@ versions follow [Semantic Versioning](https://semver.org/).
   own); a budget you set may now go up to the logical CPUs. The plan says which limit reduced
   the sections at once (CPU budget, RAM or section count) and what would lift it, and the dialog
   shows physical cores and logical CPUs.
+
+### Packaging
+- Public version 0.3.6 for the Windows executable, wheel, source archive and PyPI package.
+
+### Validation
+- The Windows and Linux test matrix (Python 3.10–3.14) passed, with a regression test for the
+  32-core / 64-thread case; the parallelism tests passed against the FEABAS runtime; the release
+  wheel was installed and started in a clean environment.
 
 ## [0.3.5] – 2026-09-28
 
