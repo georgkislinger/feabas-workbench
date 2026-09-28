@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QDoubleSpin
     QGroupBox, QLabel, QMessageBox, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
 
 from ..core.configs import load_yaml
-from ..core.local_parallel import SECTION_STEPS, hardware, options, plan
+from ..core.local_parallel import SECTION_STEPS, hardware, hardware_threads, options, plan
 from ..core.steps import STEPS_BY_KEY
 
 
@@ -20,9 +20,13 @@ class LocalParallelDialog(QDialog):
                       "Settings apply to this PC; cluster resources are configured separately.")
         note.setWordWrap(True); layout.addWidget(note)
         physical, free = hardware()
-        layout.addWidget(QLabel(f"Available now: {physical} CPU cores; {free:.1f} GiB free RAM."))
+        threads = hardware_threads()
+        cpus = f"{physical} physical cores" + (f" ({threads} logical CPUs)" if threads > physical else "")
+        layout.addWidget(QLabel(f"Available now: {cpus}; {free:.1f} GiB free RAM."))
         form = QFormLayout()
-        self.cpu = QSpinBox(); self.cpu.setRange(0, max(1024, physical)); self.cpu.setSpecialValueText("All available cores")
+        self.cpu = QSpinBox(); self.cpu.setRange(0, max(1024, threads)); self.cpu.setSpecialValueText("All physical cores")
+        self.cpu.setToolTip("Leave at 'All physical cores' (FEABAS's own default), or set a number: a set budget may "
+                            "also use hyper-threads, up to the logical CPUs.")
         self.cpu.setValue(int(ctx.project.state.local_execution.get("cpu_budget",
             load_yaml(ctx.project.general_config_path()).get("cpu_budget")) or 0))
         self.ram = QDoubleSpinBox(); self.ram.setRange(0, 16384); self.ram.setSuffix(" GiB"); self.ram.setSpecialValueText("Auto: 80% of free RAM")
@@ -55,7 +59,8 @@ class LocalParallelDialog(QDialog):
                 (widget.currentIndexChanged if widget is mode else widget.valueChanged).connect(self.refresh)
             rows.addWidget(box)
         rows.addStretch(1); scroll.setWidget(content); layout.addWidget(scroll, 1)
-        caveat = QLabel("CPU limit: sections × workers ≤ total cores. RAM is an estimate, not a guarantee; "
+        caveat = QLabel("CPU limit: sections × workers ≤ total CPU budget (the physical cores unless you set a "
+            "budget; a set budget may use hyper-threads too). RAM is an estimate, not a guarantee; "
             "start with one section and use its logged peak to refine it. Whole-stack optimization and "
             "shared TensorStore volume writes keep their existing execution.")
         caveat.setWordWrap(True); layout.addWidget(caveat)
@@ -70,6 +75,7 @@ class LocalParallelDialog(QDialog):
         project.state = copy.deepcopy(project.state)
         project.state.local_execution["ram_budget_gib"] = self.ram.value()
         physical, free = hardware()
+        threads = hardware_threads()
         for key, (mode, sections, workers, measured, label) in self.rows.items():
             value = mode.currentData()
             sections.setEnabled(value in {"across", "both"})
@@ -79,10 +85,11 @@ class LocalParallelDialog(QDialog):
                 label.setText("Unchanged: uses the step's existing FEABAS worker settings.")
                 continue
             settings = dict(mode=value, sections=sections.value(), workers=workers.value(), measured_gib=measured.value())
-            allocation = plan(project, key, settings, available=(physical, free), cpu_override=self.cpu.value())
+            allocation = plan(project, key, settings, available=(physical, free), cpu_override=self.cpu.value(),
+                              threads=threads)
             memory = f"~{allocation.per_section_gib:.2f} GiB/section" if allocation.per_section_gib else "RAM unknown"
             label.setText(f"Now: {allocation.sections} sections × {allocation.workers} workers = "
-                          f"{allocation.sections * allocation.workers} cores; {memory}. {allocation.note}")
+                          f"{allocation.sections * allocation.workers} CPUs; {memory}. {allocation.note}")
 
     def save(self):
         if self.ctx.jobs.running:

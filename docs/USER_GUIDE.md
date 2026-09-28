@@ -537,9 +537,13 @@ Thumbnails and Export → Render. Each eligible step can use the existing FEABAS
 across sections, so it offers that option with one worker per section.
 
 For example, 4 sections × 8 workers uses a budget of 32 cores. The dialog shows what can run now,
-limited by available physical cores, selected sections and estimated RAM. A 64-core workstation can
-request 8 × 8, but memory may lower the simultaneous section count. The default RAM planning budget
-is 80% of currently available RAM. These limits are recalculated when each stage starts.
+limited by the CPU budget, selected sections and estimated RAM, and says which of them lowered the
+number of sections at once. Left at **All physical cores**, the CPU budget is the physical cores
+(FEABAS's own default); a **Total CPU budget** you set may also use hyper-threads, up to the logical
+CPUs. So a PC with 32 cores and 64 logical CPUs runs 4 × 12 workers only with a budget of 48 or more,
+and 2 × 12 otherwise. A 64-core workstation can request 8 × 8, but memory may lower the simultaneous
+section count. The default RAM planning budget is 80% of currently available RAM. These limits are
+recalculated when each stage starts.
 
 RAM estimates use image dimensions, dtype, tile count and worker count; they are planning allowances,
 not measured guarantees or enforced memory limits. First run one representative section, then use the

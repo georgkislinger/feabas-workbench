@@ -3,6 +3,16 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- Local parallelism never used hyper-threads: the CPU budget was capped at the physical cores even
+  when a larger total CPU budget was set, so on a 32-core / 64-thread PC "4 sections × 12 workers"
+  ran 2 sections at once. Without a set budget the physical cores remain the default (FEABAS's
+  own); a budget you set may now go up to the logical CPUs. The plan says which limit reduced
+  the sections at once (CPU budget, RAM or section count) and what would lift it, and the dialog
+  shows physical cores and logical CPUs.
+
 ## [0.3.5] – 2026-09-28
 
 ### Fixed – what "done", "stale" and "Clear" mean

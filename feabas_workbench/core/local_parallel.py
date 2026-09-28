@@ -32,6 +32,17 @@ def hardware():
     return cores, psutil.virtual_memory().available / GIB
 
 
+def hardware_threads():
+    """Logical CPUs (hardware threads) this process may run on: twice the cores with hyper-threading."""
+    import psutil
+    threads = psutil.cpu_count(logical=True) or os.cpu_count() or 1
+    try:
+        threads = min(threads, len(psutil.Process().cpu_affinity()))
+    except (AttributeError, psutil.Error):
+        pass
+    return threads
+
+
 def options(project, key):
     saved = project.state.local_execution.get("steps", {}).get(key, {})
     kind, field, _ = SECTION_STEPS[key]
@@ -72,15 +83,29 @@ class LocalPlan:
         return asdict(self)
 
 
-def plan(project, key, settings=None, *, count=None, available=None, cpu_override=None):
+def plan(project, key, settings=None, *, count=None, available=None, cpu_override=None, threads=None):
+    """
+    Sections at once and workers per section for *key*. *available* is (physical cores, free RAM
+    in GiB) and *threads* the logical CPUs; both are read from this machine when not given.
+    Without a configured CPU budget the physical cores are the budget (FEABAS's own default); a
+    budget that was set may also use hyper-threads, up to the logical CPUs.
+    """
     setting = options(project, key) if settings is None else settings
     mode = setting["mode"]
     if mode not in MODES:
         raise ValueError("Unknown local parallelism mode.")
     physical, free_gib = available if available is not None else hardware()
+    if threads is None:
+        threads = hardware_threads() if available is None else physical
+    threads = max(int(physical), int(threads))
     general = load_yaml(project.general_config_path())
-    configured_cpu = project.state.local_execution.get("cpu_budget", general.get("cpu_budget"))
-    cpu_budget = max(1, min(physical, int((configured_cpu if cpu_override is None else cpu_override) or physical)))
+    configured = (project.state.local_execution.get("cpu_budget", general.get("cpu_budget"))
+                  if cpu_override is None else cpu_override)
+    try:
+        configured = int(configured or 0)
+    except (TypeError, ValueError):
+        configured = 0
+    cpu_budget = max(1, min(threads, configured)) if configured > 0 else max(1, int(physical))
     requested = max(1, int(setting["sections"])) if mode in {"across", "both"} else 1
     workers = 1 if mode == "across" or not SECTION_STEPS[key][2] else max(1, int(setting["workers"]))
     workers = min(cpu_budget, workers)
@@ -89,14 +114,27 @@ def plan(project, key, settings=None, *, count=None, available=None, cpu_overrid
     estimated = float(setting.get("measured_gib", 0)) or memory_estimate(project, key, workers)
     cpu_limit = max(1, cpu_budget // workers)
     ram_limit = max(1, int(ram // estimated)) if estimated else 1
-    sections = min(requested, cpu_limit, ram_limit, max(1, count if count is not None else len(project.section_names())))
+    count_limit = max(1, count if count is not None else len(project.section_names()))
+    sections = min(requested, cpu_limit, ram_limit, count_limit)
     note = ""
     if estimated is None:
         note = "Image dimensions unknown: one section until you enter a measured RAM allowance."
     elif estimated > ram:
         note = "Even one section may exceed available RAM. Use fewer workers or a larger-memory machine."
     elif sections < requested:
-        note = "Simultaneous sections limited by CPUs, available RAM or selected section count."
+        # say which limit it was, and what would lift it
+        reasons = []
+        if cpu_limit < requested:
+            budget = f"{cpu_budget} physical cores" if configured <= 0 else f"{cpu_budget} CPUs"
+            reasons.append(f"CPU budget {budget} ÷ {workers} workers = {cpu_limit} section(s)")
+            if threads > cpu_budget:
+                reasons.append(f"this PC has {threads} logical CPUs (hyper-threads): set the total CPU budget up to "
+                               f"{threads} to use them, or use fewer workers per section")
+        if ram_limit < requested:
+            reasons.append(f"RAM budget {ram:.0f} GiB ÷ ~{estimated:.1f} GiB per section = {ram_limit} section(s)")
+        if count_limit < requested:
+            reasons.append(f"only {count_limit} section(s) to process")
+        note = f"{sections} of {requested} sections at once: " + "; ".join(reasons) + "."
     if not SECTION_STEPS[key][2]:
         note = "Montage optimization uses one worker per section; parallelism is across sections. " + note
     return LocalPlan(sections, workers, cpu_budget, ram, estimated, requested, note)
