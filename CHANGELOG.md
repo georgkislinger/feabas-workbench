@@ -3,7 +3,7 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.5] – 2026-09-28
 
 ### Fixed – what "done", "stale" and "Clear" mean
 - *Clear…* on a test run's step card cleared the **project's** outputs instead of the test run's.
@@ -109,6 +109,19 @@ versions follow [Semantic Versioning](https://semver.org/).
 - `THIRD_PARTY_NOTICES.md` covers what the Windows build carries (Qt/PySide6 under LGPL-3.0,
   paramiko under LGPL-2.1, and the rest); the build includes the GNU license texts (`LICENSES/`)
   and each package's license files, and keeps paramiko as replaceable source files.
+
+### Packaging
+- Public version 0.3.5 for the Windows executable, wheel, source archive and PyPI package.
+
+### Validation
+- The Windows and Linux test matrix (Python 3.10–3.14) passed: 208 tests on Linux, 3 skipped
+  there (a Windows-only test and the two that need the separate FEABAS runtime, which run in the
+  end-to-end job).
+- The synthetic FEABAS pipeline passed run directly and through the GUI's job queue, now with the
+  match checks (14–17 fine match points per section pair); the frozen Windows application passed
+  its self-check and rendered every page; the release wheel was installed and started in a clean
+  environment.
+- Full FEABAS image processing at LRZ remains unvalidated.
 
 ## [0.3.4] – 2026-09-25
 
