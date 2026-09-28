@@ -37,6 +37,23 @@ def test_cpu_and_ram_limits_and_persistence(project):
     assert plan(loaded, 'stitch.matching', setting, available=(64, 10)).sections == 1
 
 
+def test_a_set_cpu_budget_may_use_hyper_threads(project):
+    """32 cores / 64 logical CPUs, 4 sections x 12 workers asked for: the physical cores allow 2 at
+    once and the note says so; a budget of 64 that was set must not be cut back to 32."""
+    s = dict(mode='both', workers=12, sections=4, measured_gib=1)
+    machine = dict(available=(32, 455), threads=64, count=100)
+    auto = plan(project, 'stitch.rendering', s, **machine)
+    assert (auto.cpu_budget, auto.sections, auto.workers) == (32, 2, 12)
+    assert auto.note.startswith("2 of 4 sections at once: CPU budget 32 physical cores") and "64 logical CPUs" in auto.note
+    project.state.local_execution["cpu_budget"] = 64
+    full = plan(project, 'stitch.rendering', s, **machine)
+    assert (full.cpu_budget, full.sections, full.workers) == (64, 4, 12) and full.note == ""
+    assert plan(project, 'stitch.rendering', s, cpu_override=128, **machine).cpu_budget == 64   # no more than there is
+    assert plan(project, 'stitch.rendering', s, cpu_override=0, **machine).cpu_budget == 32     # 'All physical cores'
+    ram_bound = plan(project, 'stitch.rendering', dict(s, measured_gib=200), cpu_override=64, **machine)
+    assert ram_bound.sections == 1 and "RAM budget 364 GiB" in ram_bound.note
+
+
 def test_unknown_dimensions_never_multiply_unknown_ram(project):
     project.state.volume.tile_w = 0
     s = dict(mode='across', workers=12, sections=10, measured_gib=0)

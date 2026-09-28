@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .cluster_bundle import ClusterResources, MAX_BUNDLE_BYTES, file_hash, _portable_config
 from .cluster_workspace import CONTROL, read_json, write_json, section_tasks
-from .configs import ConfigStore, CONFIG_FILES, dump_yaml, load_yaml
+from .configs import ConfigStore, CONFIG_FILES, RESOURCE_KEYS, dump_yaml, load_yaml
 from .project import VENDOR_DIR
 from .steps import (STEPS_BY_KEY, PipelineScan, cleared_keys, clear_targets, count_outputs, expected_outputs, finish_clear,
                     step_argv, write_fine_match_list, create_snapshot)
@@ -55,9 +55,13 @@ def changed_steps(old, new):
     return keys
 
 
+# settings that change how a run is carried out, not its results (the local pipeline ignores the same)
+_NOT_SCIENTIFIC = RESOURCE_KEYS | {"cpu_budget", "logging_directory"}
+
+
 def scientific_config(value):
     if isinstance(value, dict):
-        return {k: scientific_config(v) for k, v in value.items() if k not in {"num_workers", "cpu_budget", "logging_directory"}}
+        return {k: scientific_config(v) for k, v in value.items() if k not in _NOT_SCIENTIFIC}
     if isinstance(value, list):
         return [scientific_config(v) for v in value]
     return value

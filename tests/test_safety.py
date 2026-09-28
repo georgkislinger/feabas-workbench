@@ -64,10 +64,13 @@ def test_saving_unchanged_settings_does_not_make_outputs_stale(tmp_path):
     cs.save("stitching")                                    # 'Apply' with nothing changed
     cs.save()
     assert _state(p, "stitch.matching").state is State.COMPLETE
-    cs.set("stitching", "matching.num_workers", 3)
+    cs.set("stitching", "matching.num_workers", 3)                 # how fast, not what: nothing is stale
+    cs.save("stitching")
+    assert _state(p, "stitch.matching").state is State.COMPLETE
+    cs.set("stitching", "matching.margin", 1200)
     cs.save("stitching")
     st = _state(p, "stitch.matching")
-    assert st.state is State.STALE and "stitching config edited" in st.reasons[0]
+    assert st.state is State.STALE and st.reasons[0] == "stitching config edited after these outputs: matching.margin"
     # back to FEABAS's defaults is a change too: the file stays, as {}, which FEABAS can read
     for s in SECS:
         _put(p.root, f"stitch/match_h5/{s}.h5", time.time() + 100)
@@ -116,6 +119,76 @@ def test_meshes_follow_the_coarse_solution(tmp_path):
     assert _state(p, "align.meshing").state is State.COMPLETE
     _put(p.root, "thumbnail_align/tform/s0002.h5", T0 + 400)       # coarse stack solved again
     assert _state(p, "align.meshing").state is State.STALE
+
+
+def _coarse_done(p, t_matches):
+    for s in SECS:
+        _put(p.root, f"stitched_sections/mip0/{s}/metadata.txt", T0 + 30)
+        _put(p.root, f"thumbnail_align/thumbnails/{s}.png", T0 + 100)
+        _put(p.root, f"thumbnail_align/material_masks/{s}.png", T0 + 110)
+        _put(p.root, f"thumbnail_align/tform/{s}.h5", t_matches + 10)
+    for a, b in (("s0001", "s0002"), ("s0002", "s0003"), ("s0001", "s0003")):
+        _put(p.root, f"thumbnail_align/matches/{a}__to__{b}.h5", t_matches)
+
+
+def test_only_the_settings_a_step_uses_make_it_stale(tmp_path):
+    """
+    The coarse alignment's settings live in the thumbnail config: saving them made 'Make thumbnails'
+    stale, and through it the masks, 'Match thumbnails' and 'Optimize coarse stack' - although those
+    two had just been run with the new settings (seen on a real project with 'workers' changed).
+    """
+    p = _project(tmp_path)
+    _coarse_done(p, time.time() + 100)                       # coarse steps run after the settings below
+    cs = ConfigStore(p.configs_dir)
+    cs.set("thumbnail", "alignment.num_workers", 52)
+    cs.set("thumbnail", "alignment.compare_distance", 3)
+    cs.save("thumbnail")
+    scan = PipelineScan(p.root, 3, ConfigStore(p.configs_dir))
+    for key in ("thumbnail.downsample", "masks", "thumbnail.matching", "thumbnail.optimization"):
+        assert scan[key].state is State.COMPLETE, (key, scan[key].reasons)
+    # a coarse matching setting changed after the coarse matches: they are stale, the thumbnails are not
+    _coarse_done(p, T0 + 300)
+    cs.set("thumbnail", "alignment.compare_distance", 2)
+    cs.save("thumbnail")
+    scan = PipelineScan(p.root, 3, ConfigStore(p.configs_dir))
+    assert scan["thumbnail.downsample"].state is State.COMPLETE and scan["masks"].state is State.COMPLETE
+    assert scan["thumbnail.matching"].reasons == ["thumbnail config edited after these outputs: alignment.compare_distance"]
+    assert scan["thumbnail.optimization"].state is State.STALE           # built on the stale matches
+    # a thumbnail setting changed: the thumbnails, and everything made from them, are stale
+    cs.set("thumbnail", "thumbnail_mip_level", 3)
+    cs.save("thumbnail")
+    scan = PipelineScan(p.root, 3, ConfigStore(p.configs_dir))
+    assert scan["thumbnail.downsample"].reasons == ["thumbnail config edited after these outputs: thumbnail_mip_level"]
+    assert scan["masks"].state is State.STALE
+    # edited outside the workbench: which setting changed is unknown, so every step of the file counts
+    cfg = p.configs_dir / "thumbnail_configs.yaml"
+    cfg.write_text(cfg.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    os.utime(cfg, (time.time() + 5, time.time() + 5))
+    scan = PipelineScan(p.root, 3, ConfigStore(p.configs_dir))
+    assert scan["thumbnail.optimization"].reasons[0] == "thumbnail config file changed after these outputs"
+
+
+def test_settings_changed_before_the_change_record_existed_are_not_judged(tmp_path):
+    """Projects from before 0.3.6 have no record of which setting changed: their file times are not held against them."""
+    from feabas_workbench.core.configs import CHANGES_FILE
+    p = _project(tmp_path)
+    (p.configs_dir / CHANGES_FILE).unlink(missing_ok=True)      # as a project made with 0.3.5 or earlier
+    _coarse_done(p, T0 + 300)
+    (p.configs_dir / "thumbnail_configs.yaml").write_text("alignment: {num_workers: 52}\n", encoding="utf-8")
+    (p.configs_dir / "stitching_configs.yaml").write_text("matching: {num_workers: 8}\n", encoding="utf-8")
+    for s in SECS:
+        _put(p.root, f"stitch/match_h5/{s}.h5", T0 + 10)
+    scan = PipelineScan(p.root, 3, ConfigStore(p.configs_dir))
+    assert scan["thumbnail.downsample"].state is State.COMPLETE and scan["thumbnail.optimization"].state is State.COMPLETE
+    # the first recorded save takes the other files as they are; later outside edits count again
+    cs = ConfigStore(p.configs_dir)
+    cs.set("alignment", "meshing.mesh_size", 300)
+    cs.save("alignment")
+    assert _state(p, "stitch.matching").state is State.COMPLETE
+    stitching = p.configs_dir / "stitching_configs.yaml"
+    stitching.write_text("matching: {margin: 900}\n", encoding="utf-8")
+    os.utime(stitching, (time.time() + 5, time.time() + 5))
+    assert _state(p, "stitch.matching").reasons[0] == "stitching config file changed after these outputs"
 
 
 # ----------------------------------------------------------------------------- volume and render folders
@@ -267,6 +340,24 @@ def test_restoring_a_snapshot_flags_what_was_computed_from_other_inputs(tmp_path
     scan = PipelineScan(p.root, 3, ConfigStore(p.configs_dir))
     for key in ("thumbnail.optimization", "align.meshing", "align.matching", "align.optimization"):
         assert scan[key].state is State.STALE, (key, scan[key].reasons)
+
+
+def test_restoring_a_snapshot_keeps_the_record_of_setting_changes(tmp_path):
+    from feabas_workbench.core.configs import CHANGES_FILE
+    p = _project(tmp_path)
+    for s in SECS:
+        _put(p.root, f"align/mesh/{s}.h5", T0 + 100)
+    snap = create_snapshot(p.root, "before")
+    cs = ConfigStore(p.configs_dir)
+    cs.set("alignment", "meshing.mesh_size", 300)
+    cs.save("alignment")
+    record = (p.configs_dir / CHANGES_FILE).read_text(encoding="utf-8")
+    restore_snapshot(p.root, snap)
+    assert (p.configs_dir / CHANGES_FILE).read_text(encoding="utf-8") == record
+    assert ConfigStore(p.configs_dir).get("alignment", "meshing.mesh_size") == 600        # the setting came back
+    assert yaml.safe_load((p.configs_dir / "alignment_configs.yaml").read_text(encoding="utf-8")) == {}
+    meshing = _state(p, "align.meshing")
+    assert meshing.state is State.STALE and any(r.startswith("alignment config") for r in meshing.reasons)
 
 
 def test_snapshot_paths_outside_the_list_are_ignored(tmp_path):
@@ -731,7 +822,7 @@ def test_gui_running_a_stale_step_offers_to_clear_first(app, window, tmp_path, m
     for s in SECS:
         _put(p.root, f"stitch/match_h5/{s}.h5", T0 + 100)
     cs = ConfigStore(p.configs_dir)
-    cs.set("stitching", "matching.num_workers", 2)
+    cs.set("stitching", "matching.margin", 1200)
     cs.save()                                                     # newer than the outputs: stale
     window.open_project(p.root)
     page = window._pages[3]

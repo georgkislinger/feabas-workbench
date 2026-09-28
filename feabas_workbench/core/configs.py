@@ -11,7 +11,10 @@ files as per-key hints so the settings editor can explain every field.
 from __future__ import annotations
 
 import copy
+import json
+import os
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -24,6 +27,12 @@ CONFIG_FILES = {
     "alignment": "alignment_configs.yaml",
     "material": "material_table.yaml",
 }
+
+# when each setting last changed (ConfigStore.save keeps it; see ConfigStore.changed_keys)
+CHANGES_FILE = ".workbench_setting_changes.json"
+# settings that only decide how fast or in how many pieces a step runs, never what it produces
+RESOURCE_KEYS = frozenset({"num_workers", "cache_size", "cache_capacity", "max_tile_per_job",
+                           "parallel_within_section", "num_overlaps_per_job", "batch_size"})
 
 
 class ConfigError(RuntimeError):
@@ -52,6 +61,18 @@ def dump_yaml(path: Path, data: dict, header: str | None = None) -> None:
     if header:
         text = "".join(f"# {ln}\n" for ln in header.splitlines()) + text
     path.write_text(text, encoding="utf-8")
+
+
+def _flatten(data, prefix: str = "") -> dict:
+    """{"a": {"b": 1}} -> {"a.b": 1}; an empty mapping is a value of its own."""
+    out = {}
+    for k, v in (data or {}).items():
+        key = f"{prefix}{k}"
+        if isinstance(v, dict) and v:
+            out.update(_flatten(v, key + "."))
+        else:
+            out[key] = v
+    return out
 
 
 def deep_merge(base: dict, over: dict) -> dict:
@@ -244,12 +265,11 @@ class ConfigStore:
 
     def save(self, kind: str | None = None) -> None:
         """
-        Write the overrides that changed. A file is only rewritten when its content changes: the
-        pipeline marks outputs stale when their config file is newer than they are, so pressing
-        Apply with nothing changed must not touch it. When every override is removed the file is
-        kept as ``{}`` rather than deleted - going back to the defaults is a change too, and its
-        timestamp is what tells the pipeline so (FEABAS also fails on an empty override file,
-        which parses to None, but reads ``{}`` fine).
+        Write the overrides that changed, and record which settings changed (changed_keys). A
+        file is only rewritten when its content changes, so pressing Apply with nothing changed
+        leaves it and every output alone. When every override is removed the file is kept as
+        ``{}`` rather than deleted: going back to the defaults is a change too (and FEABAS fails
+        on an empty override file, which parses to None, but reads ``{}`` fine).
         """
         for k, doc in self.docs.items():
             if kind and k != kind:
@@ -257,6 +277,7 @@ class ConfigStore:
             if not doc.user_path.is_file():
                 if doc.overrides:
                     self._write(doc)
+                    self._record_changes(doc, {})
                 continue
             try:
                 current = yaml.safe_load(doc.user_path.read_text(encoding="utf-8"))
@@ -264,11 +285,88 @@ class ConfigStore:
                 current = None
             if not isinstance(current, dict) or current != doc.overrides:
                 self._write(doc)
+                self._record_changes(doc, current if isinstance(current, dict) else {})
 
     @staticmethod
     def _write(doc: ConfigDoc) -> None:
         dump_yaml(doc.user_path, doc.overrides,
                   header=f"Project overrides for {doc.default_path.name}; unspecified keys use the defaults.")
+
+    # -- which settings changed when -------------------------------------
+    # A config file holds the settings of several steps (the thumbnail config also has the coarse
+    # alignment's), so its time says only that *something* changed. Each save records which
+    # settings it changed, so a step can be judged by the settings that decide its results.
+
+    def _changes_path(self) -> Path:
+        return self.configs_dir / CHANGES_FILE
+
+    def _read_changes(self) -> dict | None:
+        """The record of setting changes; None when there is none (a project from before 0.3.6)."""
+        path = self._changes_path()
+        try:
+            st = path.stat()
+            stamp = (st.st_mtime_ns, st.st_size)
+            cached = getattr(self, "_changes_cache", None)
+            if cached is not None and cached[0] == stamp:      # a scan asks once per step
+                return copy.deepcopy(cached[1])
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        self._changes_cache = (stamp, data)
+        return copy.deepcopy(data)
+
+    def _record_changes(self, doc: ConfigDoc, old: dict) -> None:
+        data = self._read_changes()
+        now = time.time()
+        if data is None:
+            # the first record: what the files hold now is the baseline, older changes are unknown
+            data = {}
+            for other in self.docs.values():
+                if other is not doc and other.user_path.is_file():
+                    data[other.kind] = {"file_mtime": other.user_path.stat().st_mtime, "keys": {}}
+        before, after = _flatten(old), _flatten(doc.overrides)
+        entry = data.setdefault(doc.kind, {"keys": {}})
+        keys = entry.setdefault("keys", {})
+        for key in set(before) | set(after):
+            if before.get(key, _MISSING) != after.get(key, _MISSING):
+                keys[key] = now
+        entry["file_mtime"] = doc.user_path.stat().st_mtime
+        tmp = self._changes_path().with_name(CHANGES_FILE + ".tmp")
+        try:
+            tmp.write_text(json.dumps(data, indent=1, sort_keys=True), encoding="utf-8")
+            os.replace(tmp, self._changes_path())
+        except OSError:
+            pass
+
+    def changed_keys(self, kind: str, since: float, prefixes=(), exclude=()) -> list[str]:
+        """
+        Settings of *kind* that decide results and changed after *since*: only those under
+        *prefixes* (all when empty) and not under *exclude*; worker counts, cache sizes and the
+        like (RESOURCE_KEYS) never count. ``["*"]`` when the file was edited outside the workbench
+        after the last recorded save, so which settings changed is unknown.
+        """
+        path = self.docs[kind].user_path
+        if not path.is_file():
+            return []
+        data = self._read_changes()
+        if data is None:
+            return []                  # no record yet: changes before 0.3.6 are not judged
+        mtime = path.stat().st_mtime
+        entry = data.get(kind)
+        if not isinstance(entry, dict) or abs(float(entry.get("file_mtime", 0)) - mtime) > 1:
+            return ["*"] if mtime > since else []
+        out = []
+        for key, t in sorted(entry.get("keys", {}).items()):
+            if float(t) <= since or key.rsplit(".", 1)[-1] in RESOURCE_KEYS:
+                continue
+            if prefixes and not any(key == p or key.startswith(p + ".") for p in prefixes):
+                continue
+            if any(key == e or key.startswith(e + ".") for e in exclude):
+                continue
+            out.append(key)
+        return out
 
     def get(self, kind: str, dotted: str, default=None):
         return get_dotted(self.docs[kind].merged, dotted, default)
