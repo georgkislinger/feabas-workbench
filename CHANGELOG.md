@@ -12,13 +12,22 @@ versions follow [Semantic Versioning](https://semver.org/).
   own); a budget you set may now go up to the logical CPUs. The plan says which limit reduced
   the sections at once (CPU budget, RAM or section count) and what would lift it, and the dialog
   shows physical cores and logical CPUs.
+- Steps went *stale* right after running. Staleness compared whole config files, and the coarse
+  alignment's settings share the thumbnail config: saving any of them (even the worker count) made
+  *Make thumbnails* stale, and since 0.3.5 that passed on to the masks, *Match thumbnails* and
+  *Optimize coarse stack*, although those had just been run with the new settings. The workbench
+  now records which setting changed when; each step reacts only to the settings that decide its
+  results, worker counts and cache sizes never count, and the reason names the changed settings.
+  Files edited outside the workbench still count as a change for every step that reads them;
+  changes made before 0.3.6 are not held against existing outputs. Cluster mode ignores the same
+  run-only settings when it compares configurations.
 
 ### Packaging
 - Public version 0.3.6 for the Windows executable, wheel, source archive and PyPI package.
 
 ### Validation
-- The Windows and Linux test matrix (Python 3.10–3.14) passed, with a regression test for the
-  32-core / 64-thread case; the parallelism tests passed against the FEABAS runtime; the release
+- The Windows and Linux test matrix (Python 3.10–3.14) passed, with regression tests for the
+  32-core / 64-thread case and for settings changes after *Make thumbnails*; the parallelism tests passed against the FEABAS runtime; the release
   wheel was installed and started in a clean environment.
 
 ## [0.3.5] – 2026-09-28

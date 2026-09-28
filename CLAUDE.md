@@ -13,7 +13,10 @@
   follow the project's configs (`rendering.out_dir`, `rendering.mip_level`, `align/ts_spec.json` for the volume):
   use the helpers there (`stitched_dir`, `aligned_dir`, `aligned_render_mip`, `tensorstore_dir`) instead of
   hard-coding `stitched_sections`/`aligned_stack`. Clearing (`clear_targets`) never deletes through a link or
-  junction: test runs link the project's montages into their sandbox.
+  junction: test runs link the project's montages into their sandbox. Config staleness is per setting:
+  `ConfigStore.save` records when each setting changed (`configs/.workbench_setting_changes.json`), each `Step`
+  names the config sections that decide its results (`config_keys`/`config_exclude`), and `RESOURCE_KEYS`
+  (workers, caches) never count; outside edits count as a change of the whole file.
 - FEABAS 3.0.5 run-time fixes live in `vendor/winfix/sitecustomize.py`, put first on PYTHONPATH of every FEABAS job
   (`ui/bridge.feabas_env`) so they reach multiprocessing children too; keep that when adding new ways to launch
   FEABAS. (1) all platforms: `matcher.stitching_matcher` only assigns `phtm` when `compute_photometric` is true but

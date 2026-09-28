@@ -507,9 +507,12 @@ never modified.</p>
 </table></div>
 <p>Steps that work section by section are compared section by section: running an earlier step for a few
 more sections leaves the sections that were already finished alone, and only outputs whose own inputs
-changed count. Staleness is passed on — when <em>Match tiles</em> is stale, so is everything built on it. A
-config file counts as changed only when its content changes: pressing <em>Apply</em> without changing anything
-makes nothing stale.</p>
+changed count. Staleness is passed on — when <em>Match tiles</em> is stale, so is everything built on it. Only
+settings that decide a step's results count, and only for that step: the number of workers or a cache
+size never makes anything stale, pressing <em>Apply</em> without changing anything makes nothing stale, and a
+coarse-alignment setting (stored in the thumbnail config) makes the coarse steps stale but not the
+thumbnails. The workbench remembers which setting changed when (<code>configs/.workbench_setting_changes.json</code>);
+a config file edited outside it counts as changed for every step that reads it.</p>
 <p>"Stale" is a warning, not a lock, but running a stale step as it is recomputes nothing: FEABAS skips
 every output that already exists. <strong>Run</strong> (and <em>Run all steps below in order</em>) on a stale step therefore
 asks first: <strong>Clear, then run</strong> removes the stale outputs and everything after them (after showing the

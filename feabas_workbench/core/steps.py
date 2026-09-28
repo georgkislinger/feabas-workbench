@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
-from .configs import ConfigError, ConfigStore
+from .configs import CHANGES_FILE, CONFIG_FILES, ConfigError, ConfigStore, dump_yaml
 
 
 class State(str, Enum):
@@ -71,6 +71,10 @@ class Step:
     clear_paths: tuple[str, ...] = ()       # extra folders/files removed on clear (relative to root)
     snapshot_paths: tuple[str, ...] = ()    # folders worth snapshotting (relative to root)
     out_base: str = ""                      # "stitched" | "aligned": outputs live in FEABAS's configured render folder
+    # the settings of config_kind that decide this step's results (dotted prefixes; all when
+    # empty) and the parts of them that do not; worker counts and caches never count
+    config_keys: tuple[str, ...] = ()
+    config_exclude: tuple[str, ...] = ()
 
 
 STEPS: tuple[Step, ...] = (
@@ -78,11 +82,11 @@ STEPS: tuple[Step, ...] = (
          "Find correspondences in the overlaps between neighbouring tiles of each section.",
          script="scripts/stitch_main.py", mode="matching",
          out_subdir="stitch/match_h5", out_glob="*.h5", err_glob="*.h5_err",
-         config_kind="stitching", snapshot_paths=("stitch/match_h5",)),
+         config_kind="stitching", config_keys=("section_thickness", "matching"), snapshot_paths=("stitch/match_h5",)),
     Step("stitch.optimization", "stitch", "Optimize montage",
          "Elastically relax the tiles of each section into a consistent montage.",
          script="scripts/stitch_main.py", mode="optimization",
-         out_subdir="stitch/tform", config_kind="stitching", requires=("stitch.matching",),
+         out_subdir="stitch/tform", config_kind="stitching", config_keys=("optimization",), requires=("stitch.matching",),
          snapshot_paths=("stitch/tform",)),
     Step("stitch.rendering", "stitch", "Render montages",
          "Write each stitched section as PNG tiles or a TensorStore volume.",
@@ -90,14 +94,14 @@ STEPS: tuple[Step, ...] = (
          # one output per finished section, whichever driver rendered it: PNG tiles write
          # mip0/<section>/metadata.txt last, the precomputed driver writes <section>/info
          out_subdir="stitched_sections", out_glob=("mip0/*/metadata.txt", "*/info"), out_base="stitched",
-         config_kind="stitching", requires=("stitch.optimization",),
+         config_kind="stitching", config_keys=("rendering",), requires=("stitch.optimization",),
          clear_paths=("stitch/ts_specs", "stitch/hist_tf")),
     Step("thumbnail.downsample", "thumbnail", "Make thumbnails",
          "Downsample the stitched sections to the coarse-alignment mip level and create default masks.",
          script="scripts/thumbnail_main.py", mode="downsample",
          # thumbnail_format in the thumbnail config picks the extension (png by default)
          out_subdir="thumbnail_align/thumbnails", out_glob=("*.png", "*.jpg", "*.jpeg", "*.tif", "*.tiff"),
-         config_kind="thumbnail", requires=("stitch.rendering",),
+         config_kind="thumbnail", config_keys=("thumbnail_mip_level", "downsample"), requires=("stitch.rendering",),
          clear_paths=("thumbnail_align/material_masks", "thumbnail_align/region_masks")),
     Step("masks", "masks", "Material masks",
          "Tissue/background and fold masks that tell FEABAS where the section is and where it is folded.",
@@ -110,62 +114,63 @@ STEPS: tuple[Step, ...] = (
          script="scripts/thumbnail_main.py", mode="matching",
          out_subdir="thumbnail_align/matches", out_glob="*.h5", err_glob="*.h5_err",
          cardinality=Cardinality.PER_PAIR, config_kind="thumbnail", requires=("masks",),
+         config_keys=("alignment",), config_exclude=("alignment.optimization", "alignment.render"),
          clear_paths=("thumbnail_align/feature_matches",), snapshot_paths=("thumbnail_align/matches",)),
     Step("thumbnail.optimization", "thumbnail", "Optimize coarse stack",
          "Solve the coarse stack; its result seeds the fine alignment.",
          script="scripts/thumbnail_main.py", mode="optimization",
-         out_subdir="thumbnail_align/tform", config_kind="thumbnail",
+         out_subdir="thumbnail_align/tform", config_kind="thumbnail", config_keys=("alignment.optimization",),
          requires=("thumbnail.matching",), supports_range=False,
          clear_paths=("thumbnail_align/mesh",), snapshot_paths=("thumbnail_align/tform",)),
     Step("thumbnail.render", "thumbnail", "Render coarse stack",
          "Aligned thumbnails to check the coarse result by eye (optional).",
          script="scripts/thumbnail_main.py", mode="render",
          out_subdir="thumbnail_align", out_glob="aligned_thumbnails_*/*.png",
-         config_kind="thumbnail", requires=("thumbnail.optimization",), optional=True,
+         config_kind="thumbnail", config_keys=("alignment.render",), requires=("thumbnail.optimization",), optional=True,
          supports_range=False),
     # meshing reads the coarse transform (thumbnail_align/tform) as the meshes' starting position,
     # so a new coarse solution makes the meshes stale and clearing it clears them
     Step("align.meshing", "align", "Generate meshes",
          "Finite-element meshes per section, honouring the material masks.",
          script="scripts/align_main.py", mode="meshing",
-         out_subdir="align/mesh", config_kind="alignment",
+         out_subdir="align/mesh", config_kind="alignment", config_keys=("meshing",),
          requires=("thumbnail.matching", "thumbnail.optimization", "masks"), supports_range=False),
     Step("align.matching", "align", "Fine matching",
          "Refine the coarse matches at the working mip level by block matching.",
          script="scripts/align_main.py", mode="matching",
          out_subdir="align/matches", out_glob="*.h5", err_glob="*.h5_err",
-         cardinality=Cardinality.PER_PAIR, config_kind="alignment",
+         cardinality=Cardinality.PER_PAIR, config_kind="alignment", config_keys=("matching",),
          requires=("align.meshing", "thumbnail.optimization"),
          clear_paths=("align/matches/match_cover",), snapshot_paths=("align/matches",)),
     Step("align.optimization", "align", "Optimize stack",
          "Relax all meshes of the stack against the fine matches.",
          script="scripts/align_main.py", mode="optimization",
-         out_subdir="align/tform", config_kind="alignment",
+         out_subdir="align/tform", config_kind="alignment", config_keys=("optimization",),
          requires=("align.matching",), supports_range=False,
          clear_paths=("align/tform/canvas.json",), snapshot_paths=("align/tform",)),
     Step("align.rendering", "align", "Render aligned stack (PNG tiles)",
          "Write the aligned stack as non-overlapping PNG tiles (VAST-style).",
          script="scripts/align_main.py", mode="rendering",
          out_subdir="aligned_stack", out_glob="mip{mip}/*/metadata.txt", out_base="aligned",
-         config_kind="alignment", requires=("align.optimization",), optional=True),
+         config_kind="alignment", config_keys=("rendering",), requires=("align.optimization",), optional=True),
     Step("align.downsample", "align", "Mipmaps for PNG stack",
          "Downsampled levels of the PNG stack for viewing.",
          script="scripts/align_main.py", mode="downsample",
          # every level of a section is written in turn; the coarsest one comes last
          out_subdir="aligned_stack", out_glob="mip{max_mip}/*/metadata.txt", out_base="aligned",
-         config_kind="alignment", requires=("align.rendering",), optional=True),
+         config_kind="alignment", config_keys=("downsample",), requires=("align.rendering",), optional=True),
     # the volume steps are judged by align/ts_spec.json, which FEABAS writes only once the volume (or a
     # further mip level of it) is complete - the volume folder itself appears as soon as rendering starts
     Step("align.tsr", "align", "Render aligned volume (precomputed)",
          "Write the aligned stack as a Neuroglancer precomputed volume via TensorStore.",
          script="scripts/align_main.py", mode="tensorstore_rendering",
-         out_subdir="align", out_glob="ts_spec.json", config_kind="alignment",
+         out_subdir="align", out_glob="ts_spec.json", config_kind="alignment", config_keys=("tensorstore_rendering",),
          requires=("align.optimization",), optional=True, cardinality=Cardinality.SINGLE,
          clear_paths=("align/render_flags", "align/ts_spec.json", "align/mask.png")),
     Step("align.tsd", "align", "Mipmaps for volume",
          "Downsample the precomputed volume.",
          script="scripts/align_main.py", mode="tensorstore_downsample",
-         out_subdir="align", out_glob="ts_spec.json", config_kind="alignment",
+         out_subdir="align", out_glob="ts_spec.json", config_kind="alignment", config_keys=("tensorstore_downsample",),
          requires=("align.tsr",), optional=True, cardinality=Cardinality.PER_LEVEL,
          clear_paths=("align/mipmap_flags",)),
 )
@@ -543,10 +548,17 @@ class PipelineScan:
             else:
                 st.state = State.COMPLETE if (st.expected and st.done >= st.expected) else State.PARTIAL
             mine = items[step.key]
-            if self.configs is not None and step.config_kind:
-                cm = self.configs.modified_time(step.config_kind)
-                if cm and st.oldest_output and cm > st.oldest_output + 1:
-                    self._stale(st, f"{step.config_kind} config edited after these outputs")
+            if self.configs is not None and step.config_kind and st.oldest_output:
+                # only settings that decide this step's results: the thumbnail config also holds the
+                # coarse alignment's settings, and worker counts change no result
+                changed = self.configs.changed_keys(step.config_kind, st.oldest_output + 1,
+                                                    step.config_keys, step.config_exclude)
+                if changed == ["*"]:
+                    # not saved by the settings pages (edited by hand, restored): which setting is unknown
+                    self._stale(st, f"{step.config_kind} config file changed after these outputs")
+                elif changed:
+                    self._stale(st, f"{step.config_kind} config edited after these outputs: "
+                                + ", ".join(changed[:3]) + (" …" if len(changed) > 3 else ""))
             if step.key == "stitch.matching" and _newer_inputs(mine, coords, "section", "section"):
                 self._stale(st, "coordinate files changed after these outputs")
             for r in step.requires:
@@ -1056,12 +1068,15 @@ def _sync_file(src: Path, dst: Path) -> bool:
     return True
 
 
-def _sync_tree(src: Path, dst: Path) -> int:
-    """Make *dst* hold exactly the files of *src*; identical files are left untouched. Files changed."""
+def _sync_tree(src: Path, dst: Path, keep: frozenset = frozenset()) -> int:
+    """
+    Make *dst* hold exactly the files of *src*; identical files are left untouched. Files named in
+    *keep* (relative paths) are neither copied nor removed. Returns the number of files changed.
+    """
     changed = 0
     wanted = set()
     for f in sorted(src.rglob("*")):
-        if f.is_file():
+        if f.is_file() and f.relative_to(src).as_posix() not in keep:
             rel = f.relative_to(src)
             wanted.add(rel)
             changed += _sync_file(f, dst / rel)
@@ -1069,7 +1084,7 @@ def _sync_tree(src: Path, dst: Path) -> int:
         for f in sorted(dst.rglob("*"), key=lambda p: len(p.parts), reverse=True):
             rel = f.relative_to(dst)
             if f.is_file() or f.is_symlink():
-                if rel not in wanted:
+                if rel not in wanted and rel.as_posix() not in keep:
                     f.unlink()
                     changed += 1
             elif f.is_dir() and not any(f.iterdir()) and not (src / rel).is_dir():
@@ -1097,7 +1112,16 @@ def restore_snapshot(root: Path, snapshot_dir: Path, log=None) -> list[str]:
                 log(f"not restored (a link): {rel}")
             continue
         if src.is_dir():
-            n = _sync_tree(src, dst)
+            configs = rel == "configs"
+            present = {name for name in CONFIG_FILES.values() if (dst / name).is_file()} if configs else set()
+            # the record of which setting changed when stays: settings the restore rewrites get
+            # new file times and count as changed, the ones it leaves alone stay as they are
+            n = _sync_tree(src, dst, frozenset({CHANGES_FILE}) if configs else frozenset())
+            for name in present:
+                if not (dst / name).is_file():
+                    # back to the defaults: kept as {} like the settings pages do, so the change shows
+                    dump_yaml(dst / name, {}, header=f"Project overrides for default_{name}; "
+                                                    "unspecified keys use the defaults.")
         elif src.is_file():
             n = int(_sync_file(src, dst))
         else:

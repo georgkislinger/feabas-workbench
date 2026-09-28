@@ -224,9 +224,12 @@ There is no hidden database. A step is "done" when its output files exist. Each 
 
 Steps that work section by section are compared section by section: running an earlier step for a few
 more sections leaves the sections that were already finished alone, and only outputs whose own inputs
-changed count. Staleness is passed on — when *Match tiles* is stale, so is everything built on it. A
-config file counts as changed only when its content changes: pressing *Apply* without changing anything
-makes nothing stale.
+changed count. Staleness is passed on — when *Match tiles* is stale, so is everything built on it. Only
+settings that decide a step's results count, and only for that step: the number of workers or a cache
+size never makes anything stale, pressing *Apply* without changing anything makes nothing stale, and a
+coarse-alignment setting (stored in the thumbnail config) makes the coarse steps stale but not the
+thumbnails. The workbench remembers which setting changed when (`configs/.workbench_setting_changes.json`);
+a config file edited outside it counts as changed for every step that reads it.
 
 "Stale" is a warning, not a lock, but running a stale step as it is recomputes nothing: FEABAS skips
 every output that already exists. **Run** (and *Run all steps below in order*) on a stale step therefore
