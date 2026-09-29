@@ -553,6 +553,21 @@ not measured guarantees or enforced memory limits. First run one representative 
 logged peak plus headroom as **RAM per section**. Unknown image dimensions default to one section until
 you supply an allowance. More workers can increase I/O contention, especially on an NAS.
 
+**The two mipmap steps choose for themselves** (*Make thumbnails* and *Mipmaps for PNG stack*,
+**Automatic**, their default). FEABAS's own way mipmaps one section at a time, and within it every mip
+level is a new round of worker processes with only as many jobs as that level has tiles (25, 9, 4, 4, …
+for a section of 64 tiles). A workstation then spends most of the time starting processes and waiting,
+and most of its cores sit idle. Automatic hands whole sections to the workers instead (FEABAS's own
+`parallel_within_section: false`). It does that when there are at least as many sections as FEABAS
+workers, or at least 4 sections of at most 16 tiles per worker, running one section per core of the CPU
+budget as far as the RAM budget allows (~1.5 GB per worker for 4096² 8-bit tiles). Few large sections
+keep FEABAS's workers within each section. Either way the tile read cache grows from FEABAS's 4 tiles
+to 16, so each source tile is read about once instead of several times. The output is the same file for
+file. The log says what was chosen for each run (for example *Automatic: 40 sections, 32 at once with
+one worker each; 16-tile read cache*). A `parallel_within_section`, `num_workers` or `cache_size` you set
+under *downsample* in the settings is kept. **Existing FEABAS settings** runs FEABAS exactly as
+configured.
+
 Supported stages are tile matching, montage optimization, montage rendering, stitched mipmaps/thumbnails,
 aligned PNG section rendering and aligned PNG mipmaps. Whole-stack solving, shared TensorStore volume
 writes and final VAST/OME-Zarr packaging retain their existing execution. Stages remain in order; only

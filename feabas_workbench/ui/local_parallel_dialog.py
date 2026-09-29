@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QDoubleSpin
     QGroupBox, QLabel, QMessageBox, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
 
 from ..core.configs import load_yaml
-from ..core.local_parallel import SECTION_STEPS, hardware, hardware_threads, options, plan
+from ..core.local_parallel import MIPMAP_STEPS, SECTION_STEPS, hardware, hardware_threads, mipmap_plan, options, plan
 from ..core.steps import STEPS_BY_KEY
 
 
@@ -16,8 +16,9 @@ class LocalParallelDialog(QDialog):
         self.setWindowTitle("Local parallelism — this project")
         self.resize(720, 660)
         layout = QVBoxLayout(self)
-        note = QLabel("Choose workers within each section, sections processed at once, or both. "
-                      "Settings apply to this PC; cluster resources are configured separately.")
+        note = QLabel("Choose workers within each section, sections processed at once, or both; the mipmap "
+                      "steps choose for themselves unless you pick a mode. Settings apply to this PC; cluster "
+                      "resources are configured separately.")
         note.setWordWrap(True); layout.addWidget(note)
         physical, free = hardware()
         threads = hardware_threads()
@@ -39,7 +40,10 @@ class LocalParallelDialog(QDialog):
                 continue
             setting = options(ctx.project, key)
             box = QGroupBox(STEPS_BY_KEY[key].label); fields = QFormLayout(box)
-            mode = QComboBox(); mode.addItem("Existing FEABAS settings", "existing")
+            mode = QComboBox()
+            if key in MIPMAP_STEPS:
+                mode.addItem("Automatic (recommended)", "auto")
+            mode.addItem("Existing FEABAS settings", "existing")
             if SECTION_STEPS[key][2]:
                 mode.addItem("Within each section only", "within")
             mode.addItem("Across sections only", "across")
@@ -80,9 +84,24 @@ class LocalParallelDialog(QDialog):
             value = mode.currentData()
             sections.setEnabled(value in {"across", "both"})
             workers.setEnabled(value in {"within", "both"} and SECTION_STEPS[key][2])
-            measured.setEnabled(value != "existing")
+            measured.setEnabled(value not in {"existing", "auto"})
             if value == "existing":
                 label.setText("Unchanged: uses the step's existing FEABAS worker settings.")
+                continue
+            if value == "auto":
+                try:
+                    auto = mipmap_plan(project, key, configs=self.ctx.configs, available=(physical, free),
+                                       threads=threads, cpu_override=self.cpu.value())
+                    if auto is None:
+                        text = "Nothing to tune: the stitched sections are not PNG tiles, so FEABAS's settings apply."
+                    elif auto.sections:
+                        text = auto.note + " Decided again at each run, for the sections it covers."
+                    else:
+                        text = ("Sections in parallel when there are enough of them, else FEABAS's workers within "
+                                "each section; a larger read cache either way.")
+                except Exception as e:  # noqa: BLE001 - a description only
+                    text = f"Automatic: {e}"
+                label.setText(text)
                 continue
             settings = dict(mode=value, sections=sections.value(), workers=workers.value(), measured_gib=measured.value())
             allocation = plan(project, key, settings, available=(physical, free), cpu_override=self.cpu.value(),

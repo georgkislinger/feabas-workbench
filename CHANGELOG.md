@@ -3,6 +3,21 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed – mipmaps use the whole PC
+- *Make thumbnails* and *Mipmaps for PNG stack* left a workstation mostly idle (~1% CPU on 64
+  threads, one section a minute). FEABAS's own way mipmaps one section at a time, and within it every
+  mip level is a new pool of worker processes with only as many jobs as the level has tiles (25, 9,
+  4, 4, … for 64 tiles; ~40 short-lived processes per section). Their new Local parallelism default,
+  **Automatic**, hands whole sections to the workers when there are enough sections (FEABAS's own
+  `parallel_within_section: false`), one per core of the CPU budget as far as RAM allows. It also
+  raises the tile read cache from 4 to 16 tiles, which stops the re-reading of each source tile. The
+  output is the same file for file. On 4 cores and four 64-tile sections the step took 170 s instead
+  of 325 s; a 32-core PC gains far more. Settings chosen under *downsample* are kept, the log says
+  what each run used, and *Existing FEABAS settings* runs FEABAS exactly as configured. The values
+  reach FEABAS through the job environment only; the project's YAML is not touched.
+
 ## [0.3.6] – 2026-09-28
 
 ### Fixed
