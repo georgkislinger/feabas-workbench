@@ -15,8 +15,8 @@ from ..core.configs import ConfigStore
 from ..core.envs import Settings, check_imports
 from ..core.jobs import JobQueue, JobSpec, worker_env, feabas_env
 from ..core.project import Project, VENDOR_DIR, repair_working_directory
-from ..core.steps import (PipelineScan, Step, count_outputs, drop_unreadable_outputs, thumbnail_progress, step_argv,
-                          expected_outputs)
+from ..core.steps import (PipelineScan, Step, count_outputs, drop_cut_short_tiles, drop_unreadable_outputs,
+                          thumbnail_progress, step_argv, expected_outputs)
 
 
 class QtJobQueue(QObject):
@@ -302,9 +302,9 @@ class AppContext(QObject):
 
     @staticmethod
     def _after_cancel(root: Path, step: Step):
-        """A killed FEABAS step may leave an .h5 file cut short, which FEABAS would skip as finished."""
+        """A killed FEABAS step may leave an .h5 file or image tile cut short, which FEABAS would keep as finished."""
         def clean(started: float) -> list[str]:
-            removed = drop_unreadable_outputs(root, step, started)
+            removed = drop_unreadable_outputs(root, step, started) + drop_cut_short_tiles(root, step, started)
             return [f"-- removed {len(removed)} incomplete output(s) of '{step.label}' left by the cancelled run: "
                     + ", ".join(p.name for p in removed[:8]) + (" …" if len(removed) > 8 else "")] if removed else []
         return clean

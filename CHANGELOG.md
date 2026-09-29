@@ -18,6 +18,11 @@ versions follow [Semantic Versioning](https://semver.org/).
   what each run used, and *Existing FEABAS settings* runs FEABAS exactly as configured. The values
   reach FEABAS through the job environment only; the project's YAML is not touched.
 
+### Fixed
+- *Cancel* could leave a half-written PNG/JPEG tile in a montage, the aligned stack or a mipmap
+  level, and FEABAS keeps every tile file that exists when it renders a level again. Tiles cut short
+  by the kill are now removed with the other incomplete outputs, so the next run makes them again.
+
 ## [0.3.6] – 2026-09-28
 
 ### Fixed
