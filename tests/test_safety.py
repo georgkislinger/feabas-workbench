@@ -571,6 +571,33 @@ def test_unreadable_h5_from_a_cancelled_run_is_removed(tmp_path):
     assert (d / "s0001.h5").is_file() and (d / "s0003.h5").is_file()
 
 
+def test_image_tiles_cut_short_by_a_cancel_are_removed(tmp_path):
+    """FEABAS keeps any tile file that exists when it renders a level again, so a tile the kill cut
+    short would stay in the stack; only unfinished levels (no metadata.txt yet) are looked at."""
+    from PIL import Image
+    from feabas_workbench.core.steps import drop_cut_short_tiles, image_cut_short
+    p = _project(tmp_path)
+    busy = p.root / "aligned_stack" / "mip2" / "003_s0004"            # the level the kill interrupted
+    done = p.root / "aligned_stack" / "mip1" / "003_s0004"            # finished: metadata.txt written last
+    for d in (busy, done):
+        d.mkdir(parents=True)
+        for name in ("a.jpg", "b.jpg", "c.png", "d.png"):
+            Image.new("L", (64, 64), 7).save(d / name)
+    (done / "metadata.txt").write_text("{ROOT_DIR}\tx\n")
+    for d in (busy, done):
+        for name in ("b.jpg", "d.png"):
+            data = (d / name).read_bytes()
+            (d / name).write_bytes(data[: len(data) // 2])
+    (busy / "e.png").write_bytes(b"")
+    old = busy / "old.png"; old.write_bytes(b"\x89PNG junk from before this run"); os.utime(old, (T0, T0))
+    assert image_cut_short(busy / "b.jpg") and not image_cut_short(busy / "a.jpg") and not image_cut_short(busy / "c.png")
+    removed = drop_cut_short_tiles(p.root, STEPS_BY_KEY["align.downsample"], time.time() - 5)
+    assert sorted(r.name for r in removed) == ["b.jpg", "d.png", "e.png"]
+    assert sorted(f.name for f in busy.iterdir()) == ["a.jpg", "c.png", "old.png"]
+    assert len(list(done.iterdir())) == 5                              # a finished level is left alone
+    assert drop_cut_short_tiles(p.root, STEPS_BY_KEY["stitch.matching"], 0) == []
+
+
 def test_cancelled_jobs_run_their_clean_up(tmp_path):
     from feabas_workbench.core.jobs import Job, JobSpec
     seen, done = [], threading.Event()

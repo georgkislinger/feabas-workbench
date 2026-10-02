@@ -15,8 +15,8 @@ from ..core.configs import ConfigStore
 from ..core.envs import Settings, check_imports
 from ..core.jobs import JobQueue, JobSpec, worker_env, feabas_env
 from ..core.project import Project, VENDOR_DIR, repair_working_directory
-from ..core.steps import (PipelineScan, Step, count_outputs, drop_unreadable_outputs, thumbnail_progress, step_argv,
-                          expected_outputs)
+from ..core.steps import (PipelineScan, Step, count_outputs, drop_cut_short_tiles, drop_unreadable_outputs,
+                          thumbnail_progress, step_argv, expected_outputs)
 
 
 class QtJobQueue(QObject):
@@ -253,11 +253,23 @@ class AppContext(QObject):
         argv = step_argv(py, step, start, stop, stride, filt, extra_args)
         n = len([p for p in (root / "stitch" / "stitch_coord").glob("*.txt")])
         expected = expected_outputs(root, step, start, stop, stride)
+        env = feabas_env()
         if not self.cluster_enabled:
-            from ..core.local_parallel import SECTION_STEPS, options, plan
+            from ..core.local_parallel import SECTION_STEPS, mipmap_plan, options, plan
             if step.key in SECTION_STEPS:
                 settings = options(self.project, step.key)
-                if settings["mode"] != "existing":
+                if settings["mode"] == "auto":
+                    cfg = ConfigStore(root / "configs") if root != self.project.root else self.configs
+                    try:
+                        tuning = mipmap_plan(self.project, step.key, root, cfg, start=start, stop=stop or None,
+                                             stride=stride, reverse="--reverse" in (extra_args or []))
+                    except Exception as e:  # noqa: BLE001 - the run itself does not depend on its tuning
+                        tuning = None
+                        self.log(f"{step.label}: FEABAS's own settings this time ({e})")
+                    if tuning is not None:
+                        env.update(tuning.env())
+                        self.log(f"{step.label}: {tuning.note}")
+                elif settings["mode"] != "existing":
                     if extra_args and extra_args != ["--reverse"]:
                         raise RuntimeError("These extra arguments need Existing FEABAS settings for this stage.")
                     from ..core.jobs import write_spec_file
@@ -280,7 +292,7 @@ class AppContext(QObject):
             progress_fn = lambda: thumbnail_progress(root, cfg, n)
         return JobSpec(
             name=f"{step.label}" + (f" [{tag}]" if tag else ""),
-            argv=argv, cwd=root, kind="feabas", step_key=step.key, tag=tag, env=feabas_env(),
+            argv=argv, cwd=root, kind="feabas", step_key=step.key, tag=tag, env=env,
             count_outputs=lambda: count_outputs(root, step), expected=expected, progress_fn=progress_fn,
             progress_absolute=full_run, log_file=root / "workbench.log",
             after_cancel=None if self.cluster_enabled else self._after_cancel(root, step),
@@ -290,9 +302,9 @@ class AppContext(QObject):
 
     @staticmethod
     def _after_cancel(root: Path, step: Step):
-        """A killed FEABAS step may leave an .h5 file cut short, which FEABAS would skip as finished."""
+        """A killed FEABAS step may leave an .h5 file or image tile cut short, which FEABAS would keep as finished."""
         def clean(started: float) -> list[str]:
-            removed = drop_unreadable_outputs(root, step, started)
+            removed = drop_unreadable_outputs(root, step, started) + drop_cut_short_tiles(root, step, started)
             return [f"-- removed {len(removed)} incomplete output(s) of '{step.label}' left by the cancelled run: "
                     + ", ".join(p.name for p in removed[:8]) + (" …" if len(removed) > 8 else "")] if removed else []
         return clean

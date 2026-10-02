@@ -959,6 +959,68 @@ def drop_unreadable_outputs(root: Path, step: Step, since: float, configs: Confi
     return removed
 
 
+_PNG_END = b"\x00\x00\x00\x00IEND\xaeB`\x82"
+# the image-tile trees each step writes, as (folder helper, flat folders)
+_TILE_TREES = {
+    "stitch.rendering": (stitched_dir, ()),
+    "thumbnail.downsample": (stitched_dir, ("thumbnail_align/thumbnails", "thumbnail_align/material_masks")),
+    "align.rendering": (aligned_dir, ()),
+    "align.downsample": (aligned_dir, ()),
+}
+
+
+def image_cut_short(path: Path) -> bool:
+    """A PNG or JPEG file that does not end the way a complete one does: its write was killed."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - len(_PNG_END)))
+            tail = f.read()
+    except OSError:
+        return False
+    suffix = path.suffix.lower()
+    if suffix == ".png":
+        return not tail.endswith(_PNG_END)
+    if suffix in (".jpg", ".jpeg"):
+        return not tail.endswith(b"\xff\xd9")
+    return False
+
+
+def drop_cut_short_tiles(root: Path, step: Step, since: float, configs: ConfigStore | None = None) -> list[Path]:
+    """
+    After Cancel: remove the PNG/JPEG files cut short by the kill. FEABAS keeps every tile file that
+    exists when it renders a level again, so a half-written one would stay in the stack for good.
+    Only files written since *since* are looked at, and in tile folders only those of levels the
+    run left unfinished: FEABAS writes a level's metadata.txt after all of its tiles.
+    """
+    if step.key not in _TILE_TREES:
+        return []
+    root = Path(root)
+    folder, flat = _TILE_TREES[step.key]
+    candidates = []
+    base = folder(root, configs)
+    for level in base.glob("mip*/*") if base.is_dir() else ():
+        if level.is_dir() and not (level / "metadata.txt").exists():
+            candidates.extend(level.iterdir())
+    for sub in flat:
+        if (root / sub).is_dir():
+            candidates.extend((root / sub).iterdir())
+    removed = []
+    for p in candidates:
+        try:
+            if p.suffix.lower() not in (".png", ".jpg", ".jpeg") or p.stat().st_mtime < since - 1:
+                continue
+        except OSError:
+            continue
+        if image_cut_short(p):
+            try:
+                p.unlink()
+                removed.append(p)
+            except OSError:
+                pass
+    return removed
+
+
 def clear_error_files(root: Path, step: Step) -> list[Path]:
     if not step.err_glob:
         return []

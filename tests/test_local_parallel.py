@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from feabas_workbench.core.local_parallel import input_sections, selected_indices, plan, options
+from feabas_workbench.core.local_parallel import (input_sections, mipmap_plan, mipmap_worker_gib, selected_indices,
+                                                  plan, options)
 from feabas_workbench.core.project import Project
 from feabas_workbench.core.synthetic import make_demo_project
 from feabas_workbench.core.configs import ConfigStore
@@ -169,3 +170,122 @@ def test_failed_section_stops_other_processes_and_pending_sections(project, tmp_
     assert len(processes) == 2
     assert all(not psutil.pid_exists(p.pid) for p in processes)
     assert not (tmp_path / '2.started').exists()
+
+
+def _aligned_sections(project, n, tiles):
+    """*n* rendered aligned sections at mip 0, each listing *tiles* PNG tiles in its metadata.txt."""
+    for s in range(n):
+        d = project.root / 'aligned_stack/mip0' / f'{s:03d}_s{s:04d}'
+        d.mkdir(parents=True, exist_ok=True)
+        rows = [f'{{ROOT_DIR}}\t{d}', '{RESOLUTION}\t10.0'] + [f's{s:04d}_tr1-tc{c + 1}.png\t0\t0\t4096\t4096'
+                                                              for c in range(tiles)]
+        (d / 'metadata.txt').write_text('\n'.join(rows) + '\n')
+
+
+def test_mipmaps_default_to_automatic_and_small_sections_run_side_by_side(project):
+    """FEABAS mipmaps one section at a time and starts a process pool for every mip level, with a
+    job per tile of that level: 64-tile sections left a 32-core PC mostly idle. Automatic gives
+    whole sections to workers when that is faster, and a read cache that stops tile re-reads."""
+    machine = dict(available=(32, 455), threads=64)
+    assert options(project, 'align.downsample')['mode'] == 'auto'
+    assert options(project, 'thumbnail.downsample')['mode'] == 'auto'
+    assert options(project, 'stitch.rendering')['mode'] == 'existing'
+    _aligned_sections(project, 20, 64)
+    many = mipmap_plan(project, 'align.downsample', **machine)
+    assert (many.across, many.sections, many.workers, many.cpu_budget) == (True, 20, 20, 32)
+    assert many.values == dict(cache_size=16, parallel_within_section=False, num_workers=20)
+    assert "20 sections, 20 at once with one worker each; 16-tile read cache" in many.note
+    assert json.loads(many.env()['FW_STAGE_SETTINGS']) == dict(kind='alignment', field='downsample',
+                                                               values=many.values, cpu_budget=32)
+    two = mipmap_plan(project, 'align.downsample', stop=2, **machine)
+    assert (two.across, two.values, two.cpu_budget) == (False, dict(cache_size=16), None)
+    assert "2 sections, one at a time with FEABAS's 15 workers each" in two.note
+    assert mipmap_plan(project, 'align.downsample', stop=5, **machine).across      # 5 small ones
+    _aligned_sections(project, 20, 5000)
+    assert not mipmap_plan(project, 'align.downsample', stop=5, **machine).across  # 5 large: FEABAS's way
+    assert mipmap_plan(project, 'align.downsample', **machine).across              # 20 >= 15 workers
+    per = mipmap_worker_gib(project, ConfigStore(project.configs_dir), 'align.downsample')
+    tight = mipmap_plan(project, 'align.downsample', available=(32, 10), threads=64)
+    assert 1.5 < per < 2 and tight.workers == int(8 // per) and "RAM budget 8 GiB" in tight.note
+
+
+def test_automatic_mipmaps_keep_what_the_project_sets(project):
+    machine = dict(available=(32, 455), threads=64)
+    _aligned_sections(project, 20, 64)
+    cs = ConfigStore(project.configs_dir)
+    cs['alignment'].set('downsample.cache_size', 8)
+    cs['alignment'].set('downsample.num_workers', 6)
+    cs.save('alignment')
+    own = mipmap_plan(project, 'align.downsample', **machine)
+    assert own.values == dict(parallel_within_section=False, num_workers=6) and "8-tile read cache" in own.note
+    cs['alignment'].set('downsample.parallel_within_section', False); cs.save('alignment')
+    assert mipmap_plan(project, 'align.downsample', stop=2, **machine).across     # chosen in the settings
+    project.state.local_execution = dict(steps={'align.downsample': dict(mode='existing')})
+    project.save()
+    from feabas_workbench.core.pipeline import _automatic_mipmaps
+    from feabas_workbench.core.steps import STEPS_BY_KEY
+    assert _automatic_mipmaps(project.root, STEPS_BY_KEY['align.downsample']) is None      # FEABAS as set up
+    assert _automatic_mipmaps(project.root, STEPS_BY_KEY['stitch.rendering']) is None
+    stitched = project.root / 'stitched_sections/mip0/s0001'; stitched.mkdir(parents=True)
+    (stitched / 'metadata.txt').write_text('{ROOT_DIR}\tx\n{RESOLUTION}\t10.0\ns0001_tr1-tc1.png\t0\t0\t9\t9\n')
+    thumbs = _automatic_mipmaps(project.root, STEPS_BY_KEY['thumbnail.downsample'])
+    assert (thumbs.kind, thumbs.field, thumbs.sections) == ('thumbnail', 'downsample', 1)
+    cs['stitching'].set('rendering.driver', 'neuroglancer_precomputed'); cs.save('stitching')
+    assert mipmap_plan(project, 'thumbnail.downsample', **machine) is None       # no PNG tiles to mipmap
+
+
+def test_gui_runs_automatic_mipmaps_with_this_runs_settings(project, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    from feabas_workbench.core.envs import Settings
+    from feabas_workbench.core.steps import STEPS_BY_KEY
+    from feabas_workbench.ui.bridge import AppContext
+    from feabas_workbench.ui.local_parallel_dialog import LocalParallelDialog
+    app = QApplication.instance() or QApplication([])
+    ctx = AppContext(Settings()); ctx.project = ctx.local_project = project; ctx.configs = ConfigStore(project.configs_dir)
+    monkeypatch.setattr(ctx, 'require_feabas_python', lambda: sys.executable)
+    logged = []
+    monkeypatch.setattr(ctx, 'log', lambda text: logged.append(text))
+    _aligned_sections(project, 6, 64)
+    step = STEPS_BY_KEY['align.downsample']
+    spec = ctx.feabas_step_spec(step)
+    setting = json.loads(spec.env['FW_STAGE_SETTINGS'])
+    assert setting['kind'] == 'alignment' and setting['values']['cache_size'] == 16
+    assert 'local_parallel' not in ' '.join(spec.argv) and any('Automatic: 6 sections' in t for t in logged)
+    dialog = LocalParallelDialog(ctx, ['align.rendering', 'align.downsample'])
+    mode, *_, label = dialog.rows['align.downsample']
+    assert mode.currentData() == 'auto' and label.text().startswith('Automatic: 6 sections')
+    assert dialog.rows['align.rendering'][0].findData('auto') == -1
+    mode.setCurrentIndex(mode.findData('existing')); dialog.save()
+    assert 'FW_STAGE_SETTINGS' not in ctx.feabas_step_spec(step).env
+    dialog.close(); app.processEvents()
+
+
+def test_explicit_modes_give_mipmap_sections_the_read_cache(project, tmp_path, monkeypatch):
+    from feabas_workbench.workers import local_parallel as worker
+    _aligned_sections(project, 2, 4)
+    script = tmp_path / 'driver.py'
+    script.write_text("import os,sys\nfrom pathlib import Path\n"
+                      "Path(sys.argv[2], sys.argv[1]+'.env').write_text(os.environ.get('FW_STAGE_SETTINGS',''))\n")
+    monkeypatch.setattr(worker, 'step_argv', lambda python, step, start, stop, stride, filt:
+        [python, str(script), str(start), str(tmp_path)])
+    monkeypatch.setattr(worker, 'verify_section', lambda *a: None)
+    settings = dict(mode='across', workers=1, sections=2, measured_gib=1)
+    worker.execute(dict(root=str(project.root), project=str(project.root), step='align.downsample', settings=settings))
+    got = json.loads((tmp_path / '0.env').read_text())
+    assert got == dict(kind='alignment', field='downsample', values=dict(cache_size=16))
+
+
+@requires_feabas
+def test_stage_settings_reach_feabas_and_leave_the_yaml_alone(project):
+    from feabas_workbench.core.jobs import feabas_env
+    original = {str(f): f.read_bytes() for f in project.configs_dir.glob('*.yaml')}
+    setting = dict(kind='alignment', field='downsample', cpu_budget=7,
+                   values=dict(parallel_within_section=False, num_workers=3, cache_size=16))
+    env = dict(os.environ, **feabas_env(), FW_STAGE_SETTINGS=json.dumps(setting))
+    code = ("from feabas import config; import json; d = config.align_configs()['downsample']; "
+            "print(json.dumps([config.general_settings()['cpu_budget'], d['parallel_within_section'], "
+            "d['num_workers'], d['cache_size'], d['max_mip']]))")
+    p = subprocess.run([sys.executable, '-c', code], cwd=project.root, env=env, text=True, capture_output=True, timeout=30)
+    assert p.returncode == 0, p.stderr
+    assert json.loads(p.stdout.strip().splitlines()[-1]) == [7, False, 3, 16, 7]
+    assert original == {str(f): f.read_bytes() for f in project.configs_dir.glob('*.yaml')}

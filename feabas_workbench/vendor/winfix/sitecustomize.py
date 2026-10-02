@@ -163,6 +163,28 @@ def _local_resources():
     config.limit_numpy_thread(1)
 
 
+def _stage_settings():
+    """This run's values for one FEABAS stage, chosen by the workbench ('Automatic' mipmaps); never
+    written to the project's YAML. FW_STAGE_SETTINGS: {"kind", "field", "values", "cpu_budget"?}."""
+    raw = os.environ.get("FW_STAGE_SETTINGS")
+    if not raw:
+        return
+    import json
+    from feabas import config
+    setting = json.loads(raw)
+    if setting.get("cpu_budget"):
+        config.general_settings().update(cpu_budget=int(setting["cpu_budget"]))
+    getter = {"stitching": config.stitch_configs, "thumbnail": config.thumbnail_configs,
+              "alignment": config.align_configs}[setting["kind"]]
+    stage = getter().setdefault(setting["field"], {})
+    stage.update(setting.get("values") or {})
+
+
+def _config_overrides():
+    _local_resources()
+    _stage_settings()
+
+
 def _local_section_listing():
     """Keep all thumbnail phases on one named section, even with incomplete mipmaps."""
     filename = os.environ.get("FW_LOCAL_RESOURCES_FILE")
@@ -212,7 +234,7 @@ def _chain_next_sitecustomize():
         sys.stderr.write(f"Error in sitecustomize {spec.origin}: {e!r}\n")
 
 
-_hook("feabas.config", _local_resources)
+_hook("feabas.config", _config_overrides)
 _hook("feabas.storage", _local_section_listing)
 _hook("feabas.matcher", _install_matcher)
 if os.name == "nt":

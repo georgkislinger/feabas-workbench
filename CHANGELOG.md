@@ -3,6 +3,36 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.7] – 2026-10-02
+
+### Changed – mipmaps use the whole PC
+- *Make thumbnails* and *Mipmaps for PNG stack* left a workstation mostly idle (~1% CPU on 64
+  threads, one section a minute). FEABAS's own way mipmaps one section at a time, and within it every
+  mip level is a new pool of worker processes with only as many jobs as the level has tiles (25, 9,
+  4, 4, … for 64 tiles; ~40 short-lived processes per section). Their new Local parallelism default,
+  **Automatic**, hands whole sections to the workers when there are enough sections (FEABAS's own
+  `parallel_within_section: false`), one per core of the CPU budget as far as RAM allows. It also
+  raises the tile read cache from 4 to 16 tiles, which stops the re-reading of each source tile. The
+  output is the same file for file. On 4 cores and four 64-tile sections the step took 170 s instead
+  of 325 s; a 32-core PC gains far more. Settings chosen under *downsample* are kept, the log says
+  what each run used, and *Existing FEABAS settings* runs FEABAS exactly as configured. The values
+  reach FEABAS through the job environment only; the project's YAML is not touched.
+
+### Fixed
+- *Cancel* could leave a half-written PNG/JPEG tile in a montage, the aligned stack or a mipmap
+  level, and FEABAS keeps every tile file that exists when it renders a level again. Tiles cut short
+  by the kill are now removed with the other incomplete outputs, so the next run makes them again.
+
+### Packaging
+- Public version 0.3.7 for the Windows executable, wheel, source archive and PyPI package.
+
+### Validation
+- The Windows and Linux test matrix (Python 3.10–3.14) and the FEABAS end-to-end pipeline passed, the
+  pipeline now with both mipmap steps on Automatic; the parallelism tests passed against the FEABAS
+  runtime. With FEABAS 3.0.5, four sections of 64 PNG tiles gave byte-identical mipmaps on every path
+  (FEABAS's default, sections side by side, with and without the larger cache). The release wheel was
+  installed and started in a clean environment.
+
 ## [0.3.6] – 2026-09-28
 
 ### Fixed

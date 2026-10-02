@@ -37,6 +37,16 @@ class StepRun:
         return self.skipped or (self.exit_code == 0 and self.done >= self.expected)
 
 
+def _automatic_mipmaps(root: Path, step: Step):
+    """The GUI's default for the mipmap steps (Local parallelism 'Automatic'), so this runner runs them alike."""
+    from .local_parallel import MIPMAP_STEPS, mipmap_plan, options
+    from .project import Project
+    if step.key not in MIPMAP_STEPS or not Project.exists(root):
+        return None
+    project = Project.load(root)
+    return mipmap_plan(project, step.key, root) if options(project, step.key)["mode"] == "auto" else None
+
+
 def run_step(root: Path, step: Step, python: str = sys.executable, log: Callable[[str], None] = print,
              timeout: float | None = None) -> StepRun:
     """Run one FEABAS step in *python* with the project as working directory; stream its output to *log*."""
@@ -50,6 +60,14 @@ def run_step(root: Path, step: Step, python: str = sys.executable, log: Callable
     argv = step_argv(python, step)
     t0 = time.time()
     log(f"== {step.label}: {' '.join(argv[1:])}")
+    try:
+        tuning = _automatic_mipmaps(root, step)
+    except Exception as e:  # noqa: BLE001 - the run itself does not depend on its tuning
+        tuning = None
+        log(f"== {step.label}: FEABAS's own settings this time ({e})")
+    if tuning is not None:
+        env.update(tuning.env())
+        log(f"== {step.label}: {tuning.note}")
     options = ({"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP}
                if os.name == "nt" else {"start_new_session": True})
     proc = subprocess.Popen(argv, cwd=str(root), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

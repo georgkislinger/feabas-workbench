@@ -13,7 +13,8 @@ import uuid
 
 from feabas_workbench.core.configs import ConfigStore
 from feabas_workbench.core.jobs import kill_tree, feabas_env
-from feabas_workbench.core.local_parallel import SECTION_STEPS, input_sections, selected_indices, plan
+from feabas_workbench.core.local_parallel import (MIPMAP_CACHE_TILES, MIPMAP_STEPS, SECTION_STEPS, input_sections,
+                                                  selected_indices, plan)
 from feabas_workbench.core.project import Project
 from feabas_workbench.core.steps import STEPS_BY_KEY, aligned_dir, stitched_dir, step_argv
 from feabas_workbench.workers.common import load_spec, log, progress, result, run
@@ -122,6 +123,9 @@ def execute(spec):
         env = dict(os.environ)
         env.update(feabas_env())
         env["FW_LOCAL_RESOURCES_FILE"] = str(resources)
+        if key in MIPMAP_STEPS and not configs[kind].is_overridden(field + ".cache_size"):
+            env["FW_STAGE_SETTINGS"] = json.dumps(dict(kind=kind, field=field,
+                                                       values={"cache_size": MIPMAP_CACHE_TILES}))
         for variable in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
             env[variable] = "1"
         argv = step_argv(sys.executable, step, 0 if prepare else index, 0 if prepare else index + 1, 1,

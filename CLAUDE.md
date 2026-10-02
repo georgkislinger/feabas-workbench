@@ -23,7 +23,13 @@
   returns it unconditionally, so every tile pair that passes the coarse confidence check raises `UnboundLocalError`
   and stitch matching yields no matches at all - the patch defaults that flag to true. (2) Windows: FEABAS builds
   `file://D:/...` URLs that TensorStore rejects, rewritten to `file:///D:/...`. New projects default to the PNG
-  (`image`) render driver.
+  (`image`) render driver. The same file applies per-run settings without touching the YAML: `FW_LOCAL_RESOURCES_FILE`
+  (local parallelism) and `FW_STAGE_SETTINGS` (JSON kind/field/values/cpu_budget).
+- Mipmaps (`thumbnail.downsample`, `align.downsample`) default to Local parallelism "Automatic"
+  (`core.local_parallel.mipmap_plan`, used by `feabas_step_spec` and `core.pipeline.run_step`): FEABAS's default
+  starts a process pool per mip level per section with one job per tile of that level, which leaves a workstation
+  idle, so with enough sections it runs whole sections per worker (`parallel_within_section: false`, identical
+  output) and raises `cache_size` 4 -> 16 (~1/3 less CPU). Settings the project overrides are kept.
 - Three interpreters: the GUI's own, a FEABAS env (feabas 3.0.5 + tensorstore; numpy 2.x works) and a deep-learning env
   (torch, careamics 0.3.2 which pins torch < 2.10, ultralytics, segmentation-models-pytorch). Paths live in
   `%APPDATA%/FeabasWorkbench/settings.json`; projects may override them.
