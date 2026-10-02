@@ -1,5 +1,9 @@
 <h1 align="center">FEABAS Workbench</h1>
 
+> **Version 0.3.7:** the mipmap steps (*Make thumbnails*, *Mipmaps for PNG stack*) use the whole PC. FEABAS's
+> default left a workstation mostly idle; with enough sections they now run whole sections side by side, with a
+> larger read cache and the same output. A cancelled render no longer leaves half-written tiles behind.
+>
 > **Version 0.3.6:** local parallelism can use hyper-threads when you set a total CPU budget (before, a
 > 32-core / 64-thread PC never ran more than 32 workers), and it says which limit lowered the number of
 > sections at once.
@@ -233,5 +237,5 @@ Cite FEABAS for the stitching and alignment – that is where the science is:
 and, if the workbench was useful in your work, the workbench too (GitHub's *Cite this repository*
 button uses [CITATION.cff](CITATION.cff)):
 
-> Kislinger, G. (2026). *FEABAS Workbench* (version 0.3.6) [Computer software].
+> Kislinger, G. (2026). *FEABAS Workbench* (version 0.3.7) [Computer software].
 > https://github.com/georgkislinger/feabas-workbench — ORCID 0000-0002-6559-7421
