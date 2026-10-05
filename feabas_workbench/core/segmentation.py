@@ -131,7 +131,8 @@ def plan_masks(root: Path, sections: list[str], folder: Path, mode: str = "auto"
     """
     if mode not in MATCH_MODES:
         raise ValueError(f"unknown matching mode {mode!r}")
-    root, folder = Path(root), Path(folder)
+    # absolute mask paths: the render runs in the project folder
+    root, folder = Path(root).resolve(), Path(folder).resolve()
     masks = list_mask_files(folder)
     if not masks:
         raise ValueError(f"no PNG or TIFF files in {folder}")
@@ -200,9 +201,12 @@ def plan_masks(root: Path, sections: list[str], folder: Path, mode: str = "auto"
 
 
 def stack_dir(root: Path, name: str, out_dir: Path | None = None) -> Path:
-    """Where the aligned masks called *name* go: <out_dir or project/segmentation>/<name>."""
+    """Where the aligned masks called *name* go: <out_dir or project/segmentation>/<name>; a relative
+    *out_dir* is taken relative to the project. Always absolute (the render runs in the project folder)."""
     name = safe_name(name)
-    return (Path(out_dir) if out_dir else Path(root) / STACKS_DIR) / name
+    root = Path(root).resolve()
+    parent = Path(out_dir) if out_dir else root / STACKS_DIR
+    return (parent if parent.is_absolute() else root / parent) / name
 
 
 def safe_name(name: str) -> str:

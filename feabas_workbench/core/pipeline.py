@@ -145,9 +145,10 @@ def render_masks(root: Path, masks_dir: Path, name: str, python: str = sys.execu
     from .jobs import worker_env, write_spec_file
     from .project import Project, repair_working_directory
     from .segmentation import plan_masks, stack_dir
-    root = Path(root)
+    # absolute: the worker runs in the project folder, so paths relative to here would not hold there
+    root, masks_dir = Path(root).resolve(), Path(masks_dir).resolve()
     repair_working_directory(root)
-    plan = plan_masks(root, Project.load(root).section_names(), Path(masks_dir), mode)
+    plan = plan_masks(root, Project.load(root).section_names(), masks_dir, mode)
     out = stack_dir(root, name)
     spec = write_spec_file(root / "logs" / "specs", "segmentation_render",
                            {"root": str(root), "out_dir": str(out), "plan": plan.to_dict(), "workers": workers,

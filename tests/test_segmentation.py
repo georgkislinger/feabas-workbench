@@ -268,3 +268,17 @@ def test_gui_card_plans_renders_and_clears(stack_project, tmp_path, monkeypatch)
     page._clear_masks()
     assert not out.exists() and page.e_stack.findData(str(out)) == -1
     page.close(); app.processEvents()
+
+
+def test_the_worker_gets_absolute_paths(stack_project, tmp_path, monkeypatch):
+    """CI runs the demo with a relative project path; the render runs in the project folder, where
+    relative mask, spec and output paths would point elsewhere."""
+    p = stack_project
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "rel").mkdir()
+    for k, im in enumerate(_images(p)):
+        _png(tmp_path / "rel" / f"m{k}.png", np.zeros((96, 96), np.uint8))
+    plan = seg.plan_masks(Path(os.path.relpath(p.root, tmp_path)), p.section_names(), Path("rel"))
+    assert all(Path(m).is_absolute() for _, found in plan.sections for m in found.values())
+    assert seg.stack_dir(Path(os.path.relpath(p.root, tmp_path)), "x", Path("out")) == p.root.resolve() / "out" / "x"
+    assert seg.stack_dir(p.root, "x", tmp_path / "abs") == tmp_path / "abs" / "x"
