@@ -1022,12 +1022,59 @@ Both read the same transforms, so you can produce either or both. Rendering is t
 use the **subset** controls on the step card to render sections 0–499 here and 500–999 on another machine
 into the same output folder.
 
+### Segmentation masks on an image stack
+
+Someone segmented an image stack, and you want to improve the stack's alignment without losing the
+segmentation. The masks then have to move exactly as the images do, and **Segmentation masks (labels)**
+on the Render tab does that.
+
+1. **Import the image stack the masks were drawn on as one image per section** (Project & data: one
+   image per section, no overlap). Stitching is then a no-op, so the input images keep their pixel grid
+   and the masks still fit them. Don't crop or resize the images anywhere in between. Intensity-only
+   preprocessing (contrast, denoising) is fine.
+2. **Align the stack as usual:** thumbnails, coarse and fine alignment. Render the image stack whenever
+   you like; images and masks share the same canvas either way.
+3. **Point *masks* at a folder with one label image per input image.** They must be 8- or 16-bit
+   greyscale PNG or TIFF (not JPEG, not palette or RGB), with the same width and height as their image.
+   *match* pairs them with the images: **by file name** (same name, any of .png/.tif/.tiff) or **in
+   section order**, where the n-th mask in natural sort order (`seg_2` before `seg_10`) goes with the n-th
+   section. The default tries names first and falls back to order, saying so in the log. A mask that
+   doesn't fit stops the run before anything is rendered, with the reason.
+4. **Render aligned masks.** Each section runs in its own process, as many at once as the CPU budget and
+   RAM allow (Local parallelism).
+
+What happens to every mask is what happened to its image:
+- It is placed with the section's stitching transform, then moved by the section's alignment mesh onto
+  the canvas of the aligned stack (`align/tform/<section>.h5`, `align/tform/canvas.json`).
+- Sampling is **nearest-neighbour throughout**, so labels are never blended with their neighbours.
+- None of the images' intensity processing is applied: no CLAHE, no inversion, no brightness/contrast
+  correction.
+
+Every value in the output is one of your labels, or 0 where there were no masks.
+
+The result goes to `segmentation/<name>` in the project (or the output folder you choose). It uses the
+layout of the aligned PNG stack: the same tiles, file names and section folders at every mip level.
+- **Mipmaps:** each 2×2 block keeps its majority label. A label wins a tie against background, and the
+  smaller label wins a tie between labels, so coarse levels are not shifted towards one corner.
+- **Exports:** on the Export & viewers tab, choose the stack (*masks: name*) and export it as VAST tiles
+  (in its own `vast_<name>` folder, 8- or 16-bit like the masks), as OME-Zarr (one array per level,
+  readable with zarr, tensorstore or dask, for example to mesh objects with marching cubes and trimesh),
+  or as **one image per section** at the mip level you choose (PNG or TIFF, numbered by z, with
+  `slices.json` naming the section of each file) for VAST's import of image sequences.
+- **Checking:** under *View aligned sections*, *masks* lays a stack's labels in colour over the aligned
+  images.
+
+The status line counts rendered sections from the files. It says *stale* when the alignment or a mask
+file changed after the masks were rendered; **Clear…** removes only the aligned masks, never your mask
+files or the images. Masks are rendered on this PC from the local alignment, not in cluster mode.
+
 ### Export & viewers tab
 
 | Control | Meaning |
 |---|---|
+| **stack** | *aligned images*, or an aligned mask stack (see *Segmentation masks on an image stack*). |
 | **name** | Base name of the export. |
-| **what** | *VASTlite* (`.vsvi` + tile pyramid, hard-linked — instant and no extra disk space on the same drive), *OME-Zarr 0.4* (uncompressed chunks, for moderate volumes), or *both*. |
+| **what** | *VASTlite* (`.vsvi` + tile pyramid, hard-linked — instant and no extra disk space on the same drive), *OME-Zarr 0.4* (uncompressed chunks, for moderate volumes), *both*, or *one image per section* (whole sections at the chosen **mip**, PNG or TIFF, 8- or 16-bit like the stack). |
 | **zarr chunk** (256) | Chunk size for the OME-Zarr output. |
 | **to** | Export folder; default `<project>/exports`. |
 | **Export** | Runs the export worker. Requires the PNG tile stack to exist. |
@@ -1038,7 +1085,8 @@ into the same output folder.
 ### View aligned sections tab
 
 Tile-based viewer over the rendered PNG stack with section navigation and an **overlay next section
-(red/green)** checkbox — the final check that the stack is smooth in z.
+(red/green)** checkbox — the final check that the stack is smooth in z. **masks** lays the labels of an
+aligned mask stack over the images in colour, to check that the masks line up.
 
 ---
 

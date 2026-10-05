@@ -96,6 +96,12 @@ def _ram_budget(project, free_gib):
     return min(configured, free_gib * .8) if configured > 0 else free_gib * .8
 
 
+def run_budget(project, available=None, threads=None):
+    """(CPU budget, RAM budget in GiB) for work on this PC, as the Local parallelism dialog sets them."""
+    physical, free_gib = available if available is not None else hardware()
+    return _cpu_budget(project, physical, threads, None, available)[2], _ram_budget(project, free_gib)
+
+
 @dataclass(frozen=True)
 class LocalPlan:
     sections: int

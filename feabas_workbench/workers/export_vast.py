@@ -1,8 +1,9 @@
 """
-Export the aligned PNG-tile stack (FEABAS align rendering + downsample) for
-VASTlite: <out>/mipM/sliceZZZZ/ZZZZ_trR-tcC.png + <name>.vsvi, and/or as an
-OME-Zarr (v0.4, zarr v2, uncompressed chunks written directly like the
-TrakEM2 exporter did).
+Export the aligned PNG-tile stack (FEABAS align rendering + downsample), or an
+aligned mask stack in the same layout (core.segmentation), for VASTlite:
+<out>/mipM/sliceZZZZ/ZZZZ_trR-tcC.png + <name>.vsvi, as an OME-Zarr (v0.4,
+zarr v2, uncompressed chunks written directly like the TrakEM2 exporter did),
+or as one image per section.
 
 FEABAS layout (one_based, prefix_z_number):
     aligned_stack/mip0/<zzz>_<section>/<zzz>_<section>_tr{r}-tc{c}.png + metadata.txt
@@ -48,8 +49,9 @@ def link_or_copy(src: Path, dst: Path) -> None:
 
 
 def export_vast(base: Path, out: Path, name: str, voxel: tuple[float, float, float], mips: list[int],
-                fmt_bytes: int = 1, progress_cb=None, base_mip: int = 0) -> dict:
-    """*base_mip*: the level the stack was rendered at, which becomes VAST's mip0 (voxel size scaled to match)."""
+                fmt_bytes: int | None = None, progress_cb=None, base_mip: int = 0) -> dict:
+    """*base_mip*: the level the stack was rendered at, which becomes VAST's mip0 (voxel size scaled to match).
+    *fmt_bytes*: bytes per pixel for the .vsvi, read from the tiles when not given (2 for a 16-bit stack)."""
     secs0 = section_dirs(base, base_mip)
     if not secs0:
         raise RuntimeError(f"no rendered sections under {base / f'mip{base_mip}'}")
@@ -70,9 +72,14 @@ def export_vast(base: Path, out: Path, name: str, voxel: tuple[float, float, flo
                 W = max(W, int(max(t[3] for t in info["tiles"])))
                 H = max(H, int(max(t[4] for t in info["tiles"])))
                 tile = tile or info["tile_size"]
+    sample = next((p for d in secs0 for p in d.iterdir() if _TILE_RE.search(p.name)), None)
+    if sample is not None and (tile is None or fmt_bytes is None):
+        a = imread(sample)
+        tile = tile or (a.shape[0], a.shape[1])
+        fmt_bytes = fmt_bytes or int(a.dtype.itemsize)
     if tile is None:
-        sample = next(secs0[0].glob("*_tr*-tc*.*"))
-        a = imread(sample); tile = (a.shape[0], a.shape[1])
+        raise RuntimeError(f"no tiles under {base / f'mip{base_mip}'}")
+    fmt_bytes = fmt_bytes or 1
     ts = int(tile[0])
     z0, z1 = min(zs), max(zs)
     n_ops = sum(len(list(d.glob("*_tr*-tc*.*"))) for m in mips for d in section_dirs(base, m))
@@ -200,6 +207,57 @@ def export_omezarr(base: Path, out: Path, name: str, voxel: tuple[float, float, 
     return {"zarr": str(out), "levels": mips, "shape": [nz, sizes[base_mip][1], sizes[base_mip][0]]}
 
 
+def export_slices(base: Path, out: Path, name: str, mip: int, fmt: str = "png", progress_cb=None) -> dict:
+    """
+    One image per section at level *mip* (8- or 16-bit like the tiles), all on the stack's canvas:
+    <out>/<name>_0000.png ... numbered by the stack's z index, plus slices.json saying which section
+    each one is. For tools that read image sequences (VAST's import, Fiji, Python).
+    """
+    import cv2
+    secs = section_dirs(base, mip)
+    if not secs:
+        raise RuntimeError(f"no rendered sections under {base / f'mip{mip}'}")
+    W = H = 0
+    entries = []
+    for d in secs:
+        meta = d / "metadata.txt"
+        tiles = parse_feabas_metadata(meta)["tiles"] if meta.is_file() else []
+        entries.append((d, tiles))
+        for t in tiles:
+            W, H = max(W, int(t[3])), max(H, int(t[4]))
+    if W == 0 or H == 0:
+        raise RuntimeError(f"the sections under {base / f'mip{mip}'} have no tiles")
+    sample = next((d / t[0] for d, tiles in entries for t in tiles if (d / t[0]).is_file()), None)
+    dtype = imread(sample).dtype if sample is not None else np.dtype(np.uint8)
+    out.mkdir(parents=True, exist_ok=True)
+    ext = "tif" if fmt.lower() in ("tif", "tiff") else "png"
+    index = {}
+    for k, (d, tiles) in enumerate(entries):
+        z = z_of(d.name)
+        img = np.zeros((H, W), dtype)
+        for tname, x0, y0, _x1, _y1 in tiles:
+            p = d / tname
+            if not p.is_file():
+                continue
+            a = imread(p)
+            x0, y0 = int(x0), int(y0)
+            h, w = min(a.shape[0], H - y0), min(a.shape[1], W - x0)
+            if h > 0 and w > 0:
+                img[y0:y0 + h, x0:x0 + w] = a[:h, :w]
+        target = out / f"{name}_{z:04d}.{ext}"
+        if ext == "tif":
+            import tifffile
+            tifffile.imwrite(target, img, bigtiff=img.nbytes > 2 ** 31)
+        elif not cv2.imwrite(str(target), img):
+            raise RuntimeError(f"cannot write {target}")
+        index[target.name] = d.name
+        if progress_cb:
+            progress_cb(k + 1, len(entries), d.name)
+    (out / "slices.json").write_text(json.dumps({"level": f"mip{mip}", "size": [W, H], "dtype": str(np.dtype(dtype)),
+                                                 "sections": index}, indent=2), encoding="utf-8")
+    return {"slices": str(out), "count": len(index), "size": [W, H]}
+
+
 def main() -> int:
     spec = load_spec("export")
     base = Path(spec["aligned_stack"])
@@ -211,12 +269,18 @@ def main() -> int:
     base_mip = int(spec.get("base_mip", 0))
     res = {}
     if what in ("vast", "both"):
-        res["vast"] = export_vast(base, out / "vast", name, voxel, mips, progress_cb=progress, base_mip=base_mip)
+        res["vast"] = export_vast(base, out / spec.get("vast_dir", "vast"), name, voxel, mips, progress_cb=progress,
+                                  base_mip=base_mip)
         log(f"VAST export: {res['vast']}")
     if what in ("omezarr", "both"):
         res["omezarr"] = export_omezarr(base, out / f"{name}.ome.zarr", name, voxel, mips, int(spec.get("chunk", 256)),
                                         progress_cb=progress, base_mip=base_mip)
         log(f"OME-Zarr export: {res['omezarr']}")
+    if what == "slices":
+        mip = int(spec.get("slice_mip", base_mip))
+        res["slices"] = export_slices(base, out / f"{name}_slices_mip{mip}", name, mip, spec.get("slice_format", "png"),
+                                      progress_cb=progress)
+        log(f"Slice images: {res['slices']}")
     result(res)
     return 0
 

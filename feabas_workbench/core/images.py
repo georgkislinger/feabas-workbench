@@ -373,6 +373,34 @@ def colorize_labels(mask: np.ndarray, palette: dict[int, tuple[int, int, int]] |
     return rgba
 
 
+def label_colors(labels: np.ndarray) -> np.ndarray:
+    """A steady, well-spread colour per label value (HxWx3 uint8); 0 is black."""
+    h = labels.astype(np.uint32) * np.uint32(2654435761)          # Knuth's multiplicative hash
+    rgb = np.stack([(h >> 8) & 255, (h >> 16) & 255, (h >> 24) & 255], axis=-1).astype(np.uint8)
+    rgb |= 64                                                      # never too dark to see over the images
+    rgb[labels == 0] = 0
+    return rgb
+
+
+def label_overlay(image: np.ndarray | None, labels: np.ndarray | None, alpha: float = 0.45) -> np.ndarray:
+    """Greyscale *image* with the non-zero *labels* blended over it in colour (HxWx3 uint8)."""
+    if image is None and labels is None:
+        return np.zeros((1, 1, 3), np.uint8)
+    if image is None:
+        image = np.zeros(labels.shape[:2], np.uint8)
+    grey = to_uint8(image)
+    rgb = np.repeat(grey[..., None], 3, axis=-1).astype(np.float32)
+    if labels is not None:
+        h, w = min(rgb.shape[0], labels.shape[0]), min(rgb.shape[1], labels.shape[1])
+        lab = labels[:h, :w]
+        hit = lab != 0
+        if hit.any():
+            colors = label_colors(lab).astype(np.float32)
+            view = rgb[:h, :w]
+            view[hit] = view[hit] * (1 - alpha) + colors[hit] * alpha
+    return rgb.clip(0, 255).astype(np.uint8)
+
+
 def checkerboard(a: np.ndarray, b: np.ndarray, block: int = 64) -> np.ndarray:
     h = min(a.shape[0], b.shape[0]); w = min(a.shape[1], b.shape[1])
     yy, xx = np.mgrid[0:h, 0:w]
