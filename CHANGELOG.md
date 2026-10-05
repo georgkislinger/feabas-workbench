@@ -3,6 +3,46 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.8] – 2026-10-05
+
+### Added – segmentation masks follow the alignment
+- For masks drawn on an image stack whose alignment you improve: import the stack as one image per
+  section, align it, and **Segmentation masks (labels)** (Export & view → Render) renders the masks
+  through exactly the transforms the images went through. Each mask is placed with its section's
+  stitching transform and moved by its alignment mesh onto the aligned stack's canvas, with
+  nearest-neighbour sampling throughout and none of the images' intensity processing. Every output
+  value is one of the input labels.
+  - **Input:** 8- and 16-bit greyscale PNG or TIFF, one per input image, matched by file name or in
+    section order. Masks that don't fit (size, bit depth, count, format) are refused with the reason
+    before anything is rendered.
+  - **Output:** the aligned PNG stack's layout (same tiles, names and section folders at every mip
+    level), with mipmaps that keep each 2×2 block's majority label.
+  - **Export and checking:** export it like the images (VAST tiles, OME-Zarr, or the new one image per
+    section), and check it as a colour overlay under View aligned sections. The status line says when
+    the alignment or the mask files changed after rendering.
+- Export: *one image per section* writes whole sections at a chosen mip level (PNG or TIFF, 8- or 16-bit)
+  for tools that import image sequences; the export tab can export an aligned mask stack as well as the
+  images.
+
+### Fixed
+- The VAST export always wrote `SourceBytesPerPixel: 1`; a 16-bit stack now gets 2.
+- The end-to-end check reported "0 matched tile pairs" for every section of an image stack (one image
+  per section), which has no tile pairs to match. FEABAS itself handles such sections fine.
+
+### Packaging
+- Public version 0.3.8 for the Windows executable, wheel, source archive and PyPI package.
+
+### Validation
+- With FEABAS 3.0.5, masks made from the input images themselves line up with the aligned images.
+  The tile layout is identical at every mip level, and the remaining offsets are within the
+  nearest-neighbour ±0.5 px: ≤ 0.31 px for one image per section, ≤ 0.7 px (in y) with overlapping
+  tiles, ≤ 0.14 px at mip 2 thanks to the majority mipmaps.
+- 16-bit labels come out exactly; no new values at any level.
+- CI carries both 8-bit images and 16-bit labels through the alignment and checks them, for 2×2 tiles
+  per section and for an image stack with masks matched in order.
+- The Windows and Linux test matrix (Python 3.10–3.14) and both FEABAS end-to-end runs passed; the
+  release wheel was installed and started in a clean environment.
+
 ## [0.3.7] – 2026-10-02
 
 ### Changed – mipmaps use the whole PC

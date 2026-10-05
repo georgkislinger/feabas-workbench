@@ -2004,6 +2004,47 @@ project. <strong>Edit this test's settings…</strong> → <strong>Save and copy
 <p>Both read the same transforms, so you can produce either or both. Rendering is the step to distribute:
 use the <strong>subset</strong> controls on the step card to render sections 0–499 here and 500–999 on another machine
 into the same output folder.</p>
+<h3 id="segmentation-masks-on-an-image-stack">Segmentation masks on an image stack</h3>
+<p>Someone segmented an image stack, and you want to improve the stack's alignment without losing the
+segmentation. The masks then have to move exactly as the images do, and <strong>Segmentation masks (labels)</strong>
+on the Render tab does that.</p>
+<ol>
+<li><strong>Import the image stack the masks were drawn on as one image per section</strong> (Project &amp; data: one
+   image per section, no overlap). Stitching is then a no-op, so the input images keep their pixel grid
+   and the masks still fit them. Don't crop or resize the images anywhere in between. Intensity-only
+   preprocessing (contrast, denoising) is fine.</li>
+<li><strong>Align the stack as usual:</strong> thumbnails, coarse and fine alignment. Render the image stack whenever
+   you like; images and masks share the same canvas either way.</li>
+<li><strong>Point <em>masks</em> at a folder with one label image per input image.</strong> They must be 8- or 16-bit
+   greyscale PNG or TIFF (not JPEG, not palette or RGB), with the same width and height as their image.
+   <em>match</em> pairs them with the images: <strong>by file name</strong> (same name, any of .png/.tif/.tiff) or <strong>in
+   section order</strong>, where the n-th mask in natural sort order (<code>seg_2</code> before <code>seg_10</code>) goes with the n-th
+   section. The default tries names first and falls back to order, saying so in the log. A mask that
+   doesn't fit stops the run before anything is rendered, with the reason.</li>
+<li><strong>Render aligned masks.</strong> Each section runs in its own process, as many at once as the CPU budget and
+   RAM allow (Local parallelism).</li>
+</ol>
+<p>What happens to every mask is what happened to its image:
+- It is placed with the section's stitching transform, then moved by the section's alignment mesh onto
+  the canvas of the aligned stack (<code>align/tform/&lt;section&gt;.h5</code>, <code>align/tform/canvas.json</code>).
+- Sampling is <strong>nearest-neighbour throughout</strong>, so labels are never blended with their neighbours.
+- None of the images' intensity processing is applied: no CLAHE, no inversion, no brightness/contrast
+  correction.</p>
+<p>Every value in the output is one of your labels, or 0 where there were no masks.</p>
+<p>The result goes to <code>segmentation/&lt;name&gt;</code> in the project (or the output folder you choose). It uses the
+layout of the aligned PNG stack: the same tiles, file names and section folders at every mip level.
+- <strong>Mipmaps:</strong> each 2×2 block keeps its majority label. A label wins a tie against background, and the
+  smaller label wins a tie between labels, so coarse levels are not shifted towards one corner.
+- <strong>Exports:</strong> on the Export &amp; viewers tab, choose the stack (<em>masks: name</em>) and export it as VAST tiles
+  (in its own <code>vast_&lt;name&gt;</code> folder, 8- or 16-bit like the masks), as OME-Zarr (one array per level,
+  readable with zarr, tensorstore or dask, for example to mesh objects with marching cubes and trimesh),
+  or as <strong>one image per section</strong> at the mip level you choose (PNG or TIFF, numbered by z, with
+  <code>slices.json</code> naming the section of each file) for VAST's import of image sequences.
+- <strong>Checking:</strong> under <em>View aligned sections</em>, <em>masks</em> lays a stack's labels in colour over the aligned
+  images.</p>
+<p>The status line counts rendered sections from the files. It says <em>stale</em> when the alignment or a mask
+file changed after the masks were rendered; <strong>Clear…</strong> removes only the aligned masks, never your mask
+files or the images. Masks are rendered on this PC from the local alignment, not in cluster mode.</p>
 <h3 id="export-viewers-tab">Export &amp; viewers tab</h3>
 <div class="table-wrap"><table>
 <thead>
@@ -2014,12 +2055,16 @@ into the same output folder.</p>
 </thead>
 <tbody>
 <tr>
+<td><strong>stack</strong></td>
+<td><em>aligned images</em>, or an aligned mask stack (see <em>Segmentation masks on an image stack</em>).</td>
+</tr>
+<tr>
 <td><strong>name</strong></td>
 <td>Base name of the export.</td>
 </tr>
 <tr>
 <td><strong>what</strong></td>
-<td><em>VASTlite</em> (<code>.vsvi</code> + tile pyramid, hard-linked — instant and no extra disk space on the same drive), <em>OME-Zarr 0.4</em> (uncompressed chunks, for moderate volumes), or <em>both</em>.</td>
+<td><em>VASTlite</em> (<code>.vsvi</code> + tile pyramid, hard-linked — instant and no extra disk space on the same drive), <em>OME-Zarr 0.4</em> (uncompressed chunks, for moderate volumes), <em>both</em>, or <em>one image per section</em> (whole sections at the chosen <strong>mip</strong>, PNG or TIFF, 8- or 16-bit like the stack).</td>
 </tr>
 <tr>
 <td><strong>zarr chunk</strong> (256)</td>
@@ -2049,7 +2094,8 @@ into the same output folder.</p>
 </table></div>
 <h3 id="view-aligned-sections-tab">View aligned sections tab</h3>
 <p>Tile-based viewer over the rendered PNG stack with section navigation and an <strong>overlay next section
-(red/green)</strong> checkbox — the final check that the stack is smooth in z.</p>
+(red/green)</strong> checkbox — the final check that the stack is smooth in z. <strong>masks</strong> lays the labels of an
+aligned mask stack over the images in colour, to check that the masks line up.</p>
 <hr />
 <h2 id="10-a-first-dataset-end-to-end">10. A first dataset, end to end</h2>
 <p><strong>No data at hand?</strong> The workbench can make a small synthetic serial-section dataset (4 sections of

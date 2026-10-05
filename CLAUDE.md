@@ -30,6 +30,12 @@
   starts a process pool per mip level per section with one job per tile of that level, which leaves a workstation
   idle, so with enough sections it runs whole sections per worker (`parallel_within_section: false`, identical
   output) and raises `cache_size` 4 -> 16 (~1/3 less CPU). Settings the project overrides are kept.
+- Segmentation masks (`core/segmentation.py`, `workers/segmentation_render.py`, Export & view → Render): label images that
+  match the input images are carried through the stitch tform (a `MontageRenderer` with the images' geometry, the mask
+  files and clean loader settings - FEABAS adds CLAHE/inversion/brightness LUTs otherwise) and the align mesh + canvas
+  offset (`render_whole_mesh`), NEAREST throughout, into `segmentation/<name>` in the aligned PNG stack's layout; mipmaps
+  are 2x2 majority labels (`build_label_pyramid`), not FEABAS's mip_one_level (slow, and its nearest picks one corner).
+  Image stacks are imported as one tile per section; `tools/run_demo_pipeline.py --masks` checks layout, labels and shift.
 - Three interpreters: the GUI's own, a FEABAS env (feabas 3.0.5 + tensorstore; numpy 2.x works) and a deep-learning env
   (torch, careamics 0.3.2 which pins torch < 2.10, ultralytics, segmentation-models-pytorch). Paths live in
   `%APPDATA%/FeabasWorkbench/settings.json`; projects may override them.

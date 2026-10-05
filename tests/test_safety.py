@@ -732,6 +732,13 @@ def test_match_files_without_matches_fail_the_end_to_end_check(tmp_path):
     assert len(problems) == 2, problems
     assert "s0002.h5" in problems[0] and "2 separate groups" in problems[0]
     assert "1 match point(s)" in problems[1]
+    # one image per section (an imported image stack): no tile pairs to match, nothing wrong
+    coords = tmp_path / "stitch/stitch_coord"; coords.mkdir(parents=True)
+    (coords / "s0003.txt").write_text("{ROOT_DIR}\t/data\n{RESOLUTION}\t4\n{TILE_SIZE}\t9\t9\nslice_003.tif\t0.0\t0.0\n")
+    (coords / "s0002.txt").write_text("{ROOT_DIR}\t/data\n{RESOLUTION}\t4\na.tif\t0\t0\nb.tif\t9\t0\n")
+    with h5py.File(tmp_path / "stitch/match_h5/s0003.h5", "w") as h:
+        pass
+    assert len(match_problems(tmp_path)) == 2                        # s0003 is fine, s0002 still is not
 
 
 def test_the_demo_project_matches_on_a_grid_its_sections_can_hold(tmp_path):

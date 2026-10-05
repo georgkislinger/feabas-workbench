@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
                                QTabWidget, QVBoxLayout, QWidget)
 
+from ...core import segmentation as seg
 from ...core.images import TiledSectionSource
-from ...core.steps import aligned_dir, aligned_render_mip, tensorstore_dir
+from ...core.local_parallel import run_budget
+from ...core.project import repair_working_directory
+from ...core.steps import aligned_dir, aligned_render_mip, is_link, tensorstore_dir
 from ...core.httpserve import VolumeServer
 from ..widgets import PathPicker, ImageView, ConfigEditor, card, hint, spin, combo
 from ..widgets.steps_panel import StepsPanel
@@ -61,17 +65,55 @@ class ExportPage(Page):
         self.ts_steps.inspect_requested.connect(lambda _s: self.tabs.setCurrentIndex(2))
         lay.addWidget(self.ts_steps)
         tl.addWidget(f)
+        f, lay = card("Segmentation masks (labels)")
+        r = QHBoxLayout()
+        self.s_dir = PathPicker("dir", "folder with one 8- or 16-bit greyscale label image (PNG or TIFF) per input image")
+        self.s_match = combo([("by file name, else in order", "auto"), ("by file name", "name"),
+                              ("in section order", "order")], "auto")
+        r.addWidget(QLabel("masks")); r.addWidget(self.s_dir, 1); r.addWidget(QLabel("match")); r.addWidget(self.s_match)
+        lay.addLayout(r)
+        r = QHBoxLayout()
+        self.s_name = QLineEdit("masks"); self.s_name.setMaximumWidth(180)
+        self.s_out = PathPicker("dir", "leave empty to write inside the project (segmentation/<name>)")
+        r.addWidget(QLabel("name")); r.addWidget(self.s_name); r.addWidget(QLabel("output folder")); r.addWidget(self.s_out, 1)
+        lay.addLayout(r)
+        r = QHBoxLayout()
+        b1 = QPushButton("Render aligned masks"); b1.setObjectName("Primary")
+        b2 = QPushButton("Clear…")
+        self.s_status = QLabel(""); self.s_status.setObjectName("Hint"); self.s_status.setWordWrap(True)
+        r.addWidget(b1); r.addWidget(b2); r.addWidget(self.s_status, 1)
+        lay.addLayout(r)
+        lay.addWidget(hint("For masks drawn on an image stack: import the stack as one image per section, align it, then "
+                           "render the masks here. They take exactly the images' path - placed like their image, moved by "
+                           "the section's alignment onto the same canvas - sampled nearest-neighbour so labels are never "
+                           "mixed, with mipmaps that keep each 2x2 block's majority label. The result has the aligned PNG "
+                           "stack's layout: export it on the next tab (VAST tiles, OME-Zarr or one image per section) and "
+                           "check it over the images under View aligned sections."))
+        b1.clicked.connect(self._render_masks); b2.clicked.connect(self._clear_masks)
+        self.s_name.editingFinished.connect(self._refresh_masks)
+        self.s_dir.changed.connect(lambda _t: self._refresh_masks())
+        self.s_out.changed.connect(lambda _t: self._refresh_masks())
+        tl.addWidget(f)
         tl.addStretch(1)
         self.tabs.addTab(t, "Render")
 
         # ---- export tab
         t = QWidget(); tl = QVBoxLayout(t); tl.setContentsMargins(6, 6, 6, 6)
-        f, lay = card("Export the PNG stack")
+        f, lay = card("Export a stack")
         r = QHBoxLayout()
+        self.e_stack = QComboBox(); self.e_stack.setMinimumWidth(180)
+        self.e_stack.addItem("aligned images", "")
         self.e_name = QLineEdit("aligned"); self.e_name.setMaximumWidth(200)
-        self.e_what = combo([("VASTlite (.vsvi + tile pyramid, hard-linked, no copy)", "vast"), ("OME-Zarr 0.4 (uncompressed chunks)", "omezarr"), ("both", "both")], "vast")
+        self.e_what = combo([("VASTlite (.vsvi + tile pyramid, hard-linked, no copy)", "vast"), ("OME-Zarr 0.4 (uncompressed chunks)", "omezarr"),
+                             ("both", "both"), ("one image per section", "slices")], "vast")
         self.e_chunk = spin(64, 2048, 256, 64)
-        r.addWidget(QLabel("name")); r.addWidget(self.e_name); r.addWidget(self.e_what, 1); r.addWidget(QLabel("zarr chunk")); r.addWidget(self.e_chunk)
+        r.addWidget(QLabel("stack")); r.addWidget(self.e_stack); r.addWidget(QLabel("name")); r.addWidget(self.e_name)
+        r.addWidget(self.e_what, 1); r.addWidget(QLabel("zarr chunk")); r.addWidget(self.e_chunk)
+        lay.addLayout(r)
+        r = QHBoxLayout()
+        self.e_slice_mip = spin(0, 10, 0); self.e_slice_fmt = combo(["png", "tif"], "png")
+        r.addWidget(QLabel("images per section: mip")); r.addWidget(self.e_slice_mip); r.addWidget(QLabel("format"))
+        r.addWidget(self.e_slice_fmt); r.addStretch(1)
         lay.addLayout(r)
         r = QHBoxLayout()
         self.e_out = PathPicker("dir", "export folder (default: <project>/exports)")
@@ -80,7 +122,11 @@ class ExportPage(Page):
         lay.addLayout(r)
         lay.addWidget(hint("VAST export re-links the FEABAS tiles into VAST's folder layout and writes the .vsvi with the "
                            "voxel size, so it is instant and needs no extra disk space on the same drive. OME-Zarr writes "
-                           "uncompressed chunks and is meant for moderate volumes."))
+                           "uncompressed chunks and is meant for moderate volumes (zarr, tensorstore or dask read it in "
+                           "Python). One image per section writes whole sections at the chosen mip level, 8- or 16-bit like "
+                           "the stack, for tools that import image sequences. Aligned segmentation masks export the same way "
+                           "and line up with the images."))
+        self.e_stack.currentIndexChanged.connect(self._stack_chosen)
         b.clicked.connect(self._export)
         tl.addWidget(f)
         f, lay = card("Open in a viewer")
@@ -108,6 +154,8 @@ class ExportPage(Page):
         r.addWidget(QLabel("Section")); self.q_sec = QComboBox(); self.q_sec.setMinimumWidth(180); r.addWidget(self.q_sec)
         pb = QPushButton("◀"); nb = QPushButton("▶"); pb.setFixedWidth(32); nb.setFixedWidth(32); r.addWidget(pb); r.addWidget(nb)
         self.q_pair = QCheckBox("overlay next section (red/green)"); r.addWidget(self.q_pair)
+        self.q_masks = QComboBox(); self.q_masks.addItem("no masks", "")
+        r.addWidget(QLabel("masks")); r.addWidget(self.q_masks)
         fb = QPushButton("fit"); r.addWidget(fb); r.addStretch(1)
         tl.addLayout(r)
         self.q_view = ImageView(); self.q_view.setMinimumHeight(560)
@@ -117,6 +165,7 @@ class ExportPage(Page):
         self.tabs.addTab(t, "View aligned sections")
         self.q_sec.currentIndexChanged.connect(self._show)
         self.q_pair.toggled.connect(self._show)
+        self.q_masks.currentIndexChanged.connect(self._show)
         pb.clicked.connect(lambda: self.q_sec.setCurrentIndex(max(0, self.q_sec.currentIndex() - 1)))
         nb.clicked.connect(lambda: self.q_sec.setCurrentIndex(min(self.q_sec.count() - 1, self.q_sec.currentIndex() + 1)))
         fb.clicked.connect(self.q_view.fit)
@@ -143,12 +192,19 @@ class ExportPage(Page):
         self.r_interp.setCurrentIndex(max(0, self.r_interp.findData(cs.get("alignment", "rendering.remap_interp", "LANCZOS"))))
         self.r_outdir.setText(cs.get("alignment", "rendering.out_dir", None) or "")
         self.e_out.setText(project.state.export.get("out_dir", ""))
+        saved = project.state.export.get("segmentation", {})
+        self.s_dir.setText(saved.get("masks_dir", ""))
+        self.s_match.setCurrentIndex(max(0, self.s_match.findData(saved.get("match", "auto"))))
+        self.s_name.setText(saved.get("name", "masks"))
+        self.s_out.setText(saved.get("out_dir", ""))
         self._refresh_vsvi()
         self._refresh_sections()
+        self._refresh_masks()
 
     def on_state_changed(self) -> None:
         scan = self.ctx.scan()
         self.png_steps.refresh(scan); self.ts_steps.refresh(scan)
+        self._refresh_masks()
         if self.tabs.currentIndex() == 2:
             self._refresh_sections()
 
@@ -188,24 +244,145 @@ class ExportPage(Page):
             return None
         return tensorstore_dir(self.project.root, self.ctx.configs)
 
+    # -- segmentation masks -------------------------------------------------
+    def _mask_base(self) -> Path | None:
+        if not self.project:
+            return None
+        try:
+            return seg.stack_dir(self.project.root, self.s_name.text(), self.s_out.path())
+        except ValueError:
+            return None
+
+    def _refresh_masks(self) -> None:
+        """Status of the named mask stack and the stack lists, from the files on disk."""
+        if not self.project:
+            self.s_status.setText("")
+            return
+        base = self._mask_base()
+        if base is None:
+            self.s_status.setText("give the masks a name")
+        else:
+            cs = self.ctx.configs
+            mip, top = self._render_mip(), int(cs.get("alignment", "downsample.max_mip", 7)) if cs else 0
+            folder = self.s_dir.path()
+            masks = seg.list_mask_files(folder) if folder else []
+            st = seg.stack_status(self.project.root, base, self.project.section_names(), mip, top,
+                                  masks if len(masks) <= 5000 else None)
+            if not st.rendered:
+                text = f"not rendered yet; they will go to {base}"
+            else:
+                text = (f"{st.rendered} of {st.sections} sections rendered, {st.mipmapped} with mipmaps up to "
+                        f"mip {max(mip, top)}, in {base}")
+            if st.stale:
+                text += f" - stale: {st.stale}; Clear and render again"
+            self.s_status.setText(text)
+        stacks = seg.list_stacks(self.project.root, [self.s_out.path()] if self.s_out.path() else None)
+        for box, first in ((self.e_stack, ("aligned images", "")), (self.q_masks, ("no masks", ""))):
+            current = box.currentData()
+            box.blockSignals(True)
+            box.clear()
+            box.addItem(*first)
+            for d in stacks:
+                box.addItem(("masks: " if box is self.e_stack else "") + d.name, str(d))
+            box.setCurrentIndex(max(0, box.findData(current)))
+            box.blockSignals(False)
+
+    def _render_masks(self) -> None:
+        if not self.require_project():
+            return
+        title = "Segmentation masks"
+        if self.ctx.cluster_enabled:
+            QMessageBox.information(self, title, "Masks are rendered on this PC from the local alignment: leave cluster mode first.")
+            return
+        folder = self.s_dir.path()
+        if not folder:
+            QMessageBox.information(self, title, "Choose the folder with the mask images first.")
+            return
+        try:
+            name = seg.safe_name(self.s_name.text())
+        except ValueError as e:
+            QMessageBox.information(self, title, str(e))
+            return
+        root, sections = self.project.root, self.project.section_names()
+        if repair_working_directory(root):
+            self.info(f"{root}: configs/general_configs.yaml named another folder (a copied or moved project); "
+                      f"FEABAS now works here again")
+        unaligned = [s for s in sections if not (root / "align" / "tform" / f"{s}.h5").is_file()]
+        if unaligned:
+            QMessageBox.information(self, title, f"{len(unaligned)} of {len(sections)} sections are not aligned yet "
+                                    f"(e.g. {unaligned[0]}): run the alignment first.")
+            return
+        try:
+            plan = seg.plan_masks(root, sections, folder, self.s_match.currentData())
+            python = self.ctx.require_feabas_python()
+        except (ValueError, OSError, RuntimeError) as e:
+            QMessageBox.warning(self, title, str(e))
+            return
+        base = seg.stack_dir(root, name, self.s_out.path())
+        cpu, ram = run_budget(self.project)
+        workers = max(1, min(len(plan.sections), cpu, int(ram // (1.5 if plan.bits == 8 else 2.0))))
+        self.project.state.export["segmentation"] = {"masks_dir": str(folder), "match": self.s_match.currentData(),
+                                                     "name": name, "out_dir": self.s_out.text().strip()}
+        self.project.save()
+        for note in plan.notes:
+            self.info(f"masks: {note}")
+        self.info(f"aligned masks: {plan.n_masks} {plan.bits}-bit mask file(s) for {len(sections)} sections, "
+                  f"{workers} at once -> {base}")
+        payload = {"root": str(root), "out_dir": str(base), "plan": plan.to_dict(), "workers": workers,
+                   "source": {"masks_dir": str(folder), "match": plan.mode}}
+        self.submit(self.ctx.worker_spec("segmentation_render", payload, f"Aligned masks ({name})", python=python,
+                                         expected=len(sections)))
+
+    def _clear_masks(self) -> None:
+        base = self._mask_base()
+        if not self.project or base is None or not base.exists():
+            QMessageBox.information(self, "Clear aligned masks", "There are no aligned masks of this name to clear.")
+            return
+        if self.ctx.jobs.running:
+            QMessageBox.information(self, "Busy", "Wait for the running job to finish first.")
+            return
+        if is_link(base):
+            QMessageBox.warning(self, "Clear aligned masks", f"{base} is a link; remove it yourself if you mean to.")
+            return
+        if not self.confirm("Clear aligned masks", f"Delete the aligned masks in\n{base}?\n\nYour mask files and "
+                            "the images stay untouched."):
+            return
+        shutil.rmtree(base, ignore_errors=True)
+        self.info(f"removed {base}")
+        self._refresh_masks()
+
     # -- export ------------------------------------------------------------
+    def _stack_chosen(self) -> None:
+        d = self.e_stack.currentData()
+        self.e_name.setText(Path(d).name if d else "aligned")
+
     def _export(self) -> None:
         if not self.require_project():
             return
-        base = self._aligned_base()
+        masks = self.e_stack.currentData()
+        base = Path(masks) if masks else self._aligned_base()
         mip = self._render_mip()
-        rendered = self.ctx.scan()["align.rendering"].done > 0 if self.ctx.cluster_enabled else bool(base and (base / f"mip{mip}").is_dir())
+        if masks and self.ctx.cluster_enabled:
+            QMessageBox.information(self, "Export", "Aligned masks are exported on this PC: leave cluster mode first.")
+            return
+        rendered = (self.ctx.scan()["align.rendering"].done > 0 if self.ctx.cluster_enabled and not masks
+                    else bool(base and (base / f"mip{mip}").is_dir()))
         if not rendered:
-            QMessageBox.information(self, "Export", "Render the PNG tile stack first (Render tab).")
+            QMessageBox.information(self, "Export", "Render the masks first (Render tab)." if masks else
+                                    "Render the PNG tile stack first (Render tab).")
             return
         out = self.e_out.path() or self.project.exports_dir
         if self.ctx.cluster_enabled and out.is_relative_to(self.project.root):
             out = self.ctx.local_project.exports_dir / "cluster"
         self.project.state.export["out_dir"] = str(out); self.project.save()
         v = self.project.state.volume
-        payload = {"aligned_stack": str(base), "out_dir": str(out), "name": self.e_name.text().strip() or "aligned",
+        name = self.e_name.text().strip() or ("masks" if masks else "aligned")
+        payload = {"aligned_stack": str(base), "out_dir": str(out), "name": name,
                    "voxel_nm": [v.pixel_size_nm, v.pixel_size_nm, v.section_thickness_nm], "what": self.e_what.currentData(),
-                   "chunk": self.e_chunk.value(), "base_mip": mip}
+                   "chunk": self.e_chunk.value(), "base_mip": mip,
+                   # images keep exports/vast; each mask stack gets its own VAST folder next to it
+                   "vast_dir": f"vast_{name}" if masks else "vast",
+                   "slice_mip": max(mip, self.e_slice_mip.value()), "slice_format": self.e_slice_fmt.currentData()}
         import sys
         self.submit(self.ctx.worker_spec("export_vast", payload, f"Export ({self.e_what.currentData()})", python=sys.executable))
 
@@ -273,7 +450,10 @@ class ExportPage(Page):
             return
         try:
             src = TiledSectionSource(base, sec)
-            if self.q_pair.isChecked() and self.q_sec.currentIndex() + 1 < self.q_sec.count():
+            masks = self.q_masks.currentData()
+            if masks:
+                self.q_view.set_source(_MaskOverlaySource(src, TiledSectionSource(Path(masks), sec)))
+            elif self.q_pair.isChecked() and self.q_sec.currentIndex() + 1 < self.q_sec.count():
                 nxt = self.q_sec.itemText(self.q_sec.currentIndex() + 1)
                 src2 = TiledSectionSource(base, nxt)
                 self.q_view.set_source(_PairSource(src, src2))
@@ -283,6 +463,10 @@ class ExportPage(Page):
             self.error(f"cannot open {sec}: {e}", dialog=False)
 
     def _job_finished(self, res) -> None:
+        if res.spec.name.startswith("Aligned masks"):
+            self._refresh_masks()
+            if res.ok and res.result.get("out_dir"):
+                self.info(f"aligned masks: {res.result['out_dir']}")
         if res.spec.name.startswith("Export") and res.ok:
             if self.ctx.cluster_enabled:
                 self.info("Export completed at LRZ. The verified download is tracked in the top bar.")
@@ -296,6 +480,19 @@ class ExportPage(Page):
         self.e_out.setText(path)
         self._refresh_vsvi()
         self.info("Export downloaded and verified: " + path)
+
+
+class _MaskOverlaySource:
+    """An aligned section with an aligned mask stack's labels laid over it in colour."""
+
+    def __init__(self, images, masks):
+        self.images, self.masks = images, masks
+        self.levels = images.levels
+        self.name = images.name
+
+    def read(self, mip, x0, y0, w, h):
+        from ...core.images import label_overlay
+        return label_overlay(self.images.read(mip, x0, y0, w, h), self.masks.read(mip, x0, y0, w, h))
 
 
 class _PairSource:
