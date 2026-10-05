@@ -10,8 +10,8 @@ authors:
     affiliation: "German Center for Neurodegenerative Diseases (DZNE); Technical University of Munich (TUM)"
 repository-code: "https://github.com/georgkislinger/feabas-workbench"
 license: Apache-2.0
-version: 0.3.7
-date-released: "2026-10-02"
+version: 0.3.8
+date-released: "2026-10-05"
 keywords:
   - electron microscopy
   - connectomics

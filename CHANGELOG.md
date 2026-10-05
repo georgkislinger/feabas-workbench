@@ -3,7 +3,7 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.8] – 2026-10-05
 
 ### Added – segmentation masks follow the alignment
 - For masks drawn on an image stack whose alignment you improve: import the stack as one image per
@@ -29,6 +29,9 @@ versions follow [Semantic Versioning](https://semver.org/).
 - The end-to-end check reported "0 matched tile pairs" for every section of an image stack (one image
   per section), which has no tile pairs to match. FEABAS itself handles such sections fine.
 
+### Packaging
+- Public version 0.3.8 for the Windows executable, wheel, source archive and PyPI package.
+
 ### Validation
 - With FEABAS 3.0.5, masks made from the input images themselves line up with the aligned images.
   The tile layout is identical at every mip level, and the remaining offsets are within the
@@ -37,6 +40,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 - 16-bit labels come out exactly; no new values at any level.
 - CI carries both 8-bit images and 16-bit labels through the alignment and checks them, for 2×2 tiles
   per section and for an image stack with masks matched in order.
+- The Windows and Linux test matrix (Python 3.10–3.14) and both FEABAS end-to-end runs passed; the
+  release wheel was installed and started in a clean environment.
 
 ## [0.3.7] – 2026-10-02
 
