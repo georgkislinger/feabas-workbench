@@ -3,7 +3,7 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.9] – 2026-10-07
 
 ### Added – segmentation masks exported at a mip level
 - **Segmentation masks (labels)** now also takes masks exported at a lower resolution, for example a
@@ -39,6 +39,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   now start at the images' level: rendered at full resolution, reduced by majority, finer level dropped.
 - Mask stacks rendered by 0.3.8 are marked stale with the reason. Clear them and render them again;
   Render refuses to resume them.
+
+### Packaging
+- Public version 0.3.9 for the Windows executable, wheel, source archive and PyPI package.
 
 ### Validation
 - Coordinate-coded masks (each pixel holding its column or row number) show what the montage step does:

@@ -1,5 +1,10 @@
 <h1 align="center">FEABAS Workbench</h1>
 
+> **Version 0.3.9:** segmentation masks exported at a mip level (a half, a quarter, an eighth ... of the images'
+> size) go through the alignment as they are and give a stack that starts at their level, and an image stack's masks
+> keep every row and column (0.3.8 dropped every other one: clear and render again masks made with it) - see
+> [the user guide](docs/USER_GUIDE.md#masks-exported-at-a-mip-level).
+>
 > **Version 0.3.8:** segmentation masks follow the alignment. Segmented an image stack and want to improve its
 > alignment? Import the stack as one image per section, align it, and render the masks through exactly the same
 > transforms (8- or 16-bit labels, never blended), then export them like the images - see
@@ -242,5 +247,5 @@ Cite FEABAS for the stitching and alignment – that is where the science is:
 and, if the workbench was useful in your work, the workbench too (GitHub's *Cite this repository*
 button uses [CITATION.cff](CITATION.cff)):
 
-> Kislinger, G. (2026). *FEABAS Workbench* (version 0.3.8) [Computer software].
+> Kislinger, G. (2026). *FEABAS Workbench* (version 0.3.9) [Computer software].
 > https://github.com/georgkislinger/feabas-workbench — ORCID 0000-0002-6559-7421
