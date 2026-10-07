@@ -36,6 +36,16 @@
   offset (`render_whole_mesh`), NEAREST throughout, into `segmentation/<name>` in the aligned PNG stack's layout; mipmaps
   are 2x2 majority labels (`build_label_pyramid`), not FEABAS's mip_one_level (slow, and its nearest picks one corner).
   Image stacks are imported as one tile per section; `tools/run_demo_pipeline.py --masks` checks layout, labels and shift.
+  Masks exported at a mip level k (size = image size / 2**k, rounded either way: `mask_level`) give a stack that starts
+  at `first_level(k, render mip)`; they are rendered at `render_level` (up to `SUPERSAMPLE` levels finer, so
+  nearest-neighbour resampling moves boundaries by a fraction of a mask pixel) and the finer levels are dropped. All
+  scaling goes through `feabas.spatial.scale_coordinates` (coarse pixel = centre of its block, as FEABAS's meshes and
+  mipmaps); `stack_start` (masks.json, else disk) says where a stack starts. Nearest-neighbour source coordinates are
+  nudged by `NUDGE` (1/64 px): FEABAS puts a single image 1.5 px into its montage and OpenCV rounds halves to even,
+  which dropped every other mask row/column of an image stack in 0.3.8 (`legacy_problem` flags such stacks); a
+  single-image section's montage is an exact whole-pixel copy and the fraction goes to the align mesh
+  (`_exact_montage`). `run_demo_pipeline --masks` checks that mip-k labels rendered at full resolution reproduce the
+  full-resolution labels exactly, and the default rendering within 0.35 px at the masks' level.
 - Three interpreters: the GUI's own, a FEABAS env (feabas 3.0.5 + tensorstore; numpy 2.x works) and a deep-learning env
   (torch, careamics 0.3.2 which pins torch < 2.10, ultralytics, segmentation-models-pytorch). Paths live in
   `%APPDATA%/FeabasWorkbench/settings.json`; projects may override them.

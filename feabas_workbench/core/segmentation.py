@@ -9,13 +9,17 @@ of the intensity processing the images get. ``workers/segmentation_render`` does
 FEABAS's own renderers; the result sits in the layout of the aligned PNG stack (mip levels,
 tiles, metadata.txt), so the stack exports (VAST, OME-Zarr, slice images) work for it too.
 
-Mask files: 8- or 16-bit greyscale PNG or TIFF, one per input image with the same width and
-height, matched to the images by file name or, with one image per section, in section order.
-Everything here is Qt-free and needs no FEABAS.
+Mask files: 8- or 16-bit greyscale PNG or TIFF, one per input image, matched to the images by
+file name or, with one image per section, in section order. A mask has its image's width and
+height, or that size divided by 2**k (rounded either way) when it was exported at mip level k:
+each of its pixels then stands for a 2**k x 2**k block of the image - the convention of FEABAS's
+own mipmaps and of mode/average pyramids - and the aligned masks start at that level (render_level
+says how finely they are rendered on the way). Everything here is Qt-free and needs no FEABAS.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import struct
 from dataclasses import dataclass, field
@@ -25,6 +29,7 @@ MASK_SUFFIXES = (".png", ".tif", ".tiff")
 MATCH_MODES = ("auto", "name", "order")
 STACKS_DIR = "segmentation"            # <project>/segmentation/<name> unless another folder is chosen
 MONTAGE_DIR = "_montage"               # the masks placed like the images, before the alignment
+MAX_MASK_MIP = 12                      # masks exported at most at 1/4096 of their images' size
 
 
 @dataclass(frozen=True)
@@ -74,6 +79,23 @@ def check_mask_header(header: ImageHeader, name: str) -> str | None:
     return None
 
 
+def mask_level(mask_hw: tuple[int, int], image_hw: tuple[int, int]) -> int | None:
+    """
+    The mip level of a mask of size *mask_hw* (height, width) for an image of size *image_hw*: 0
+    when the sizes match, k when the mask is the image's size divided by 2**k - rounded down or up,
+    as exports at a mip level do - and None when neither fits.
+    """
+    h, w = int(mask_hw[0]), int(mask_hw[1])
+    big_h, big_w = int(image_hw[0]), int(image_hw[1])
+    if h < 1 or w < 1:
+        return None
+    for k in range(MAX_MASK_MIP + 1):
+        f = 2 ** k
+        if h in (big_h // f, -(-big_h // f)) and w in (big_w // f, -(-big_w // f)):
+            return k
+    return None
+
+
 def natural_key(text: str):
     """'s2' sorts before 's10'."""
     return [int(t) if t.isdigit() else t.casefold() for t in re.split(r"(\d+)", text)]
@@ -112,6 +134,7 @@ class MaskPlan:
     sections: list[tuple[str, dict[str, str]]] = field(default_factory=list)   # (section, {image file name: mask path})
     bits: int = 8
     mode: str = "name"
+    mip: int = 0                       # the masks' level: 1/2**mip of their images' width and height
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -119,7 +142,7 @@ class MaskPlan:
         return sum(len(m) for _, m in self.sections)
 
     def to_dict(self) -> dict:
-        return {"sections": [[s, m] for s, m in self.sections], "bits": self.bits, "mode": self.mode}
+        return {"sections": [[s, m] for s, m in self.sections], "bits": self.bits, "mode": self.mode, "mip": self.mip}
 
 
 def plan_masks(root: Path, sections: list[str], folder: Path, mode: str = "auto") -> MaskPlan:
@@ -127,7 +150,8 @@ def plan_masks(root: Path, sections: list[str], folder: Path, mode: str = "auto"
     Match the mask files in *folder* to the images of *sections* (stack order) and check them.
     'name': a mask has the file name of its image (any of the mask suffixes); 'order': one image
     per section, the n-th mask (natural sort) goes with the n-th section; 'auto': by name when that
-    finds every mask, else in order. Raises ValueError saying what does not fit.
+    finds every mask, else in order. Every mask must have its image's size or that size at one mip
+    level (mask_level), the same level for all. Raises ValueError saying what does not fit.
     """
     if mode not in MATCH_MODES:
         raise ValueError(f"unknown matching mode {mode!r}")
@@ -181,7 +205,7 @@ def plan_masks(root: Path, sections: list[str], folder: Path, mode: str = "auto"
         plan.mode = "order"
         if mode == "auto":
             plan.notes.append("matched in section order (the file names differ from the images')")
-    bits = set()
+    bits, levels = set(), {}
     sizes = {s: size for s, _, size in images}
     for s, found in plan.sections:
         for image_name, mask in found.items():
@@ -190,13 +214,25 @@ def plan_masks(root: Path, sections: list[str], folder: Path, mode: str = "auto"
             if problem:
                 raise ValueError(problem)
             size = sizes.get(s)
-            if size is not None and (header.height, header.width) != tuple(size):
+            level = 0 if size is None else mask_level((header.height, header.width), size)
+            if level is None:
                 raise ValueError(f"{Path(mask).name}: {header.width} x {header.height} px, but its image {image_name} "
-                                 f"is {size[1]} x {size[0]} px; masks must match their images pixel for pixel")
+                                 f"is {size[1]} x {size[0]} px; a mask must match its image pixel for pixel, or have "
+                                 f"its size at one mip level (e.g. {-(-size[1] // 2)} x {-(-size[0] // 2)} at mip 1, "
+                                 f"{-(-size[1] // 8)} x {-(-size[0] // 8)} at mip 3)")
+            levels.setdefault(level, Path(mask).name)
             bits.add(header.bits)
     if len(bits) > 1:
         raise ValueError("the masks mix 8- and 16-bit files; save them all with one bit depth")
+    if len(levels) > 1:
+        raise ValueError("the masks are at different mip levels ("
+                         + ", ".join(f"{name} at mip {k}" for k, name in sorted(levels.items())[:3])
+                         + "); export them all at one level")
     plan.bits = bits.pop()
+    plan.mip = next(iter(levels))
+    if plan.mip:
+        plan.notes.append(f"the masks are at mip {plan.mip} (1/{2 ** plan.mip} of their images' width and height): "
+                          f"each mask pixel stands for a {2 ** plan.mip} x {2 ** plan.mip} px block of its image")
     return plan
 
 
@@ -231,12 +267,78 @@ def section_folders(level: Path, sections: list[str]) -> dict[str, Path]:
     return found
 
 
+def first_level(mask_mip: int, render_mip: int) -> int:
+    """The level an aligned mask stack starts at: the images' render level, or the masks' own
+    level when they are coarser."""
+    return max(int(mask_mip), int(render_mip))
+
+
+SUPERSAMPLE = 2                        # coarse masks are rendered up to this many levels finer
+
+
+def render_level(mask_mip: int, first: int, supersample: int = SUPERSAMPLE) -> int:
+    """
+    The level the masks are actually rendered at before their mipmaps: full resolution for masks
+    at full resolution, else *supersample* levels below the stack's first level, never finer
+    than mip 0 nor coarser than the masks. Nearest-neighbour resampling at a level moves a label
+    boundary by up to half a pixel of that level, twice (montage, alignment), and by the same amount
+    over a whole section; rendering finer and taking the majority back to the first level keeps
+    the boundaries where they belong. The levels below the first one are not kept.
+    """
+    return min(int(mask_mip), max(int(first) - int(supersample), 0))
+
+
+def stack_start(base: Path) -> int | None:
+    """The level a rendered mask stack starts at: as its masks.json records it (a render in progress
+    has finer levels for a while), else its finest level on disk; None when nothing is rendered."""
+    finest = stack_first_mip(base)
+    if finest is None:
+        return None
+    try:
+        first = json.loads((Path(base) / "masks.json").read_text(encoding="utf-8")).get("first_mip")
+    except (OSError, ValueError, AttributeError):
+        first = None
+    return first if isinstance(first, int) else finest
+
+
+def legacy_problem(base: Path) -> str:
+    """Why a mask stack has to be rendered again, or "". Stacks written by 0.3.8 (its masks.json has
+    no first_mip) dropped every other row and column of the masks of single-image sections, and in
+    projects whose aligned images are rendered at a coarser mip held full-resolution masks there."""
+    if stack_first_mip(base) is None:
+        return ""
+    try:
+        record = json.loads((Path(base) / "masks.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    if isinstance(record, dict) and "first_mip" not in record:
+        return ("rendered by version 0.3.8, which dropped every other row and column of the masks of single-image "
+                "sections and filed full-resolution masks under a coarser render level")
+    return ""
+
+
+def stack_levels(base: Path) -> list[int]:
+    """The mip levels of a rendered stack that hold at least one finished section, lowest first."""
+    base = Path(base)
+    if not base.is_dir():
+        return []
+    return sorted(int(d.name[3:]) for d in base.glob("mip*")
+                  if d.name[3:].isdigit() and d.is_dir() and any(d.glob("*/metadata.txt")))
+
+
+def stack_first_mip(base: Path) -> int | None:
+    """The level a rendered stack starts at (its finest level), None when nothing is rendered."""
+    levels = stack_levels(base)
+    return levels[0] if levels else None
+
+
 @dataclass(frozen=True)
 class StackStatus:
     sections: int
     rendered: int
     mipmapped: int
     stale: str = ""
+    first_mip: int = 0                 # the level the stack starts at
 
     @property
     def done(self) -> bool:
@@ -246,14 +348,17 @@ class StackStatus:
 def stack_status(root: Path, base: Path, sections: list[str], render_mip: int, max_mip: int,
                  masks: list[Path] | None = None) -> StackStatus:
     """Sections rendered and mipmapped, from the files on disk; stale when the alignment (or a
-    mask file) changed after the oldest rendered section."""
+    mask file) changed after the oldest rendered section. A stack counts from the level it starts
+    at (stack_start: masks at a coarse mip start there), else from *render_mip*."""
     root, base = Path(root), Path(base)
-    rendered = {s: d / "metadata.txt" for s, d in section_folders(base / f"mip{render_mip}", sections).items()
+    first = stack_start(base)
+    first = int(render_mip) if first is None else first
+    rendered = {s: d / "metadata.txt" for s, d in section_folders(base / f"mip{first}", sections).items()
                 if (d / "metadata.txt").is_file()}
-    top = max(render_mip, int(max_mip))
+    top = max(first, int(max_mip))
     mipped = [s for s, d in section_folders(base / f"mip{top}", sections).items() if (d / "metadata.txt").is_file()]
-    stale = ""
-    if rendered:
+    stale = legacy_problem(base)
+    if rendered and not stale:
         oldest = min(p.stat().st_mtime for p in rendered.values())
         tform = root / "align" / "tform"
         changed = [p for p in tform.glob("*.h5")] + [tform / "canvas.json"] if tform.is_dir() else []
@@ -261,7 +366,7 @@ def stack_status(root: Path, base: Path, sections: list[str], render_mip: int, m
             stale = "the alignment changed after these masks were rendered"
         elif masks and any(Path(m).is_file() and Path(m).stat().st_mtime > oldest + 1 for m in masks):
             stale = "mask files changed after they were rendered"
-    return StackStatus(len(sections), len(rendered), len(mipped), stale)
+    return StackStatus(len(sections), len(rendered), len(mipped), stale, first)
 
 
 def mode_downsample(a):
@@ -283,6 +388,21 @@ def mode_downsample(a):
         best = np.where(better, v, best)
         best_n = np.where(better, n, best_n)
     return best
+
+
+def reduce_labels(a, levels: int):
+    """
+    *a* reduced by 2**levels with mode_downsample, one level at a time. Odd sizes are padded with 0
+    (background) first, so the last row and column are kept: (h, w) -> (ceil(h / 2**levels),
+    ceil(w / 2**levels)), the size a mip-level export rounded up has.
+    """
+    import numpy as np
+    for _ in range(int(levels)):
+        h, w = a.shape[:2]
+        if h % 2 or w % 2:
+            a = np.pad(a, ((0, h % 2), (0, w % 2)))
+        a = mode_downsample(a)
+    return a
 
 
 def fill_tile_pattern(pattern: str, row: int, col: int, tile_hw: tuple[int, int], one_based: bool) -> str:

@@ -2016,8 +2016,9 @@ on the Render tab does that.</p>
 <li><strong>Align the stack as usual:</strong> thumbnails, coarse and fine alignment. Render the image stack whenever
    you like; images and masks share the same canvas either way.</li>
 <li><strong>Point <em>masks</em> at a folder with one label image per input image.</strong> They must be 8- or 16-bit
-   greyscale PNG or TIFF (not JPEG, not palette or RGB), with the same width and height as their image.
-   <em>match</em> pairs them with the images: <strong>by file name</strong> (same name, any of .png/.tif/.tiff) or <strong>in
+   greyscale PNG or TIFF (not JPEG, not palette or RGB), with the same width and height as their image,
+   or exported at one mip level (see <em>Masks exported at a mip level</em> below). <em>match</em> pairs them with the
+   images: <strong>by file name</strong> (same name, any of .png/.tif/.tiff) or <strong>in
    section order</strong>, where the n-th mask in natural sort order (<code>seg_2</code> before <code>seg_10</code>) goes with the n-th
    section. The default tries names first and falls back to order, saying so in the log. A mask that
    doesn't fit stops the run before anything is rendered, with the reason.</li>
@@ -2026,7 +2027,9 @@ on the Render tab does that.</p>
 </ol>
 <p>What happens to every mask is what happened to its image:
 - It is placed with the section's stitching transform, then moved by the section's alignment mesh onto
-  the canvas of the aligned stack (<code>align/tform/&lt;section&gt;.h5</code>, <code>align/tform/canvas.json</code>).
+  the canvas of the aligned stack (<code>align/tform/&lt;section&gt;.h5</code>, <code>align/tform/canvas.json</code>). For one image
+  per section (an image stack) the placement is a plain shift: the mask is copied in whole pixels and the
+  remaining fraction of a pixel goes into the alignment step, so each mask is resampled only once.
 - Sampling is <strong>nearest-neighbour throughout</strong>, so labels are never blended with their neighbours.
 - None of the images' intensity processing is applied: no CLAHE, no inversion, no brightness/contrast
   correction.</p>
@@ -2044,7 +2047,41 @@ layout of the aligned PNG stack: the same tiles, file names and section folders 
   images.</p>
 <p>The status line counts rendered sections from the files. It says <em>stale</em> when the alignment or a mask
 file changed after the masks were rendered; <strong>Clear…</strong> removes only the aligned masks, never your mask
-files or the images. Masks are rendered on this PC from the local alignment, not in cluster mode.</p>
+files or the images. Masks are rendered on this PC from the local alignment, not in cluster mode.
+Stacks rendered by version 0.3.8 show as stale with the reason: it dropped every other row and column
+of the masks of an image stack. Clear them and render them again.</p>
+<h4 id="masks-exported-at-a-mip-level">Masks exported at a mip level</h4>
+<p>Segmentations of large volumes are often exported at a lower resolution: at mip 1 a mask is half its
+image's width and height, at mip 3 an eighth, and so on (any level up to 12). The workbench recognises
+the level from the sizes, allowing the rounding up or down a mip export does (a 1001 × 999 px image
+gives 125 or 126 × 124 or 125 px at mip 3). All masks must be at the same level.
+- <strong>Each mask pixel stands for the block of image pixels it covers</strong> (8 × 8 at mip 3): the convention of
+  FEABAS's own mipmaps and of pyramids built by majority or average. The masks are carried through the
+  same transforms on that basis and land on the images' pixel grid.
+- <strong>The aligned stack starts at the masks' level</strong> (or at the images' render level, if that is
+  coarser); there are no finer levels, because the masks have no finer detail. The status line says
+  <em>from mip N</em>, the overlay under <em>View aligned sections</em> enlarges the masks when you zoom in further
+  (each label pixel covering exactly its block), and exports start at that level too.
+- <strong>Rendering:</strong> the masks are rendered two levels finer than they are, then reduced to their level by
+  majority, and the finer levels are discarded. Rendering right at the masks' level would move label
+  boundaries by up to half a mask pixel at every resampling, and by the same amount across a whole
+  section, so the sections would jitter against each other. Two levels finer, the boundaries stay
+  within about a quarter of a mask pixel of where rendering the same labels at full resolution puts
+  them. It is still much less work than full resolution: a sixteenth of the pixels for masks at mip 4,
+  a quarter at mip 3; masks at mip 1 or 2 are rendered at full resolution.
+- <strong>How the masks were made matters a little:</strong> tools that build segmentation pyramids by majority
+  (webKnossos, Igneous/CloudVolume for Neuroglancer, this workbench) give each coarse pixel its block's
+  label. Tools that subsample, taking one pixel of each block (VAST's <em>Prepare .VSVI</em> when told to
+  subsample, neuroglancer-scripts' default for segmentations, ome-zarr-py for labels), shift a level-<em>k</em>
+  export by up to half a pixel of that level towards the block's top-left corner. That offset is in the
+  mask files themselves, and no alignment can undo it.</p>
+<h4 id="getting-aligned-masks-into-vast">Getting aligned masks into VAST</h4>
+<p>VAST keeps a segmentation layer in a single <code>.vss</code> file (<code>.vsseg</code> is the same format): voxel data in
+cubes with their own mip levels, plus the segment list. VAST reads tiled <code>.vsvi</code> stacks as image layers,
+so a VAST export of a mask stack shows the label values as grey levels, fine for viewing. To make a
+segmentation layer, export the stack as <strong>one image per section</strong> at its first level (or any coarser
+one) and load those files with VAST's <em>File → Import → Import Segmentation from Images</em>. Masks at a
+coarse level mean far fewer pixels to import.</p>
 <h3 id="export-viewers-tab">Export &amp; viewers tab</h3>
 <div class="table-wrap"><table>
 <thead>
@@ -2064,7 +2101,7 @@ files or the images. Masks are rendered on this PC from the local alignment, not
 </tr>
 <tr>
 <td><strong>what</strong></td>
-<td><em>VASTlite</em> (<code>.vsvi</code> + tile pyramid, hard-linked — instant and no extra disk space on the same drive), <em>OME-Zarr 0.4</em> (uncompressed chunks, for moderate volumes), <em>both</em>, or <em>one image per section</em> (whole sections at the chosen <strong>mip</strong>, PNG or TIFF, 8- or 16-bit like the stack).</td>
+<td><em>VASTlite</em> (<code>.vsvi</code> + tile pyramid, hard-linked — instant and no extra disk space on the same drive), <em>OME-Zarr 0.4</em> (uncompressed chunks, for moderate volumes), <em>both</em>, or <em>one image per section</em> (whole sections at the chosen <strong>mip</strong>, PNG or TIFF, 8- or 16-bit like the stack). A mask stack that starts at a coarse level (masks exported at a mip level) exports from that level: its level 0 in VAST and OME-Zarr is that mip of the images, and images per section are written at that mip or coarser.</td>
 </tr>
 <tr>
 <td><strong>zarr chunk</strong> (256)</td>

@@ -67,7 +67,8 @@ class ExportPage(Page):
         tl.addWidget(f)
         f, lay = card("Segmentation masks (labels)")
         r = QHBoxLayout()
-        self.s_dir = PathPicker("dir", "folder with one 8- or 16-bit greyscale label image (PNG or TIFF) per input image")
+        self.s_dir = PathPicker("dir", "folder with one 8- or 16-bit greyscale label image (PNG or TIFF) per input image, "
+                                       "at full resolution or exported at one mip level")
         self.s_match = combo([("by file name, else in order", "auto"), ("by file name", "name"),
                               ("in section order", "order")], "auto")
         r.addWidget(QLabel("masks")); r.addWidget(self.s_dir, 1); r.addWidget(QLabel("match")); r.addWidget(self.s_match)
@@ -86,9 +87,11 @@ class ExportPage(Page):
         lay.addWidget(hint("For masks drawn on an image stack: import the stack as one image per section, align it, then "
                            "render the masks here. They take exactly the images' path - placed like their image, moved by "
                            "the section's alignment onto the same canvas - sampled nearest-neighbour so labels are never "
-                           "mixed, with mipmaps that keep each 2x2 block's majority label. The result has the aligned PNG "
-                           "stack's layout: export it on the next tab (VAST tiles, OME-Zarr or one image per section) and "
-                           "check it over the images under View aligned sections."))
+                           "mixed, with mipmaps that keep each 2x2 block's majority label. Masks exported at a mip level "
+                           "(1/2, 1/4, 1/8 ... of their images' size) are recognised by their size; their aligned stack "
+                           "starts at that level, and coarse masks render faster. The result has the aligned PNG stack's layout: "
+                           "export it on the next tab (VAST tiles, OME-Zarr or one image per section) and check it over "
+                           "the images under View aligned sections."))
         b1.clicked.connect(self._render_masks); b2.clicked.connect(self._clear_masks)
         self.s_name.editingFinished.connect(self._refresh_masks)
         self.s_dir.changed.connect(lambda _t: self._refresh_masks())
@@ -271,8 +274,9 @@ class ExportPage(Page):
             if not st.rendered:
                 text = f"not rendered yet; they will go to {base}"
             else:
-                text = (f"{st.rendered} of {st.sections} sections rendered, {st.mipmapped} with mipmaps up to "
-                        f"mip {max(mip, top)}, in {base}")
+                start = f" from mip {st.first_mip} (no finer levels)" if st.first_mip > mip else ""
+                text = (f"{st.rendered} of {st.sections} sections rendered{start}, {st.mipmapped} with mipmaps up to "
+                        f"mip {max(st.first_mip, top)}, in {base}")
             if st.stale:
                 text += f" - stale: {st.stale}; Clear and render again"
             self.s_status.setText(text)
@@ -319,6 +323,16 @@ class ExportPage(Page):
             QMessageBox.warning(self, title, str(e))
             return
         base = seg.stack_dir(root, name, self.s_out.path())
+        first = seg.first_level(plan.mip, self._render_mip())
+        existing = seg.stack_start(base)
+        if seg.legacy_problem(base):
+            QMessageBox.information(self, title, f"The aligned masks '{name}' were {seg.legacy_problem(base)}. "
+                                    "Clear them first, then render them again.")
+            return
+        if existing is not None and existing != first:
+            QMessageBox.information(self, title, f"The aligned masks '{name}' start at mip {existing}; these would start "
+                                    f"at mip {first}. Clear them first, or give the new masks another name.")
+            return
         cpu, ram = run_budget(self.project)
         workers = max(1, min(len(plan.sections), cpu, int(ram // (1.5 if plan.bits == 8 else 2.0))))
         self.project.state.export["segmentation"] = {"masks_dir": str(folder), "match": self.s_match.currentData(),
@@ -326,8 +340,9 @@ class ExportPage(Page):
         self.project.save()
         for note in plan.notes:
             self.info(f"masks: {note}")
-        self.info(f"aligned masks: {plan.n_masks} {plan.bits}-bit mask file(s) for {len(sections)} sections, "
-                  f"{workers} at once -> {base}")
+        self.info(f"aligned masks: {plan.n_masks} {plan.bits}-bit mask file(s)"
+                  + (f" at mip {plan.mip}" if plan.mip else "")
+                  + f" for {len(sections)} sections, {workers} at once -> {base}, from mip {first}")
         payload = {"root": str(root), "out_dir": str(base), "plan": plan.to_dict(), "workers": workers,
                    "source": {"masks_dir": str(folder), "match": plan.mode}}
         self.submit(self.ctx.worker_spec("segmentation_render", payload, f"Aligned masks ({name})", python=python,
@@ -361,7 +376,10 @@ class ExportPage(Page):
             return
         masks = self.e_stack.currentData()
         base = Path(masks) if masks else self._aligned_base()
-        mip = self._render_mip()
+        mip = render_mip = self._render_mip()
+        if masks:                           # masks exported at a coarse mip start at that level
+            first = seg.stack_start(base)
+            mip = mip if first is None else first
         if masks and self.ctx.cluster_enabled:
             QMessageBox.information(self, "Export", "Aligned masks are exported on this PC: leave cluster mode first.")
             return
@@ -383,6 +401,15 @@ class ExportPage(Page):
                    # images keep exports/vast; each mask stack gets its own VAST folder next to it
                    "vast_dir": f"vast_{name}" if masks else "vast",
                    "slice_mip": max(mip, self.e_slice_mip.value()), "slice_format": self.e_slice_fmt.currentData()}
+        if masks and mip > render_mip:
+            if self.e_what.currentData() == "slices":
+                if self.e_slice_mip.value() < mip:
+                    self.info(f"{base.name} starts at mip {mip}: its images per section are written at mip {mip}")
+            else:
+                self.info(f"{base.name} starts at mip {mip}: level 0 of this export is mip {mip} of the images (voxel "
+                          f"size x{2 ** (mip - render_mip)}). For a VAST segmentation layer of the image volume, export "
+                          f"one image per section at mip {mip} and import those with VAST's 'Import Segmentation from "
+                          f"Images'.")
         import sys
         self.submit(self.ctx.worker_spec("export_vast", payload, f"Export ({self.e_what.currentData()})", python=sys.executable))
 
@@ -483,7 +510,9 @@ class ExportPage(Page):
 
 
 class _MaskOverlaySource:
-    """An aligned section with an aligned mask stack's labels laid over it in colour."""
+    """An aligned section with an aligned mask stack's labels laid over it in colour. Below the
+    level a mask stack starts at (masks exported at a coarse mip) its first level is enlarged, each
+    label pixel covering exactly the block of pixels it stands for."""
 
     def __init__(self, images, masks):
         self.images, self.masks = images, masks
@@ -492,7 +521,19 @@ class _MaskOverlaySource:
 
     def read(self, mip, x0, y0, w, h):
         from ...core.images import label_overlay
-        return label_overlay(self.images.read(mip, x0, y0, w, h), self.masks.read(mip, x0, y0, w, h))
+        return label_overlay(self.images.read(mip, x0, y0, w, h), self.labels(mip, x0, y0, w, h))
+
+    def labels(self, mip, x0, y0, w, h):
+        import numpy as np
+        have = [lv.mip for lv in self.masks.levels]
+        if not have or mip >= min(have):
+            return self.masks.read(mip, x0, y0, w, h)
+        first = min(have)
+        f = 2 ** (first - mip)
+        cx0, cy0 = x0 // f, y0 // f
+        coarse = self.masks.read(first, cx0, cy0, -(-(x0 + w) // f) - cx0, -(-(y0 + h) // f) - cy0)
+        big = np.repeat(np.repeat(coarse, f, axis=0), f, axis=1)
+        return big[y0 - cy0 * f:y0 - cy0 * f + h, x0 - cx0 * f:x0 - cx0 * f + w]
 
 
 class _PairSource:
