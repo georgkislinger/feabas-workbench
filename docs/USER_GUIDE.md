@@ -1035,8 +1035,9 @@ on the Render tab does that.
 2. **Align the stack as usual:** thumbnails, coarse and fine alignment. Render the image stack whenever
    you like; images and masks share the same canvas either way.
 3. **Point *masks* at a folder with one label image per input image.** They must be 8- or 16-bit
-   greyscale PNG or TIFF (not JPEG, not palette or RGB), with the same width and height as their image.
-   *match* pairs them with the images: **by file name** (same name, any of .png/.tif/.tiff) or **in
+   greyscale PNG or TIFF (not JPEG, not palette or RGB), with the same width and height as their image,
+   or exported at one mip level (see *Masks exported at a mip level* below). *match* pairs them with the
+   images: **by file name** (same name, any of .png/.tif/.tiff) or **in
    section order**, where the n-th mask in natural sort order (`seg_2` before `seg_10`) goes with the n-th
    section. The default tries names first and falls back to order, saying so in the log. A mask that
    doesn't fit stops the run before anything is rendered, with the reason.
@@ -1045,7 +1046,9 @@ on the Render tab does that.
 
 What happens to every mask is what happened to its image:
 - It is placed with the section's stitching transform, then moved by the section's alignment mesh onto
-  the canvas of the aligned stack (`align/tform/<section>.h5`, `align/tform/canvas.json`).
+  the canvas of the aligned stack (`align/tform/<section>.h5`, `align/tform/canvas.json`). For one image
+  per section (an image stack) the placement is a plain shift: the mask is copied in whole pixels and the
+  remaining fraction of a pixel goes into the alignment step, so each mask is resampled only once.
 - Sampling is **nearest-neighbour throughout**, so labels are never blended with their neighbours.
 - None of the images' intensity processing is applied: no CLAHE, no inversion, no brightness/contrast
   correction.
@@ -1067,6 +1070,44 @@ layout of the aligned PNG stack: the same tiles, file names and section folders 
 The status line counts rendered sections from the files. It says *stale* when the alignment or a mask
 file changed after the masks were rendered; **Clear…** removes only the aligned masks, never your mask
 files or the images. Masks are rendered on this PC from the local alignment, not in cluster mode.
+Stacks rendered by version 0.3.8 show as stale with the reason: it dropped every other row and column
+of the masks of an image stack. Clear them and render them again.
+
+#### Masks exported at a mip level
+
+Segmentations of large volumes are often exported at a lower resolution: at mip 1 a mask is half its
+image's width and height, at mip 3 an eighth, and so on (any level up to 12). The workbench recognises
+the level from the sizes, allowing the rounding up or down a mip export does (a 1001 × 999 px image
+gives 125 or 126 × 124 or 125 px at mip 3). All masks must be at the same level.
+- **Each mask pixel stands for the block of image pixels it covers** (8 × 8 at mip 3): the convention of
+  FEABAS's own mipmaps and of pyramids built by majority or average. The masks are carried through the
+  same transforms on that basis and land on the images' pixel grid.
+- **The aligned stack starts at the masks' level** (or at the images' render level, if that is
+  coarser); there are no finer levels, because the masks have no finer detail. The status line says
+  *from mip N*, the overlay under *View aligned sections* enlarges the masks when you zoom in further
+  (each label pixel covering exactly its block), and exports start at that level too.
+- **Rendering:** the masks are rendered two levels finer than they are, then reduced to their level by
+  majority, and the finer levels are discarded. Rendering right at the masks' level would move label
+  boundaries by up to half a mask pixel at every resampling, and by the same amount across a whole
+  section, so the sections would jitter against each other. Two levels finer, the boundaries stay
+  within about a quarter of a mask pixel of where rendering the same labels at full resolution puts
+  them. It is still much less work than full resolution: a sixteenth of the pixels for masks at mip 4,
+  a quarter at mip 3; masks at mip 1 or 2 are rendered at full resolution.
+- **How the masks were made matters a little:** tools that build segmentation pyramids by majority
+  (webKnossos, Igneous/CloudVolume for Neuroglancer, this workbench) give each coarse pixel its block's
+  label. Tools that subsample, taking one pixel of each block (VAST's *Prepare .VSVI* when told to
+  subsample, neuroglancer-scripts' default for segmentations, ome-zarr-py for labels), shift a level-*k*
+  export by up to half a pixel of that level towards the block's top-left corner. That offset is in the
+  mask files themselves, and no alignment can undo it.
+
+#### Getting aligned masks into VAST
+
+VAST keeps a segmentation layer in a single `.vss` file (`.vsseg` is the same format): voxel data in
+cubes with their own mip levels, plus the segment list. VAST reads tiled `.vsvi` stacks as image layers,
+so a VAST export of a mask stack shows the label values as grey levels, fine for viewing. To make a
+segmentation layer, export the stack as **one image per section** at its first level (or any coarser
+one) and load those files with VAST's *File → Import → Import Segmentation from Images*. Masks at a
+coarse level mean far fewer pixels to import.
 
 ### Export & viewers tab
 
@@ -1074,7 +1115,7 @@ files or the images. Masks are rendered on this PC from the local alignment, not
 |---|---|
 | **stack** | *aligned images*, or an aligned mask stack (see *Segmentation masks on an image stack*). |
 | **name** | Base name of the export. |
-| **what** | *VASTlite* (`.vsvi` + tile pyramid, hard-linked — instant and no extra disk space on the same drive), *OME-Zarr 0.4* (uncompressed chunks, for moderate volumes), *both*, or *one image per section* (whole sections at the chosen **mip**, PNG or TIFF, 8- or 16-bit like the stack). |
+| **what** | *VASTlite* (`.vsvi` + tile pyramid, hard-linked — instant and no extra disk space on the same drive), *OME-Zarr 0.4* (uncompressed chunks, for moderate volumes), *both*, or *one image per section* (whole sections at the chosen **mip**, PNG or TIFF, 8- or 16-bit like the stack). A mask stack that starts at a coarse level (masks exported at a mip level) exports from that level: its level 0 in VAST and OME-Zarr is that mip of the images, and images per section are written at that mip or coarser. |
 | **zarr chunk** (256) | Chunk size for the OME-Zarr output. |
 | **to** | Export folder; default `<project>/exports`. |
 | **Export** | Runs the export worker. Requires the PNG tile stack to exist. |

@@ -139,9 +139,10 @@ def run_standard_pipeline(root: Path, python: str = sys.executable, render: bool
 
 def render_masks(root: Path, masks_dir: Path, name: str, python: str = sys.executable,
                  log: Callable[[str], None] = print, mode: str = "auto", workers: int = 4,
-                 timeout: float | None = None) -> tuple[int, Path]:
+                 timeout: float | None = None, supersample: int | None = None) -> tuple[int, Path]:
     """Carry segmentation masks through the project's alignment the way the Export page does
-    (core.segmentation.plan_masks, workers/segmentation_render). Returns (exit code, output folder)."""
+    (core.segmentation.plan_masks, workers/segmentation_render). *supersample*: levels finer than
+    the masks to render at (default: the worker's). Returns (exit code, output folder)."""
     from .jobs import worker_env, write_spec_file
     from .project import Project, repair_working_directory
     from .segmentation import plan_masks, stack_dir
@@ -150,14 +151,17 @@ def render_masks(root: Path, masks_dir: Path, name: str, python: str = sys.execu
     repair_working_directory(root)
     plan = plan_masks(root, Project.load(root).section_names(), masks_dir, mode)
     out = stack_dir(root, name)
-    spec = write_spec_file(root / "logs" / "specs", "segmentation_render",
-                           {"root": str(root), "out_dir": str(out), "plan": plan.to_dict(), "workers": workers,
-                            "source": {"masks_dir": str(masks_dir), "match": plan.mode}})
+    payload = {"root": str(root), "out_dir": str(out), "plan": plan.to_dict(), "workers": workers,
+               "source": {"masks_dir": str(masks_dir), "match": plan.mode}}
+    if supersample is not None:
+        payload["supersample"] = int(supersample)
+    spec = write_spec_file(root / "logs" / "specs", "segmentation_render", payload)
     env = os.environ.copy()
     env.update(worker_env())
     env["PYTHONUNBUFFERED"] = "1"
-    log(f"== Aligned masks '{name}': {plan.n_masks} {plan.bits}-bit mask file(s), matched "
-        f"{'by name' if plan.mode == 'name' else 'in section order'}")
+    log(f"== Aligned masks '{name}': {plan.n_masks} {plan.bits}-bit mask file(s)"
+        + (f" at mip {plan.mip}" if plan.mip else "")
+        + f", matched {'by name' if plan.mode == 'name' else 'in section order'}")
     t0 = time.time()
     code = _stream([python, "-m", "feabas_workbench.workers.segmentation_render", "--spec", str(spec)], root, env, log,
                    timeout)
@@ -169,18 +173,25 @@ def mask_problems(images: Path, masks: Path, labels: set[int] | None = None, ima
                   max_shift: float = 1.0) -> list[str]:
     """
     What would make an aligned mask stack not match its aligned images: a different tile layout at
-    any mip level (file names apart from the extension, and bounding boxes), label values that are
-    not among *labels*, and - when the masks were made from the images' own files
-    (*images_as_masks*) - a shift of more than *max_shift* px between the two at full resolution.
+    any mip level from the one the masks start at (file names apart from the extension, and bounding
+    boxes), label values that are not among *labels*, and - when the masks were made from the
+    images' own files (*images_as_masks*) - a shift of more than *max_shift* px between the two at
+    the masks' first level.
     """
     import numpy as np
     from .images import TiledSectionSource
-    from .segmentation import read_tile_metadata
+    from .segmentation import read_tile_metadata, stack_first_mip
     images, masks = Path(images), Path(masks)
     problems = []
     levels = sorted(int(p.name[3:]) for p in images.glob("mip*") if p.name[3:].isdigit())
     if not levels:
         return [f"{images}: no rendered levels"]
+    first = stack_first_mip(masks)
+    if first is None:
+        return [f"{masks}: no aligned masks"]
+    levels = [m for m in levels if m >= first]
+    if not levels:
+        return [f"{masks}: starts at mip {first}, above every level of the images"]
     seen = set()
     for m in levels:
         for d in sorted(p for p in (images / f"mip{m}").iterdir() if p.is_dir()):
@@ -222,6 +233,67 @@ def mask_problems(images: Path, masks: Path, labels: set[int] | None = None, ima
     if labels is not None and not (seen - {0}):
         problems.append("no labels in the aligned masks")
     return problems
+
+
+def label_shift(a: Path, b: Path, mip: int) -> tuple[float, float]:
+    """
+    The sub-pixel shift (dx, dy) of label stack *b* against *a* at level *mip*, averaged over the
+    sections: phase correlation of the label images with every label mapped to a random grey value
+    (the same one in both).
+    """
+    import cv2
+    import numpy as np
+    from .images import TiledSectionSource
+    shifts = []
+    level_dir = Path(a) / f"mip{mip}"
+    for d in sorted(p for p in level_dir.iterdir() if p.is_dir()) if level_dir.is_dir() else []:
+        sa, sb = TiledSectionSource(Path(a), d.name), TiledSectionSource(Path(b), d.name)
+        la = next((lv for lv in sa.levels if lv.mip == mip), None)
+        lb = next((lv for lv in sb.levels if lv.mip == mip), None)
+        if la is None or lb is None:
+            continue
+        w, h = max(la.width, lb.width), max(la.height, lb.height)
+        x, y = sa.read(mip, 0, 0, w, h), sb.read(mip, 0, 0, w, h)
+        values, inverse = np.unique(np.concatenate([x.ravel(), y.ravel()]), return_inverse=True)
+        lut = np.random.default_rng(0).uniform(50, 250, len(values)).astype(np.float32)
+        lut[values == 0] = 0
+        grey = lut[inverse]
+        win = cv2.createHanningWindow((w, h), cv2.CV_32F)
+        (dx, dy), _ = cv2.phaseCorrelate(grey[:x.size].reshape(h, w), grey[x.size:].reshape(h, w), win)
+        shifts.append((dx, dy))
+    if not shifts:
+        return 0.0, 0.0
+    return float(np.mean([s[0] for s in shifts])), float(np.mean([s[1] for s in shifts]))
+
+
+def label_agreement(a: Path, b: Path, mip: int) -> tuple[float, tuple[int, int]]:
+    """
+    How well two aligned label stacks agree at level *mip*: the share of the pixels labelled in
+    either that carry the same label in both, and the whole-pixel shift (dx, dy) of *b* within
+    -1..1 that agrees best - (0, 0) when the two share their pixel grid.
+    """
+    import numpy as np
+    from .images import TiledSectionSource
+    same, total = np.zeros((3, 3)), 0
+    level_dir = Path(a) / f"mip{mip}"
+    for d in sorted(p for p in level_dir.iterdir() if p.is_dir()) if level_dir.is_dir() else []:
+        sa, sb = TiledSectionSource(Path(a), d.name), TiledSectionSource(Path(b), d.name)
+        la = next((lv for lv in sa.levels if lv.mip == mip), None)
+        lb = next((lv for lv in sb.levels if lv.mip == mip), None)
+        if la is None or lb is None:
+            continue
+        w, h = max(la.width, lb.width), max(la.height, lb.height)
+        x, y = sa.read(mip, 0, 0, w, h), sb.read(mip, 0, 0, w, h)
+        xa = x[1:h - 1, 1:w - 1]
+        labelled = (xa > 0) | (y[1:h - 1, 1:w - 1] > 0)
+        total += int(labelled.sum())
+        for i, dy in enumerate((-1, 0, 1)):
+            for j, dx in enumerate((-1, 0, 1)):
+                same[i, j] += int(((xa == y[1 + dy:h - 1 + dy, 1 + dx:w - 1 + dx]) & labelled).sum())
+    if not total:
+        return 0.0, (0, 0)
+    i, j = np.unravel_index(int(np.argmax(same)), same.shape)
+    return float(same[1, 1] / total), (int(j) - 1, int(i) - 1)
 
 
 def summary(runs: list[StepRun]) -> str:

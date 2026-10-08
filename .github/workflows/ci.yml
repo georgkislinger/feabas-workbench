@@ -97,14 +97,16 @@ jobs:
 
       # Stitch, thumbnails, coarse and fine alignment, PNG render and mipmaps on 4 synthetic
       # sections of 2x2 tiles - the whole pipeline the GUI drives, through the same vendored scripts -
-      # then segmentation masks carried through the alignment and checked against the images.
+      # then segmentation masks carried through the alignment and checked against the images, at full
+      # resolution and exported at mip 2.
       - name: Run the whole pipeline on a synthetic dataset
         run: python tools/run_demo_pipeline.py demo --render --masks --timeout 900
 
       # An image stack (one image per section) with matching segmentation masks: the masks follow
-      # the improved alignment pixel for pixel, 16-bit labels matched to the sections in order.
+      # the improved alignment pixel for pixel, 16-bit labels matched to the sections in order. The
+      # aligned images are rendered at mip 1 here, and the masks also go through exported at mip 3.
       - name: Align an image stack and carry its segmentation masks along
-        run: python tools/run_demo_pipeline.py stack --render --masks --rows 1 --cols 1 --tile 1024 --timeout 900
+        run: python tools/run_demo_pipeline.py stack --render --masks --rows 1 --cols 1 --tile 1024 --render-mip 1 --mask-mip 3 --timeout 900
 
       # The same steps once more, this time queued by the GUI's "Run the standard pipeline"
       # through the workbench's own job queue (offscreen), on a second fresh project.

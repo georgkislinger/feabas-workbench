@@ -3,6 +3,63 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.9] – 2026-10-07
+
+### Added – segmentation masks exported at a mip level
+- **Segmentation masks (labels)** now also takes masks exported at a lower resolution, for example a
+  large volume's segmentation saved at mip 3 (an eighth of the width and height). The level is read
+  from the sizes (any level up to 12, rounded up or down as mip exports are), and all masks must be at
+  one level. Each mask pixel stands for the block of image pixels it covers, the convention of FEABAS's
+  mipmaps and of majority or average pyramids.
+  - **Output:** the aligned stack starts at the masks' level, or at the images' render level if that is
+    coarser, with no finer levels. The status line says *from mip N*, the overlay enlarges the masks
+    when you zoom in, and exports start at that level (VAST and OME-Zarr level 0, images per section at
+    that mip or coarser).
+  - **Rendering:** two levels finer than the masks, then reduced by majority to their level. Rendering
+    right at the masks' level moved label boundaries by up to half a mask pixel per resampling, by the
+    same amount across a section, so the sections jittered against each other (up to 0.9 px at mip 2 in
+    the test project). Masks at mip 3 are rendered from a quarter of the full-resolution pixels, at mip 4
+    from a sixteenth.
+  - **Safety:** masks are never mixed into a stack that starts at another level (Clear first). A render
+    interrupted at another level is redone, not reused.
+- User guide: *Masks exported at a mip level*, and *Getting aligned masks into VAST*. VAST keeps a
+  segmentation layer in a single `.vss`/`.vsseg` file, so export one image per section and use VAST's
+  *Import Segmentation from Images*.
+
+### Fixed
+- Aligned masks of an image stack (one image per section) lost every other row and column of the masks.
+  FEABAS places a single image 1.5 px into its montage, so every nearest-neighbour sample fell exactly
+  between two mask pixels, and OpenCV rounds halves to even: rows and columns 0, 2, 2, 4, 4, …, so a
+  1-px-wide label could vanish. Such a mask is now copied into the montage in whole pixels, and the
+  remaining fraction of a pixel goes into the alignment step, so each mask is resampled once, from the
+  exact mapping. Other samples are nudged by 1/64 px so exact halves all round the same way.
+- Aligned masks in a project whose aligned images are rendered at mip > 0 (`rendering.mip_level`) came
+  out at full resolution, filed under the images' level with that level's resolution. FEABAS's
+  `render_whole_mesh` renders at its loader's resolution, which was the full-resolution montage. They
+  now start at the images' level: rendered at full resolution, reduced by majority, finer level dropped.
+- Mask stacks rendered by 0.3.8 are marked stale with the reason. Clear them and render them again;
+  Render refuses to resume them.
+
+### Packaging
+- Public version 0.3.9 for the Windows executable, wheel, source archive and PyPI package.
+
+### Validation
+- Coordinate-coded masks (each pixel holding its column or row number) show what the montage step does:
+  0.3.8 mapped columns 0, 2, 2, 4, 4, … of an image stack; now every column and row is used exactly
+  once, and masks at mip 3 come out as exact 8 × 8 (mip 0) or 4 × 4 (mip 1) blocks, on the same pixel
+  grid as the full-resolution masks.
+- Against FEABAS's own aligned images of an image stack rendered at mip 1, masks made from the images
+  land within 0.14 px (full-resolution masks) and 0.22 px (masks at mip 1), on average 0.06 and 0.09 px.
+- `tools/run_demo_pipeline.py --masks` also carries the input images and 16-bit labels exported at
+  `--mask-mip`; both stacks must start at the right level with the images' tile layout. The labels,
+  rendered at full resolution, must reproduce the full-resolution labels' own mipmap (≥ 99.9 %
+  identical, no shift); rendered as by default, within half a pixel of their level. Grey images are no
+  measure of position at coarse levels: the labels' majority mipmaps move a grey image by themselves
+  (~0.25 px at mip 3 against averaging, ties going to the darker value). `--render-mip` renders the
+  aligned images at a coarser level. CI runs the 2×2-tile demo with masks at mip 2 (identical either
+  way) and an image stack rendered at mip 1 with masks at mip 3 (identical at full resolution; by
+  default 93–95 % of labelled pixels agree, shift up to 0.25 px at mip 3).
+
 ## [0.3.8] – 2026-10-05
 
 ### Added – segmentation masks follow the alignment
