@@ -127,8 +127,10 @@ def check_masks(root: Path, python: str, timeout: float, mask_mip: int = 2) -> l
     problems, out = [], {}
     cases = (("images_as_masks", "images", 0, dict(images_as_masks=True)),
              ("labels16", "labels", 0, dict(labels=ids)),
-             # grey images pass through majority mipmaps here, which is no precise measure: a sanity check
-             (f"images_as_masks_mip{mask_mip}", "images_mip", mask_mip, dict(images_as_masks=True)),
+             # layout and level only: these grey images reach their level through the labels' majority
+             # mipmaps, which move a grey image by itself (~0.25 px at mip 3 against averaging, ties going to
+             # the darker value), so no shift is measured on them; the labels below check the geometry
+             (f"images_as_masks_mip{mask_mip}", "images_mip", mask_mip, {}),
              (f"labels16_mip{mask_mip}", "labels_mip", mask_mip, dict(labels=ids)))
     for name, key, level, kw in cases:
         code, out[key] = render_masks(root, folders[key], name, python, timeout=timeout)
@@ -143,7 +145,9 @@ def check_masks(root: Path, python: str, timeout: float, mask_mip: int = 2) -> l
         if got != want:
             problems.append(f"aligned masks '{name}': start at mip {got}, not at mip {want}")
     level = first_level(mask_mip, render_mip)
-    if not problems:
+    exact = agree = dx = dy = None
+    if "labels" in out and all(stack_first_mip(out.get(key, root / "missing")) == level
+                               for key in ("labels_mip", "labels_mip_full")):
         # the labels exported at mip k, rendered at full resolution, must give exactly what the
         # full-resolution labels give (they hold the same blocks): every coordinate convention agrees
         exact, _ = label_agreement(out["labels"], out["labels_mip_full"], level)
@@ -151,10 +155,14 @@ def check_masks(root: Path, python: str, timeout: float, mask_mip: int = 2) -> l
         if exact < 0.999 or max(abs(ex), abs(ey)) > 0.02:
             problems.append(f"16-bit labels exported at mip {mask_mip} and rendered at full resolution differ from the "
                             f"full-resolution ones at mip {level}: {exact:.2%} agree, shift ({ex:+.3f}, {ey:+.3f}) px")
-        # rendered as by default (two levels finer than the masks): within rounding at that level
+        # rendered as by default (two levels finer than the masks): within the rounding at that level,
+        # which the majority mipmaps can carry up to half a pixel of the masks' level
         agree, best = label_agreement(out["labels"], out["labels_mip"], level)
         dx, dy = label_shift(out["labels"], out["labels_mip"], level)
-        if best != (0, 0) or agree < 0.85 or max(abs(dx), abs(dy)) > 0.35:
+        print(f"labels exported at mip {mask_mip}, at mip {level}: rendered at full resolution {exact:.2%} identical to "
+              f"the full-resolution labels (shift {ex:+.3f}, {ey:+.3f} px); as by default {agree:.1%} agree, "
+              f"shift {dx:+.2f}, {dy:+.2f} px")
+        if best != (0, 0) or agree < 0.85 or max(abs(dx), abs(dy)) > 0.5:
             problems.append(f"16-bit labels exported at mip {mask_mip} against the full-resolution ones at mip {level}: "
                             f"{agree:.1%} of the labelled pixels agree, best at a shift of {best}, sub-pixel shift "
                             f"({dx:+.2f}, {dy:+.2f}) px")

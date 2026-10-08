@@ -45,7 +45,8 @@
   which dropped every other mask row/column of an image stack in 0.3.8 (`legacy_problem` flags such stacks); a
   single-image section's montage is an exact whole-pixel copy and the fraction goes to the align mesh
   (`_exact_montage`). `run_demo_pipeline --masks` checks that mip-k labels rendered at full resolution reproduce the
-  full-resolution labels exactly, and the default rendering within 0.35 px at the masks' level.
+  full-resolution labels exactly, and the default rendering within half a pixel at the masks' level (grey images are
+  only checked for layout at coarse levels: the labels' majority mipmaps move a grey image by ~0.25 px themselves).
 - Three interpreters: the GUI's own, a FEABAS env (feabas 3.0.5 + tensorstore; numpy 2.x works) and a deep-learning env
   (torch, careamics 0.3.2 which pins torch < 2.10, ultralytics, segmentation-models-pytorch). Paths live in
   `%APPDATA%/FeabasWorkbench/settings.json`; projects may override them.

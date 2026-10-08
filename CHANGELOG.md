@@ -51,12 +51,14 @@ versions follow [Semantic Versioning](https://semver.org/).
 - Against FEABAS's own aligned images of an image stack rendered at mip 1, masks made from the images
   land within 0.14 px (full-resolution masks) and 0.22 px (masks at mip 1), on average 0.06 and 0.09 px.
 - `tools/run_demo_pipeline.py --masks` also carries the input images and 16-bit labels exported at
-  `--mask-mip`. The resulting stack must start at the right level and line up with the images there.
-  The labels, rendered at full resolution, must reproduce the full-resolution labels' own mipmap
-  (≥ 99.9 % identical, no shift); rendered as by default, within 0.35 px. `--render-mip` renders the
+  `--mask-mip`; both stacks must start at the right level with the images' tile layout. The labels,
+  rendered at full resolution, must reproduce the full-resolution labels' own mipmap (≥ 99.9 %
+  identical, no shift); rendered as by default, within half a pixel of their level. Grey images are no
+  measure of position at coarse levels: the labels' majority mipmaps move a grey image by themselves
+  (~0.25 px at mip 3 against averaging, ties going to the darker value). `--render-mip` renders the
   aligned images at a coarser level. CI runs the 2×2-tile demo with masks at mip 2 (identical either
   way) and an image stack rendered at mip 1 with masks at mip 3 (identical at full resolution; by
-  default 93 % of labelled pixels agree, shift 0.24 px at mip 3).
+  default 93–95 % of labelled pixels agree, shift up to 0.25 px at mip 3).
 
 ## [0.3.8] – 2026-10-05
 
