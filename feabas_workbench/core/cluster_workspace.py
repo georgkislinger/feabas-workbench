@@ -326,7 +326,7 @@ def sync_scope(profile):
 
 def remote_scan(project, configs, snapshot):
     from .cluster_remote import scientific_config
-    from .steps import downstream
+    from .steps import downstream, steps_decided_by
     scan = PipelineScan(project.root, len(project.section_names()), configs)
     for key, st in scan.status.items():
         row = snapshot.get("steps", {}).get(key)
@@ -339,14 +339,18 @@ def remote_scan(project, configs, snapshot):
             st.done = st.errors = 0
             st.state = State.EMPTY
             st.reasons = ["Remote state has not been checked yet."]
-    for kind, key in (("stitching", "stitch.matching"), ("thumbnail", "thumbnail.downsample"),
-                      ("alignment", "align.meshing"), ("material", "masks")):
+    for kind in ("stitching", "thumbnail", "alignment", "material"):
         previous = snapshot.get("configurations", {}).get(kind)
-        if previous is not None and scientific_config(previous) != scientific_config(configs[kind].merged):
+        if previous is None or scientific_config(previous) == scientific_config(configs[kind].merged):
+            continue
+        # what the next request archives at LRZ: the steps the changed settings decide, and all after them
+        firsts = ["masks"] if kind == "material" else steps_decided_by(kind, previous, configs[kind].merged)
+        for key in firsts:
             for step in [STEPS_BY_KEY[key], *downstream(key)]:
-                if scan.status[step.key].done:
-                    scan.status[step.key].state = State.STALE
-                    scan.status[step.key].reasons.append("Local settings changed since the cluster run.")
+                status = scan.status[step.key]
+                if status.done and status.state is not State.STALE:
+                    status.state = State.STALE
+                    status.reasons.append("Local settings changed since the cluster run.")
     return scan
 
 

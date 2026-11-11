@@ -18,7 +18,7 @@ from .configs import ConfigStore, CONFIG_FILES, RESOURCE_KEYS, dump_yaml, load_y
 from .local_parallel import input_sections
 from .project import VENDOR_DIR
 from .steps import (STEPS_BY_KEY, PipelineScan, cleared_keys, clear_targets, count_outputs, expected_outputs, finish_clear,
-                    step_argv, write_fine_match_list, create_snapshot)
+                    step_argv, steps_decided_by, write_fine_match_list, create_snapshot)
 
 
 def archive_outputs(root, keys, run_id):
@@ -39,16 +39,27 @@ def archive_outputs(root, keys, run_id):
     return [str(p.relative_to(root)) for p in moved]
 
 
-def changed_steps(old, new):
+# the config files of a request, and the first step of each for when the two versions cannot be compared
+CONFIG_STEPS = {"configs/stitching_configs.yaml": ("stitching", "stitch.matching"),
+                "configs/thumbnail_configs.yaml": ("thumbnail", "thumbnail.downsample"),
+                "configs/alignment_configs.yaml": ("alignment", "align.meshing")}
+
+
+def changed_steps(old, new, versions=None):
+    """The steps to archive (with everything after them) when the inputs change from *old* to *new*
+    ({file: hash}). A changed config file counts for the steps its changed settings decide - a new
+    render setting does not undo the matching - given *versions*(file) -> (old config, new config)."""
     changed = {k for k in old.keys() | new.keys() if old.get(k) != new.get(k)}
     keys = set()
     for rel in changed:
-        if rel.startswith("stitch/stitch_coord/") or rel == "configs/stitching_configs.yaml":
+        if rel.startswith("stitch/stitch_coord/"):
             keys.add("stitch.matching")
-        elif rel in {"configs/thumbnail_configs.yaml", "section_order.txt"}:
-            keys.add("thumbnail.downsample")
-        elif rel == "configs/alignment_configs.yaml":
-            keys.add("align.meshing")
+        elif rel in CONFIG_STEPS:
+            kind, first = CONFIG_STEPS[rel]
+            pair = versions(rel) if versions else None
+            keys.update(steps_decided_by(kind, *pair) if pair else [first])
+        elif rel == "section_order.txt":
+            keys.add("thumbnail.matching")       # the order decides the pairs; thumbnails and mipmaps stay
         elif "material" in rel or rel.startswith("masks/"):
             keys.add("thumbnail.matching"); keys.add("align.meshing")
         elif rel.startswith("thumbnail_align/manual_matches/"):
@@ -154,7 +165,12 @@ def install_workspace_inputs(bundle, root, manifest):
                     comparison[rel] = digest
                 elif rel.startswith("configs/") and scientific_config(load_yaml(existing)) == scientific_config(load_yaml(bundle / "inputs" / rel)):
                     comparison[rel] = digest
-        keys = changed_steps(comparison, hashes)
+        def versions(rel):
+            before, after = root / rel, bundle / "inputs" / rel
+            if before.is_file() and after.is_file() and not before.is_symlink():
+                return load_yaml(before), load_yaml(after)
+            return None
+        keys = changed_steps(comparison, hashes, versions)
         a = load_yaml(root / "configs/general_configs.yaml")
         b = load_yaml(bundle / "inputs/configs/general_configs.yaml")
         if any(a.get(k) != b.get(k) for k in ("full_resolution", "section_thickness")):

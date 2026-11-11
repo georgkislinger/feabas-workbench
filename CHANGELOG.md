@@ -50,6 +50,13 @@ versions follow [Semantic Versioning](https://semver.org/).
     are newer or missing, and **Cluster settings → Advanced → Copy this PC's masks into the cluster copy…**
     carries them over on request.
   - Whatever the copy loses is kept in `.workbench-cluster/replaced/<time>`.
+- **Cluster mode: one changed setting archived far more than it affects.** Any change in a settings file
+  moved everything from that file's first step on into the archive at LRZ: another resampling method for
+  the aligned stack, or fewer mipmap levels, also archived the meshes, the fine matches and the optimization
+  (and the next *Render* failed with "needs Optimize stack"); another tile size for the rendered montages
+  archived the tile matching too. A request now archives the steps its changed settings decide, and what
+  comes after them - the rule a local project uses for stale steps. The cluster view marks the same steps
+  stale. A new section order starts again from coarse matching, not from the thumbnails.
 
 ### Validation
 - Reproduced on Linux with Python 3.11.18: 6.12.0 loses exactly one reference per emission, 6.11.2 and 6.11.3

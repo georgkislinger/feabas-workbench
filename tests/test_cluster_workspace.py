@@ -565,3 +565,67 @@ def test_masks_of_the_pc_are_reported_and_copied_only_on_request(project):
     kept = list((project.root / ".workbench-cluster/replaced").rglob("s0001.png"))
     assert len(kept) == 1 and kept[0].read_bytes() == b"made at LRZ"
 
+
+def test_a_changed_setting_names_the_steps_it_decides(project):
+    from feabas_workbench.core.steps import steps_decided_by
+    cfg = ConfigStore(project.configs_dir)
+    def after(kind, key, value):
+        old = copy.deepcopy(cfg[kind].merged)
+        new = copy.deepcopy(old)
+        node = new
+        *parents, leaf = key.split(".")
+        for part in parents:
+            node = node.setdefault(part, {})
+        node[leaf] = value
+        return steps_decided_by(kind, old, new)
+    assert after("alignment", "rendering.remap_interp", "CUBIC") == ["align.rendering"]
+    assert after("alignment", "downsample.max_mip", 3) == ["align.downsample"]
+    assert after("alignment", "matching.working_mip_level", 5) == ["align.matching"]
+    assert after("alignment", "rendering.num_workers", 3) == []                  # how it runs, not what it gives
+    assert after("stitching", "rendering.tile_size", [2048, 2048]) == ["stitch.rendering"]
+    assert after("stitching", "optimization.use_group", False) == ["stitch.optimization"]
+    assert after("thumbnail", "thumbnail_mip_level", 5) == ["thumbnail.downsample"]
+    assert after("thumbnail", "alignment.optimization.stiffness", 0.5) == ["thumbnail.optimization"]
+    assert after("thumbnail", "alignment.match_mode", "template") == ["thumbnail.matching"]
+
+
+def test_a_render_setting_does_not_undo_the_alignment_at_lrz(project, profile, tmp_path):
+    """Any change in a settings file used to archive everything from that file's first step on: a new
+    resampling method for the aligned stack moved meshes, fine matches and the optimization away, and the
+    next Render failed with 'needs Optimize stack'."""
+    view = view_project(project)
+    command = [dict(kind="step", step="align.rendering")]
+    bundle = build_workspace_bundle(view, project, profile, command, tmp_path / "bundles")
+    root = tmp_path / "remote"
+    write_json(root / ".workbench-cluster/owner.json", dict(project_id=profile["project_id"]))
+    install_workspace_inputs(bundle, root, read_json(bundle / "manifest.json"))
+    results = ["stitch/match_h5/s0001.h5", "stitch/tform/s0001.h5", "stitched_sections/mip0/s0001/metadata.txt",
+               "thumbnail_align/thumbnails/s0001.png", "thumbnail_align/matches/s0001__to__s0002.h5",
+               "align/mesh/s0001.h5", "align/matches/s0001__to__s0002.h5", "align/tform/s0001.h5",
+               "aligned_stack/mip0/0001_s0001/metadata.txt"]
+    for rel in results:
+        (root / rel).parent.mkdir(parents=True, exist_ok=True); (root / rel).write_bytes(b"result")
+    def request_after(kind, key, value):
+        config = ConfigStore(view.configs_dir)
+        config.set(kind, key, value); config.save()
+        new = build_workspace_bundle(view, project, profile, command, tmp_path / "bundles")
+        install_workspace_inputs(new, root, read_json(new / "manifest.json"))
+        return [rel for rel in results if not (root / rel).exists()]
+    assert request_after("alignment", "rendering.num_workers", 3) == []
+    assert request_after("alignment", "rendering.remap_interp", "CUBIC") == ["aligned_stack/mip0/0001_s0001/metadata.txt"]
+    assert remote_scan(view, ConfigStore(view.configs_dir), dict(steps={}, configurations={})).status   # still scans
+    gone = request_after("stitching", "rendering.tile_size", [2048, 2048])
+    assert "stitch/match_h5/s0001.h5" not in gone and "stitch/tform/s0001.h5" not in gone      # matching and montage stay
+    assert "stitched_sections/mip0/s0001/metadata.txt" in gone and "align/tform/s0001.h5" in gone
+
+
+def test_cluster_view_marks_only_the_steps_a_changed_setting_decides(project):
+    cfg = ConfigStore(project.configs_dir)
+    done = dict(state="done", done=3, expected=3)
+    snapshot = dict(steps={k: dict(done) for k in ("align.meshing", "align.matching", "align.optimization", "align.rendering")},
+                    configurations={"alignment": copy.deepcopy(cfg["alignment"].merged)})
+    cfg.set("alignment", "rendering.remap_interp", "CUBIC")
+    scan = remote_scan(project, cfg, snapshot)
+    assert scan["align.rendering"].state == State.STALE
+    assert all(scan[k].state == State.COMPLETE for k in ("align.meshing", "align.matching", "align.optimization"))
+
