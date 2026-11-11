@@ -14,7 +14,8 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
 
 from ..core.cluster_bundle import MAX_BUNDLE_BYTES, file_hash
-from ..core.cluster_transport import ClusterClient, ConnectionSettings, Interrupted, SignInCancelled
+from ..core.cluster_transport import (ClusterClient, ConnectionSettings, Interrupted, SignInCancelled,
+                                      SubmissionRejected, SubmissionUncertain, job_name)
 from ..core.cluster_workspace import (CONTROL, TERMINAL, build_workspace_bundle, local_globus_path,
                                      read_json, resources_for, save_profile, source_signature, sync_scope, write_json)
 from ..core.envs import settings_dir
@@ -449,6 +450,7 @@ class ClusterBackend(QObject):
                              started=time.time(), commands=[s.remote for s in specs], last_scheduler_check=0,
                              notified=False, preview_stamp=0, input_plan=manifest.get("external_inputs", {}))
                 entry["remote_commands"] = manifest["commands"]
+                entry["job_name"] = job_name(bundle.name)
                 self.journal.append(entry)
                 self._specs[bundle.name] = specs
                 self.persist()
@@ -463,8 +465,19 @@ class ClusterBackend(QObject):
                 self._stage_or_submit(entry)
                 return entry
             def started(entry):
+                if entry["state"] == "FAILED":       # Slurm refused it: nothing runs, nothing to wait for
+                    message = entry["result"]["error"]
+                    self._finish(entry)
+                    self.status("Not submitted: " + message.splitlines()[0])
+                    self.ctx.log(message, "error")
+                    QMessageBox.warning(self.ctx.parent(), "Slurm did not accept the job", message[:3000])
+                    return
                 self.ctx.jobs.job_started.emit(specs[0])
                 self.ctx.jobs.running_changed.emit(True)
+                if entry["state"] == "SUBMITTING":
+                    self.ctx.log(entry.get("submit_error", ""), "warn")
+                    self.status("Submission not confirmed · looking for the job at LRZ with the next refresh")
+                    return
                 self.status(f"Queued at LRZ · job {entry['job_id']} · {p['partition']}" if entry["job_id"] else
                             "Uploading large masks / model inputs before submission")
             self._work("Uploading settings and submitting job…", start, started)
@@ -491,10 +504,62 @@ class ClusterBackend(QObject):
             entry["state"] = "FAILED"
             entry["result"] = dict(error="An input transfer failed. The computation was not submitted.", results=[])
         elif all(t["state"] == "SUCCEEDED" for t in assets):
-            entry["state"] = "SUBMITTING"
+            entry.update(state="SUBMITTING", submit_attempted=time.time())
             self.persist()
-            entry.update(asdict(self.client.submit(entry["remote_bundle"], entry["cluster"])), state="PENDING")
+            try:
+                entry.update(asdict(self.client.submit(entry["remote_bundle"], entry["cluster"])), state="PENDING")
+            except SubmissionRejected as e:
+                self._rejected(entry, str(e))
+            except SubmissionUncertain as e:
+                # stays SUBMITTING: refresh() finds the job (or that there is none) by its name
+                entry["submit_error"] = str(e)
         self.persist()
+
+    @staticmethod
+    def _rejected(entry, message):
+        entry.update(state="FAILED", result=dict(results=[], error=(
+            "Slurm did not accept this job, so nothing is running at LRZ:\n" + message.strip() + "\n\nCheck the "
+            "partition, cores, memory and hours under Cluster settings → 3 Computing power (and that your account "
+            "may use that partition), then run the step again.")))
+
+    def _recover(self, entry, notices):
+        """A request that was sent without a confirmed job id: find its job, or settle that there is none."""
+        try:
+            record = self.client.recover(entry["remote_bundle"], entry["cluster"], entry.get("job_name", ""))
+        except SubmissionRejected as e:
+            self._rejected(entry, str(e))
+            notices.append("Slurm did not accept the job")
+            return False
+        if record is None:
+            # a job that was accepted is in the queue or the accounting at once; allow for a slow answer
+            if time.time() - entry.get("submit_attempted", entry.get("started", 0)) > 120:
+                entry.update(state="FAILED", result=dict(results=[], error=(
+                    "This request never became a job: Slurm has none with its name in the queue or the accounting, "
+                    "and it left no receipt or log at LRZ. Nothing is running. Run the step again.")))
+                notices.append("The job was not submitted")
+            else:
+                notices.append("Submission not confirmed yet · looking for the job at LRZ")
+            return False
+        entry.update(asdict(record), state="PENDING")
+        return True
+
+    def forget(self, run_id):
+        """Stop waiting for one job on this PC (a way out when its state can no longer be settled).
+        Nothing is cancelled at LRZ: a job that exists there keeps running."""
+        if self.busy:
+            self.status("Wait for the current connection operation to finish.")
+            return False
+        entry = next((j for j in self.journal if j.get("run_id") == run_id and j.get("state") not in TERMINAL), None)
+        if entry is None:
+            return False
+        known = f"Job {entry['job_id']} keeps running at LRZ if it still exists; cancel it there if needed." \
+            if entry.get("job_id") else "No job id was ever confirmed for it."
+        entry.update(state="CANCELLED", result=dict(results=[], error="Workbench stopped waiting for this job. " + known))
+        self.persist()
+        self._finish(entry)
+        self.status("Stopped waiting for that job")
+        self.ctx.state_changed.emit()
+        return True
 
     def refresh(self):
         # Monitoring writes into the cluster view and reports through the shared job signals,
@@ -540,15 +605,16 @@ class ClusterBackend(QObject):
                     continue
                 if entry["state"] in {"READY", "STAGING"}:
                     self._stage_or_submit(entry)
-                    if not entry["job_id"]:
-                        notices.append("Waiting for verified input transfers")
+                    if not entry["job_id"]:      # still staging, refused by Slurm, or sent without a confirmation
+                        if entry["state"] in {"READY", "STAGING"}:
+                            notices.append("Waiting for verified input transfers")
                         continue
                 if entry["state"] == "UPLOADING":
                     entry["state"] = "FAILED"
                     entry["result"] = dict(error="Workbench closed during package upload. No job was submitted. Run the step again.", results=[])
                     continue
-                if not entry["job_id"]:
-                    entry.update(asdict(self.client.recover(entry["remote_bundle"], entry["cluster"])), state="PENDING")
+                if not entry["job_id"] and not self._recover(entry, notices):
+                    continue
                 state = self.client.read_remote_json(entry["remote_bundle"] + "/status.json", {})
                 if state and (state.get("run_id") != entry["run_id"] or state.get("project_id") != self.profile["project_id"]):
                     raise RuntimeError("Remote status belongs to a different project or job.")

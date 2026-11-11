@@ -18,6 +18,21 @@ versions follow [Semantic Versioning](https://semver.org/).
     `python -m pip install "PySide6<6.12"`).
   - `--selfcheck` reports the PySide6 version and fails on a binding that loses references.
 
+- **Cluster mode: a job that Slurm refused locked the project.** When `sbatch` said no (wrong QOS, too much
+  memory, no access to the partition), the request stayed "submitting" for good: Refresh failed each time,
+  Cancel did nothing, every Run button answered "Wait for the current cluster job" and the cluster settings
+  that could correct the request could not be saved. The message named a "Recover job ID" button that never
+  existed.
+  - A refusal is now what it is: the step fails at once with Slurm's own message, nothing is waited for, and
+    the settings can be changed.
+  - A submission whose outcome is unknown (connection lost, `sbatch` timed out) is settled by Workbench
+    itself at the next refresh. Each request's job has its own name (`feabas-<8 characters>`), so it is
+    found by its receipt, its log file, the queue or the accounting; if Slurm knows no such job after two
+    minutes, the request failed and can be run again. No second job is ever submitted for one request.
+  - **Cluster settings → Advanced → Stop waiting for a job…** is a way out for a job whose state can no
+    longer be settled. Nothing is cancelled at LRZ.
+  - Cancelling a job that has already ended is no longer an error.
+
 ### Validation
 - Reproduced on Linux with Python 3.11.18: 6.12.0 loses exactly one reference per emission, 6.11.2 and 6.11.3
   none; the real main window aborted in `core/jobs.py` after 3,700 lines of a 5,000-line job, and runs 6,000

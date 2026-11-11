@@ -13,7 +13,8 @@ import yaml
 
 from feabas_workbench.core.cluster_bundle import ClusterResources, export_bundle, remote_path
 from feabas_workbench.core.cluster_runner import install_inputs
-from feabas_workbench.core.cluster_transport import ClusterClient, ClusterError, ConnectionSettings, SubmissionUncertain
+from feabas_workbench.core.cluster_transport import (ClusterClient, ClusterError, ConnectionSettings, RemoteCommandError,
+                                                     SubmissionRejected, SubmissionUncertain, job_name)
 from feabas_workbench.core.jobs import JobQueue, JobSpec
 from feabas_workbench.core.synthetic import make_demo_project
 
@@ -146,9 +147,90 @@ def test_submit_is_not_retried_after_disconnect(tmp_path, monkeypatch):
     monkeypatch.setattr(c, "execute", broken)
     with pytest.raises(SubmissionUncertain): c.submit("/dss/run", "cm4")
     assert len(commands) == 1 and "mkdir .submission-lock" in commands[0]
-    monkeypatch.setattr(c, "execute", lambda _: "765;cm4")
+    monkeypatch.setattr(c, "execute", lambda _: "id 765;cm4")
     record = c.recover("/dss/run", "cm4")
     assert record.job_id == "765" and record.log_path.endswith("slurm-765.out")
+
+
+@pytest.fixture
+def login_node(tmp_path, monkeypatch):
+    """The client's own shell commands, run in a local bash against stand-ins for module, sbatch, squeue and
+    sacct (each prints the file of its name and exits with the code in <name>.code)."""
+    import os
+    import subprocess
+    if os.name == "nt":
+        pytest.skip("needs bash")
+    tools = tmp_path / "bin"; tools.mkdir()
+    for name in ("module", "sbatch", "squeue", "sacct"):
+        script = tools / name
+        script.write_text(f"#!/bin/bash\necho run >> {tools}/{name}.calls\ncat {tools}/{name}.err >&2 2>/dev/null\n"
+                          f"cat {tools}/{name}.out 2>/dev/null\nexit $(cat {tools}/{name}.code 2>/dev/null || echo 0)\n")
+        script.chmod(0o755)
+    run = tmp_path / "work" / ".workbench-cluster" / "0123456789abcdef0123456789abcdef"; run.mkdir(parents=True)
+    (run / "READY").write_text("complete\n"); (run / "job.sh").write_text("#!/bin/bash\n")
+    c = client(tmp_path)
+    def execute(command, timeout=90, on_output=None):
+        r = subprocess.run(["bash", "-c", command], capture_output=True, text=True,
+                           env=dict(os.environ, PATH=f"{tools}{os.pathsep}{os.environ['PATH']}", USER="tester"))
+        if r.returncode:
+            raise RemoteCommandError(r.returncode, r.stderr, r.stdout.strip())
+        return r.stdout.strip()
+    monkeypatch.setattr(c, "execute", execute)
+    def answer(tool, out="", err="", code=0):
+        (tools / f"{tool}.out").write_text(out); (tools / f"{tool}.err").write_text(err)
+        (tools / f"{tool}.code").write_text(str(code))
+    calls = lambda tool: len((tools / f"{tool}.calls").read_text().split()) if (tools / f"{tool}.calls").exists() else 0
+    return c, run, answer, calls
+
+
+def test_accepted_job_leaves_a_receipt_and_is_never_submitted_twice(login_node):
+    c, run, answer, calls = login_node
+    answer("sbatch", "4242;cm4\n")
+    assert c.submit(str(run), "cm4").job_id == "4242" and (run / "job-id").read_text().strip() == "4242;cm4"
+    assert c.submit(str(run), "cm4").job_id == "4242" and calls("sbatch") == 1
+
+
+def test_a_job_slurm_refuses_is_a_rejection_not_an_unknown_outcome(login_node):
+    """sbatch said no (wrong QOS, too much memory, no access to the partition): nothing is queued and
+    nothing has to be recovered. Before, this left the request 'submitting' for good."""
+    c, run, answer, calls = login_node
+    answer("sbatch", err="sbatch: error: Batch job submission failed: Invalid qos specification\n", code=1)
+    with pytest.raises(SubmissionRejected, match="Invalid qos specification"):
+        c.submit(str(run), "cm4")
+    assert (run / "sbatch-failed").is_file() and not (run / "job-id").exists()
+    with pytest.raises(SubmissionRejected, match="Invalid qos specification"):      # the same answer later
+        c.recover(str(run), "cm4", job_name(run.name))
+    with pytest.raises(SubmissionRejected):
+        c.submit(str(run), "cm4")
+    assert calls("sbatch") == 1
+
+
+def test_an_unconfirmed_job_is_found_again_by_its_name(login_node):
+    c, run, answer, calls = login_node
+    name = job_name(run.name)
+    assert name == "feabas-01234567"
+    answer("sbatch", err="sbatch: error: Batch job submission failed: Socket timed out on send/recv operation\n", code=1)
+    with pytest.raises(SubmissionUncertain):         # the controller may have taken the job all the same
+        c.submit(str(run), "cm4")
+    assert not (run / "sbatch-failed").exists()      # not a refusal: nothing says so at LRZ either
+    assert c.recover(str(run), "cm4", name) is None                 # Slurm knows no such job
+    answer("squeue", "CLUSTER: cm4\n   5151 \n")
+    assert c.recover(str(run), "cm4", name).job_id == "5151" and (run / "job-id").read_text().strip() == "5151"
+    (run / "job-id").unlink(); answer("squeue", "CLUSTER: cm4\n"); answer("sacct", "6161\n")
+    assert c.recover(str(run), "cm4", name).job_id == "6161"         # already finished: from the accounting
+    (run / "job-id").unlink(); answer("sacct", "")
+    (run / "slurm-777.out").write_text("log")
+    assert c.recover(str(run), "cm4", name).job_id == "777"          # or from the job's own log file
+    with pytest.raises(ValueError):
+        c.recover(str(run), "cm4", "feabas; rm -rf /")
+
+
+def test_cancelling_a_job_that_has_ended_is_not_an_error(tmp_path, monkeypatch):
+    c = client(tmp_path)
+    def gone(cmd):
+        raise ClusterError("scancel: error: Kill job error on job id 12: Invalid job id specified")
+    monkeypatch.setattr(c, "execute", gone)
+    assert "already ended" in c.cancel("12", "cm4")
 
 
 @pytest.mark.parametrize("job,cluster", [("1; rm", "cm4"), ("", "cm4"), ("12", "bad")])

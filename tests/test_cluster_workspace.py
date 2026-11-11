@@ -373,3 +373,87 @@ def test_globus_consent_scopes_are_remembered_and_granted_in_browser(monkeypatch
     assert cli.login() == "Granted"
     assert calls == [["session", "consent", scope]]
     assert not cli.required_scopes
+
+
+def _job_entry(profile, **values):
+    entry = dict(run_id="run1", state="READY", job_id="", remote_bundle="/dss/example/work/.workbench-cluster/run1",
+                 cluster="serial", input_plan={}, host=profile["host"], username=profile["username"], port=profile["port"],
+                 preview_stamp=0, last_scheduler_check=0, started=time.time(), notified=False, job_name="feabas-0123abcd",
+                 commands=[dict(kind="step", step="stitch.matching", name="Match tiles")])
+    entry.update(values)
+    return entry
+
+
+def test_job_refused_by_slurm_fails_at_once_and_frees_the_run_buttons(window, project, profile, monkeypatch):
+    """sbatch refusing a job (QOS, memory, partition access) used to leave the request 'submitting' for good:
+    every Run button and the settings that could correct the request stayed blocked."""
+    from feabas_workbench.core.cluster_transport import SubmissionRejected
+    from feabas_workbench.ui.cluster_setup import ClusterSetupDialog
+    window.open_project(project.root); window.ctx.use_cluster(profile)
+    backend = window.ctx.cluster
+    entry = _job_entry(profile)
+    backend.journal = [entry]
+    def refuse(*a):
+        raise SubmissionRejected("sbatch: error: Batch job submission failed: Invalid qos specification")
+    backend.client = SimpleNamespace(connected=True, submit=refuse, close=lambda: None)
+    backend._stage_or_submit(entry)
+    assert entry["state"] == "FAILED" and "Invalid qos specification" in entry["result"]["error"]
+    assert not backend.running
+    finished = []
+    window.ctx.jobs.job_finished.connect(finished.append)
+    monkeypatch.setattr(backend, "_work", lambda text, fn, done=None, **k: done(fn()))
+    backend.refresh()                                   # the pages hear that the step failed
+    assert len(finished) == 1 and not finished[0].ok and "Invalid qos" in finished[0].last_lines[0]
+    dialog = ClusterSetupDialog(window.ctx, window)     # and the request can be corrected
+    dialog.fields["memory_gib"].setValue(8)
+    assert dialog.save.isEnabled() and dialog._store()["memory_gib"] == 8
+    dialog.shutdown(); dialog.close()
+
+
+def test_unconfirmed_submission_is_settled_by_looking_for_the_job(window, project, profile, monkeypatch):
+    from feabas_workbench.core.cluster_transport import JobRecord, SubmissionRejected, SubmissionUncertain
+    window.open_project(project.root); window.ctx.use_cluster(profile)
+    backend = window.ctx.cluster
+    entry = _job_entry(profile)
+    backend.journal = [entry]
+    answers, names = [None], []
+    def recover(bundle, cluster, name):
+        names.append(name)
+        if isinstance(answers[0], Exception):
+            raise answers[0]
+        return answers[0]
+    def lost(*a):
+        raise SubmissionUncertain("connection lost")
+    backend.client = SimpleNamespace(connected=True, submit=lost, recover=recover, read_remote_json=lambda *a: {},
+                                     status=lambda *a: "PENDING|0:00|Priority", close=lambda: None)
+    backend._stage_or_submit(entry)                     # sent, no confirmation: not an error, not a second job
+    assert entry["state"] == "SUBMITTING" and "connection lost" in entry["submit_error"]
+    monkeypatch.setattr(backend, "_work", lambda text, fn, done=None, **k: done(fn()))
+    backend.refresh()
+    assert entry["state"] == "SUBMITTING" and backend.running and names == ["feabas-0123abcd"]   # too early to say
+    entry["submit_attempted"] -= 300
+    backend.refresh()
+    assert entry["state"] == "FAILED" and "never became a job" in entry["result"]["error"] and not backend.running
+    found = _job_entry(profile, run_id="run2", state="SUBMITTING", submit_attempted=time.time())
+    backend.journal = [found]
+    answers[0] = JobRecord("77", "serial", found["remote_bundle"], found["remote_bundle"] + "/slurm-77.out")
+    backend.refresh()
+    assert found["job_id"] == "77" and found["state"] == "PENDING" and found["scheduler_status"].startswith("PENDING")
+    refused = _job_entry(profile, run_id="run3", state="SUBMITTING", submit_attempted=time.time())
+    backend.journal = [refused]
+    answers[0] = SubmissionRejected("sbatch: error: Requested node configuration is not available")
+    backend.refresh()
+    assert refused["state"] == "FAILED" and "node configuration" in refused["result"]["error"]
+
+
+def test_stop_waiting_releases_a_job_whose_state_cannot_be_settled(window, project, profile):
+    window.open_project(project.root); window.ctx.use_cluster(profile)
+    backend = window.ctx.cluster
+    entry = _job_entry(profile, state="PENDING", job_id="12")
+    backend.journal = [entry]
+    finished = []
+    window.ctx.jobs.job_finished.connect(finished.append)
+    assert backend.running and not backend.forget("other") and backend.running
+    assert backend.forget("run1") and entry["state"] == "CANCELLED" and not backend.running
+    assert "Job 12 keeps running at LRZ" in entry["result"]["error"] and finished and finished[0].cancelled
+

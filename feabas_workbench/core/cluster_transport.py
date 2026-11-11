@@ -28,6 +28,14 @@ class ClusterError(RuntimeError):
     pass
 
 
+class RemoteCommandError(ClusterError):
+    """A remote command that ran and returned a non-zero exit code."""
+
+    def __init__(self, code: int, errors: str, output: str):
+        super().__init__(f"Remote command failed ({code}):\n{errors}\n{output}")
+        self.code, self.errors, self.output = code, errors, output
+
+
 class Interrupted(ClusterError):
     """Stopped on purpose by the user: report it as a status, not as a failure."""
 
@@ -138,6 +146,15 @@ def environment_folders(profile: dict) -> list[str]:
 
 class SubmissionUncertain(ClusterError):
     pass
+
+
+class SubmissionRejected(ClusterError):
+    """Slurm refused the job (sbatch failed): nothing is queued, so there is nothing to wait for."""
+
+
+def job_name(run_id: str) -> str:
+    """The Slurm name of one request's job: unique, so a job whose receipt was lost can be found again."""
+    return "feabas-" + run_id[:8]
 
 
 @dataclass
@@ -271,7 +288,7 @@ class ClusterClient:
             code = channel.recv_exit_status()
             text = output.decode("utf-8", errors="replace").strip()
             if code:
-                raise ClusterError(f"Remote command failed ({code}):\n" + errors.decode("utf-8", errors="replace") + "\n" + text)
+                raise RemoteCommandError(code, errors.decode("utf-8", errors="replace"), text)
             return text
         finally:
             channel.close()
@@ -426,10 +443,36 @@ class ClusterClient:
                 f.write("complete\n")
         return remote
 
-    def recover(self, remote_bundle: str, cluster: str) -> JobRecord:
+    def recover(self, remote_bundle: str, cluster: str, name: str = "") -> JobRecord | None:
+        """Find the job of a request whose submission was not confirmed: the receipt, the job's own
+        log file, and (by its unique *name*) the queue and the accounting. None if Slurm knows no such
+        job; SubmissionRejected if sbatch had refused it."""
         rb = remote_path(remote_bundle)
-        receipt = self.execute("cat -- " + shlex.quote(rb + "/job-id"))
-        return self._parse_receipt(receipt, rb, cluster)
+        if cluster not in {"cm4", "serial", "inter"} or (name and not re.fullmatch(r"feabas-[0-9a-f]{8}", name)):
+            raise ValueError("Invalid cluster or job name.")
+        cmd = ("module load slurm_setup >/dev/null 2>&1 || true; cd -- " + shlex.quote(rb) + " || exit 3; "
+               "if test -s job-id; then echo \"id $(cat job-id)\"; exit 0; fi; "
+               "for f in slurm-*.out; do if test -e \"$f\"; then f=${f#slurm-}; echo \"id ${f%.out}\"; exit 0; fi; done; "
+               "if test -e sbatch-failed; then echo rejected; cat sbatch-error.txt 2>/dev/null; exit 0; fi; ")
+        if name:
+            cmd += (f"found=$(squeue -M {cluster} -u \"$USER\" --name={name} --noheader --format=%i 2>/dev/null"
+                    " | grep -E '^ *[0-9]+ *$' | head -n 1 | tr -d ' '); "
+                    f"if test -z \"$found\"; then found=$(sacct -M {cluster} -X -n -P --name={name} -S now-30days "
+                    "--format=JobIDRaw 2>/dev/null | grep -E '^[0-9]+$' | head -n 1); fi; "
+                    "if test -n \"$found\"; then echo \"$found\" > job-id; echo \"id $found\"; exit 0; fi; ")
+        cmd += "echo none"
+        return self._parse_recovery(self.execute(cmd), rb, cluster)
+
+    @classmethod
+    def _parse_recovery(cls, output: str, rb: str, cluster: str) -> JobRecord | None:
+        first, _, rest = output.strip().partition("\n")
+        if first.startswith("id "):
+            return cls._parse_receipt(first[3:].strip(), rb, cluster)
+        if first == "rejected":
+            raise SubmissionRejected(rest.strip() or "sbatch reported an error.")
+        if first == "none":
+            return None
+        raise SubmissionUncertain("The LRZ login node gave no usable answer about this job. Refresh again.")
 
     @staticmethod
     def _parse_receipt(receipt, rb, cluster):
@@ -445,16 +488,26 @@ class ClusterClient:
         rb = remote_path(remote_bundle)
         if cluster not in {"cm4", "serial", "inter"}:
             raise ValueError("Invalid cluster.")
-        # Lock remains after ambiguous failures; repeating submission cannot create a duplicate.
+        # The lock stays after a failure whose outcome is unknown, so repeating the submission cannot
+        # create a second job. A refusal by sbatch is known: it leaves 'sbatch-failed' and exit code 76.
         cmd = ("set -e; module load slurm_setup; cd -- " + shlex.quote(rb) + "; test -f READY; "
                "if test -s job-id; then cat job-id; exit 0; fi; "
+               "if test -e sbatch-failed; then cat sbatch-error.txt >&2; exit 76; fi; "
                "mkdir .submission-lock || { echo 'Submission already attempted; inspect queue and receipt.' >&2; exit 75; }; "
-               "sbatch --parsable job.sh > job-id.tmp; mv job-id.tmp job-id; cat job-id")
+               "if sbatch --parsable job.sh > job-id.tmp 2> sbatch-error.txt; then mv job-id.tmp job-id; cat job-id; "
+               # "Socket timed out on send/recv operation": the controller may have taken the job all the same
+               "elif grep -qi 'timed out' sbatch-error.txt; then cat sbatch-error.txt >&2; exit 77; "
+               "else echo refused > sbatch-failed; cat sbatch-error.txt >&2; exit 76; fi")
         try:
             return self._parse_receipt(self.execute(cmd), rb, cluster)
+        except RemoteCommandError as e:
+            if e.code == 76:
+                raise SubmissionRejected(e.errors.strip() or "sbatch reported an error.") from e
+            raise SubmissionUncertain("Submission not confirmed; Workbench looks for the job at LRZ with the next "
+                                      "refresh.\n" + str(e)) from e
         except Exception as e:
-            raise SubmissionUncertain("Submission outcome not confirmed. Use 'Recover job ID'; do not submit again "
-                                      "until the LRZ queue has been checked.\n" + str(e)) from e
+            raise SubmissionUncertain("Submission not confirmed; Workbench looks for the job at LRZ with the next "
+                                      "refresh.\n" + str(e)) from e
 
     def status(self, job_id: str, cluster: str) -> str:
         _job(job_id, cluster)
@@ -475,7 +528,12 @@ class ClusterClient:
 
     def cancel(self, job_id: str, cluster: str) -> str:
         _job(job_id, cluster)
-        self.execute(f"module load slurm_setup && scancel -M {cluster} {job_id}")
+        try:
+            self.execute(f"module load slurm_setup && scancel -M {cluster} {job_id}")
+        except ClusterError as e:
+            if "invalid job id" not in str(e).lower():
+                raise
+            return "The job had already ended."
         return "Cancellation requested. Refresh later to confirm."
 
     def tail_log(self, path: str) -> str:
