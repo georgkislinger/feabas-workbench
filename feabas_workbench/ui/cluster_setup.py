@@ -147,6 +147,9 @@ class ClusterSetupDialog(QDialog):
         b.clicked.connect(self._retry_transfer); form.addRow(b)
         b = QPushButton("Download completed exports")
         b.clicked.connect(lambda: self.backend.download_exports()); form.addRow(b)
+        b = QPushButton("Copy this PC's masks into the cluster copy…")
+        b.setToolTip("Masks, detections and manual matches made on this PC are not sent to LRZ on their own.")
+        b.clicked.connect(self._adopt_masks); form.addRow(b)
         b = QPushButton("Stop waiting for a job…")
         b.setToolTip("A way out when a job's state can no longer be settled. Nothing is cancelled at LRZ.")
         b.clicked.connect(self._forget_job); form.addRow(b)
@@ -484,6 +487,29 @@ class ClusterSetupDialog(QDialog):
                 t.update(state="FAILED", details="User confirmed no matching task exists in Globus Activity")
                 self.backend.persist()
                 self.backend.status("Transfer can now be retried")
+
+    def _adopt_masks(self):
+        from ..core.cluster_workspace import adopt_local_masks, mask_changes, view_project
+        local = self.ctx.local_project
+        if self.backend.busy or self.backend.running:
+            QMessageBox.information(self, "Masks", "Wait for the running cluster job or operation first.")
+            return
+        view = view_project(local)
+        n = len(mask_changes(local, view))
+        if not n:
+            QMessageBox.information(self, "Masks", "The cluster copy already has every mask, detection and manual match "
+                                    "of this PC.")
+            return
+        if QMessageBox.question(self, "Copy this PC's masks into the cluster copy",
+                f"{n} mask, detection or manual-match file(s) on this PC are newer than the cluster copy's, or missing "
+                "from it.\n\nCopy them into the cluster copy? They are sent to LRZ with the next step. Masks are images "
+                "at thumbnail size: do this only if the thumbnails on this PC and at LRZ were made with the same "
+                "settings.\n\nWhat the cluster copy loses is kept in .workbench-cluster/replaced.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        copied = adopt_local_masks(local, view)
+        self.backend.status(f"{copied} mask file(s) of this PC copied into the cluster copy")
+        self.ctx.state_changed.emit()
 
     def _forget_job(self):
         waiting = [j for j in self.backend.journal if j.get("state") not in TERMINAL]

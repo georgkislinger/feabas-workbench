@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shutil
+import time
 import uuid
 from pathlib import Path, PureWindowsPath
 
@@ -81,6 +82,114 @@ def view_project(local: Project) -> Project:
                     shutil.copy2(f, dest)
         result.write_general_config()
     return Project.load(root)
+
+
+# Masks, detections and hand-picked matches belong to the thumbnails of the side they were made on
+# (their size and canvas), so they are never carried over on their own: adopt_local_masks does it on request.
+MASK_DIRS = ("masks", "structures", "thumbnail_align/material_masks", "thumbnail_align/manual_matches",
+             "align/material_masks")
+
+
+def _moved(text: str, old_root: Path, new_root: Path) -> str:
+    """A path inside one folder, as the same place in the other; anything else unchanged."""
+    try:
+        rel = Path(text).resolve().relative_to(old_root.resolve())
+    except (ValueError, OSError):
+        return text
+    return (new_root / rel).as_posix()
+
+
+def _backup(path: Path, view: Project, folder: Path) -> None:
+    dest = folder / path.relative_to(view.root)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(path), str(dest))
+
+
+def _differs(a: Path, b: Path) -> bool:
+    return a.stat().st_size != b.stat().st_size or a.read_bytes() != b.read_bytes()
+
+
+def refresh_view(local: Project, view: Project) -> list[str]:
+    """
+    Carry what was written on this PC since the cluster view was made into the view, so that a cluster
+    request never works on an older copy without saying so. The view is a copy made once; before this,
+    coordinates rewritten on the PC afterwards were simply not the ones sent to LRZ.
+
+    - Coordinate files: when the PC's are newer than the view's, the view's folder becomes a copy of the
+      PC's (with the source, volume and preprocessing settings that describe them). Coordinates written
+      in cluster mode are newer than the PC's and stay.
+    - section_order.txt: the newer file wins.
+    - Masks and manual matches are only counted (see MASK_DIRS).
+
+    What the view loses is kept in .workbench-cluster/replaced/<time>. Returns notes for the log.
+    """
+    notes: list[str] = []
+    folder = local.root / CONTROL / "replaced" / time.strftime("%Y%m%d-%H%M%S")
+    newest = lambda d: max((p.stat().st_mtime for p in d.glob("*.txt")), default=0.0)   # noqa: E731
+    here, there = local.stitch_coord_dir, view.stitch_coord_dir
+    if newest(here) > newest(there) + 1e-3:
+        names = {p.name for p in here.glob("*.txt")}
+        for old in sorted(there.glob("*.txt")):
+            _backup(old, view, folder)
+        there.mkdir(parents=True, exist_ok=True)
+        for src in sorted(here.glob("*.txt")):
+            rows = []
+            for line in src.read_text(encoding="utf-8").splitlines():
+                parts = line.split("\t")
+                # preprocessed tiles are the project's own and exist in the view's (and LRZ's) project folder;
+                # the raw tiles stay where they are, also when that is a folder inside the project
+                if parts[0] == "{ROOT_DIR}" and len(parts) == 2:
+                    parts[1] = _moved(parts[1], local.preprocessed_dir, view.preprocessed_dir)
+                elif parts[0] and not parts[0].startswith("{") and Path(parts[0]).is_absolute():
+                    parts[0] = _moved(parts[0], local.preprocessed_dir, view.preprocessed_dir)
+                rows.append("\t".join(parts))
+            dest = there / src.name
+            dest.write_text("\n".join(rows) + "\n", encoding="utf-8")
+            shutil.copystat(src, dest)          # the PC's time stamp: the same files are not copied again
+        view.state.source = copy.deepcopy(local.state.source)
+        view.state.volume = copy.deepcopy(local.state.volume)
+        view.state.preprocessing = copy.deepcopy(local.state.preprocessing)
+        view.save()
+        notes.append(f"The cluster copy now has the coordinates written on this PC ({len(names)} sections). "
+                     "LRZ archives the results made with the old ones and starts again from tile matching.")
+    src, dest = local.root / "section_order.txt", view.root / "section_order.txt"
+    if src.is_file() and (not dest.is_file() or (src.stat().st_mtime > dest.stat().st_mtime + 1e-3 and _differs(src, dest))):
+        if dest.is_file():
+            _backup(dest, view, folder)
+        shutil.copy2(src, dest)
+        notes.append("The cluster copy now has the section order written on this PC.")
+    waiting = len(mask_changes(local, view))
+    if waiting:
+        notes.append(f"{waiting} mask or manual-match file(s) on this PC are newer than the cluster copy's or missing "
+                     "from it. They belong to this PC's thumbnails and are not sent on their own: Cluster settings → "
+                     "Advanced → 'Copy this PC's masks into the cluster copy…' carries them over.")
+    return notes
+
+
+def mask_changes(local: Project, view: Project) -> list[Path]:
+    changed = []
+    for rel in MASK_DIRS:
+        base = local.root / rel
+        for f in sorted(base.rglob("*")) if base.is_dir() else []:
+            if f.is_file() and not f.is_symlink():
+                dest = view.root / f.relative_to(local.root)
+                if not dest.is_file() or (f.stat().st_mtime > dest.stat().st_mtime + 1e-3 and _differs(f, dest)):
+                    changed.append(f)
+    return changed
+
+
+def adopt_local_masks(local: Project, view: Project) -> int:
+    """On request: the PC's masks, detections and manual matches that are newer than the view's, or missing
+    from it, replace the view's (kept in .workbench-cluster/replaced/<time>). Returns how many."""
+    folder = local.root / CONTROL / "replaced" / time.strftime("%Y%m%d-%H%M%S")
+    changed = mask_changes(local, view)
+    for f in changed:
+        dest = view.root / f.relative_to(local.root)
+        if dest.is_file():
+            _backup(dest, view, folder)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(f, dest)
+    return len(changed)
 
 
 def local_globus_path(path: Path) -> str:

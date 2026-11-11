@@ -17,7 +17,8 @@ from ..core.cluster_bundle import MAX_BUNDLE_BYTES, file_hash
 from ..core.cluster_transport import (ClusterClient, ConnectionSettings, Interrupted, SignInCancelled,
                                       SubmissionRejected, SubmissionUncertain, job_name)
 from ..core.cluster_workspace import (CONTROL, TERMINAL, build_workspace_bundle, local_globus_path,
-                                     read_json, resources_for, save_profile, source_signature, sync_scope, write_json)
+                                     read_json, refresh_view, resources_for, save_profile, source_signature, sync_scope,
+                                     write_json)
 from ..core.envs import settings_dir
 from ..core.globus_transfer import GlobusCLI, GlobusAuthorizationRequired
 from ..core.jobs import JobResult, JobSpec
@@ -441,6 +442,7 @@ class ClusterBackend(QObject):
                 self.client.check_environment(p["remote_python"], p["remote_project"], p["remote_tiles"], p["modules"])
                 self.ctx.configs.save()
                 shutil.copytree(self.local.configs_dir, self.ctx.project.configs_dir, dirs_exist_ok=True)
+                input_notes = refresh_view(self.local, self.ctx.project)     # coordinates written on this PC meanwhile
                 self.ctx.project.write_general_config()
                 bundle = build_workspace_bundle(self.ctx.project, self.local, p, [s.remote for s in specs], self.directory / "bundles")
                 remote = p["remote_project"] + "/.workbench-cluster/" + bundle.name
@@ -451,6 +453,7 @@ class ClusterBackend(QObject):
                              notified=False, preview_stamp=0, input_plan=manifest.get("external_inputs", {}))
                 entry["remote_commands"] = manifest["commands"]
                 entry["job_name"] = job_name(bundle.name)
+                entry["input_notes"] = input_notes
                 self.journal.append(entry)
                 self._specs[bundle.name] = specs
                 self.persist()
@@ -465,6 +468,8 @@ class ClusterBackend(QObject):
                 self._stage_or_submit(entry)
                 return entry
             def started(entry):
+                for note in entry.pop("input_notes", []):
+                    self.ctx.log(note, "warn")
                 if entry["state"] == "FAILED":       # Slurm refused it: nothing runs, nothing to wait for
                     message = entry["result"]["error"]
                     self._finish(entry)

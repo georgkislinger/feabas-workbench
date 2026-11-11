@@ -14,7 +14,8 @@ import pytest
 
 from feabas_workbench.core.cluster_bundle import ClusterResources
 from feabas_workbench.core.cluster_workspace import (build_workspace_bundle, profile_for, save_profile, view_project,
-    read_json, write_json, section_tasks, resources_for, source_signature, remote_scan, sync_scope)
+    read_json, write_json, section_tasks, resources_for, source_signature, remote_scan, sync_scope, refresh_view,
+    adopt_local_masks, mask_changes)
 from feabas_workbench.core.cluster_remote import install_workspace_inputs, run_commands
 from feabas_workbench.core.configs import ConfigStore
 from feabas_workbench.core.synthetic import make_demo_project
@@ -495,4 +496,72 @@ def test_parallel_thumbnail_tasks_name_their_section(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="missing outputs"):
         run_commands(bundle, root, manifest)
     assert len(launched) == 1 and launched[0][1] is None and "--stop" not in launched[0][0]
+
+
+def _later(path, seconds=5):
+    stamp = path.stat().st_mtime + seconds
+    os.utime(path, (stamp, stamp))
+
+
+def test_coordinates_written_on_the_pc_reach_the_next_cluster_request(project, profile, tmp_path):
+    """The cluster view is a copy made once. Coordinates rewritten on the PC afterwards were not the ones
+    sent to LRZ, and nothing said so."""
+    view = view_project(project)
+    assert refresh_view(project, view) == []                       # a fresh copy: nothing to carry over
+    coords = sorted(project.stitch_coord_dir.glob("*.txt"))
+    lines = coords[0].read_text().splitlines()
+    name, x, y = lines[-1].split("\t")
+    lines[-1] = f"{name}\t{float(x) + 40:.1f}\t{float(y) + 40:.1f}"
+    coords[0].write_text("\n".join(lines) + "\n"); _later(coords[0])
+    coords[-1].unlink()                                            # one section fewer, as after a new scan
+    project.state.volume.section_names = [p.stem for p in coords[:-1]]
+    project.state.volume.pixel_size_nm = 7.5
+    (project.root / "section_order.txt").write_text("\n".join(reversed(project.state.volume.section_names)) + "\n")
+    view = view_project(project)                                   # 'Use cluster' again
+    notes = refresh_view(project, view)
+    assert len(notes) == 2 and "coordinates written on this PC (2 sections)" in notes[0] and "section order" in notes[1]
+    assert sorted(p.name for p in view.stitch_coord_dir.glob("*.txt")) == [p.name for p in coords[:-1]]
+    assert view.state.volume.pixel_size_nm == 7.5 and view.section_names() == project.section_names()
+    kept = list((project.root / ".workbench-cluster/replaced").rglob(coords[-1].name))
+    assert len(kept) == 1                                          # what the view lost is not gone
+    bundle = build_workspace_bundle(view, project, profile, [dict(kind="step", step="stitch.matching")], tmp_path / "bundles")
+    sent = (bundle / "inputs/stitch/stitch_coord" / coords[0].name).read_text().splitlines()[-1]
+    assert sent.split("\t")[1:] == lines[-1].split("\t")[1:]
+    assert (bundle / "inputs/section_order.txt").is_file()
+    assert refresh_view(project, view_project(project)) == []      # and only once
+
+
+def test_coordinates_written_in_cluster_mode_are_kept(project):
+    view = view_project(project)
+    coord = sorted(view.stitch_coord_dir.glob("*.txt"))[0]
+    coord.write_text(coord.read_text() + "extra.tif\t1.0\t2.0\n"); _later(coord)
+    assert refresh_view(project, view) == [] and "extra.tif" in coord.read_text()
+
+
+def test_preprocessed_tiles_of_the_pc_are_named_as_the_views(project):
+    view = view_project(project)
+    old = Path(project.state.source.root_dir).as_posix()
+    for coord in project.stitch_coord_dir.glob("*.txt"):
+        coord.write_text(coord.read_text().replace(old, (project.preprocessed_dir / "histmatch").as_posix())); _later(coord)
+    project.state.preprocessing.active_source = "histmatch"
+    assert len(refresh_view(project, view)) == 1 and view.state.preprocessing.active_source == "histmatch"
+    text = sorted(view.stitch_coord_dir.glob("*.txt"))[0].read_text()
+    assert "{ROOT_DIR}\t" + (view.preprocessed_dir / "histmatch").as_posix() in text
+
+
+def test_masks_of_the_pc_are_reported_and_copied_only_on_request(project):
+    view = view_project(project)
+    (view.root / "masks/folds").mkdir(parents=True); (view.root / "masks/folds/s0001.png").write_bytes(b"made at LRZ")
+    (project.root / "masks/folds").mkdir(parents=True, exist_ok=True)
+    mask = project.root / "masks/folds/s0001.png"; mask.write_bytes(b"drawn on this PC"); _later(mask, 60)
+    (project.root / "thumbnail_align/manual_matches").mkdir(parents=True, exist_ok=True)
+    (project.root / "thumbnail_align/manual_matches/a__to__b.h5").write_bytes(b"picked by hand")
+    notes = refresh_view(project, view)
+    assert len(notes) == 1 and notes[0].startswith("2 mask or manual-match file(s)")
+    assert (view.root / "masks/folds/s0001.png").read_bytes() == b"made at LRZ"      # never on its own
+    assert adopt_local_masks(project, view) == 2 and mask_changes(project, view) == []
+    assert (view.root / "masks/folds/s0001.png").read_bytes() == b"drawn on this PC"
+    assert (view.root / "thumbnail_align/manual_matches/a__to__b.h5").is_file()
+    kept = list((project.root / ".workbench-cluster/replaced").rglob("s0001.png"))
+    assert len(kept) == 1 and kept[0].read_bytes() == b"made at LRZ"
 

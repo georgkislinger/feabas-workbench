@@ -38,6 +38,18 @@ versions follow [Semantic Versioning](https://semver.org/).
   its position: no thumbnail, no mask, and the job ended with "missing outputs". Every process is now given
   its section's name, as local parallelism does. (The demo project hid this: its thumbnails are made from
   full resolution, which every section has from the start.)
+- **Cluster mode: coordinates written on the PC were not the ones sent to LRZ.** Cluster mode works on a
+  copy of the project's inputs that was made once, when cluster mode was first used. Coordinates or a section
+  order written on the PC afterwards never reached it, and the old ones were sent without a word.
+  - When cluster mode is switched on, and before each request, the copy takes over coordinate files (with
+    the source, volume and preprocessing settings that describe them) and `section_order.txt` if the PC's
+    are newer. The log says so, and that LRZ will start again from tile matching. Coordinates written in
+    cluster mode are newer and stay.
+  - Masks, detections and manual matches are images and points at thumbnail size, so they belong to the
+    thumbnails of the side they were made on and are not sent on their own. The log counts the PC's that
+    are newer or missing, and **Cluster settings → Advanced → Copy this PC's masks into the cluster copy…**
+    carries them over on request.
+  - Whatever the copy loses is kept in `.workbench-cluster/replaced/<time>`.
 
 ### Validation
 - Reproduced on Linux with Python 3.11.18: 6.12.0 loses exactly one reference per emission, 6.11.2 and 6.11.3
