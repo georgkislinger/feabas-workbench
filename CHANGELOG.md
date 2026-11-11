@@ -63,8 +63,8 @@ versions follow [Semantic Versioning](https://semver.org/).
   three tiles of 4095 px), and FEABAS requires the tiles of a section to be one size. Odd widths had the
   same fault without the message (FEABAS's width check tests the heights again). The run-time patch now
   rounds the corner and keeps the size. Match files written before are repaired when *Optimize montage*
-  loads them, so the sections that failed only need that step run again - no new matching. Tiles that
-  really differ in size are refused as before.
+  loads them, so the sections that failed only need that step run again - no new matching - and the log
+  says when tile sizes were set this way. Tiles that really differ in size are refused as before.
 - **Cluster mode: every step ran with the "workers per section" count**, also the steps that work on the
   whole stack and should use the whole allocation (fine matching with 16 of 32 cores in the CPU preset; with
   one worker per section, one process). The cluster runner wrote each step's settings into a folder of its

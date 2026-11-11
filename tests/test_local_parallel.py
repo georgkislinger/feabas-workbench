@@ -325,7 +325,9 @@ def test_tiles_of_one_size_keep_it_when_feabas_rounds_their_positions(project, t
         p = subprocess.run([sys.executable, "-c", code, *names], cwd=project.root, env=env, text=True,
                            capture_output=True, timeout=120)
         assert p.returncode == 0, p.stderr
+        notes.extend(line for line in p.stdout.splitlines() if line.startswith("FEABAS Workbench:"))
         return json.loads(p.stdout.strip().splitlines()[-1])
+    notes = []
     plain = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
     # FEABAS 3.0.5 as it is: four sizes for four tiles of one size, and its own check refuses them
     (sizes, problem, _), = run(plain, f"save:{odd}|{old_match}", odd)
@@ -338,6 +340,8 @@ def test_tiles_of_one_size_keep_it_when_feabas_rounds_their_positions(project, t
     assert same[2] == run(plain, even)[0][2]                     # nothing changes where nothing was wrong
     assert len(different[0]) == 2 and "not consistent" in different[1]      # really different tiles are still refused
     assert repaired[0] == [[4095, 6145]] and repaired[1] == ""  # a match file written before the fix
+    # the repair is said in the job's log, once, and only where something was changed
+    assert len(notes) == 1 and "tile box(es) were 1 px off" in notes[0] and "4095 x 6145 px" in notes[0]
 
 
 @requires_feabas

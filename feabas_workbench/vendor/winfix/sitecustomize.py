@@ -159,6 +159,7 @@ def _install_stitcher():
             try:
                 labels = np.asarray(groupings).ravel()
                 boxes = self._init_bboxes
+                repaired = 0
                 for g in np.unique(labels):
                     idx = np.nonzero(labels == g)[0]
                     if len(idx) < 2 or len(labels) != len(boxes):
@@ -166,12 +167,18 @@ def _install_stitcher():
                     for lo, hi in ((0, 2), (1, 3)):          # x: columns 0, 2 (width); y: 1, 3 (height)
                         size = _true_size(boxes[idx, hi] - boxes[idx, lo])
                         if size is not None:
+                            repaired += int(np.count_nonzero(boxes[idx, hi] - boxes[idx, lo] != size))
                             boxes[idx, hi] = boxes[idx, lo] + size
                             if getattr(self, "_refined_init_bboxes", None) is not None:
                                 refined = self._refined_init_bboxes
                                 refined[idx, hi] = refined[idx, lo] + size
-                self.tile_sizes = stitcher.common.bbox_sizes(boxes)
-                self.average_tile_size = np.median(self.tile_sizes, axis=0)
+                if repaired:
+                    self.tile_sizes = stitcher.common.bbox_sizes(boxes)
+                    self.average_tile_size = np.median(self.tile_sizes, axis=0)
+                    height, width = (int(v) for v in self.average_tile_size)
+                    # said in the job's log: a size is being changed, not only a check passed
+                    print(f"FEABAS Workbench: {repaired} tile box(es) were 1 px off the others' size and were set to "
+                          f"{height} x {width} px (height x width; FEABAS's rounding of an odd tile size).", flush=True)
             except Exception:  # noqa: BLE001 - never worse than FEABAS itself: its own check follows
                 pass
         return orig_groupings(self, groupings)
