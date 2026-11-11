@@ -339,3 +339,20 @@ def test_tiles_of_one_size_keep_it_when_feabas_rounds_their_positions(project, t
     assert len(different[0]) == 2 and "not consistent" in different[1]      # really different tiles are still refused
     assert repaired[0] == [[4095, 6145]] and repaired[1] == ""  # a match file written before the fix
 
+
+@requires_feabas
+def test_a_runs_worker_count_reaches_every_stage_and_leaves_the_yaml_alone(project):
+    """Cluster steps run in a folder of their own, and FEABAS reads the stage configs from the working
+    directory: the count of worker processes for one run goes through the run-time hook."""
+    from feabas_workbench.core.jobs import feabas_env
+    original = {str(f): f.read_bytes() for f in project.configs_dir.glob('*.yaml')}
+    env = dict(os.environ, **feabas_env(), FW_NUM_WORKERS="7")
+    code = ("from feabas import config; import json; a = config.align_configs(); "
+            "print(json.dumps([config.stitch_configs()['matching']['num_workers'], "
+            "config.thumbnail_configs()['alignment']['num_workers'], a['matching']['matcher_config']['num_workers'], "
+            "a['downsample']['num_workers'], a['downsample']['max_mip']]))")
+    p = subprocess.run([sys.executable, '-c', code], cwd=project.root, env=env, text=True, capture_output=True, timeout=30)
+    assert p.returncode == 0, p.stderr
+    assert json.loads(p.stdout.strip().splitlines()[-1]) == [7, 7, 7, 7, 7]
+    assert original == {str(f): f.read_bytes() for f in project.configs_dir.glob('*.yaml')}
+

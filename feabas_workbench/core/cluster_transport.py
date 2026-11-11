@@ -376,8 +376,10 @@ class ClusterClient:
         root = project_folder(profile)
         self._owned(root, profile["project_id"])
         folders = [root, *environment_folders(profile)]
+        # millions of files on a DSS container take minutes to count, far beyond the default 90 s
         sizes = self.execute("for d in " + " ".join(map(shlex.quote, folders)) +
-                             "; do if test -d \"$d\"; then du -sb -- \"$d\" | cut -f1; else echo 0; fi; done").split()
+                             "; do if test -d \"$d\"; then du -sb -- \"$d\" | cut -f1; else echo 0; fi; done",
+                             timeout=3600).split()
         sizes = [int(s) for s in sizes]
         return dict(root=root, bytes=sizes[0], environments={f: s for f, s in zip(folders[1:], sizes[1:]) if s})
 
@@ -388,7 +390,7 @@ class ClusterClient:
         allowed = environment_folders(profile)
         targets = ([root] if self._owned(root, profile["project_id"]) else []) + [e for e in environments if e in allowed]
         if targets:
-            self.execute("rm -rf -- " + " ".join(map(shlex.quote, targets)), timeout=1800)
+            self.execute("rm -rf -- " + " ".join(map(shlex.quote, targets)), timeout=4 * 3600)
         return "Removed at LRZ: " + (", ".join(targets) if targets else "nothing (already gone)")
 
     def read_remote_json(self, path: str, missing=None):

@@ -479,3 +479,21 @@ def test_batch_launcher_warns_when_selected_environment_has_no_paramiko(tmp_path
     assert sys.executable in result.stdout
     assert 'pip install "paramiko>=3.4,<6"' in result.stdout
     assert "--project" in result.stdout  # the launcher still reaches the app
+
+
+def test_measuring_and_freeing_a_large_project_is_given_time(tmp_path, monkeypatch):
+    """Counting millions of files on a DSS container takes minutes; with the default 90 s the storage of a
+    large project could not be freed from the window at all."""
+    c = client(tmp_path)
+    profile = dict(project_id="0123456789abcdef0123456789abcdef", remote_project="/dss/c/feabas-demo-01234567/work",
+                   remote_tiles="/dss/c/feabas-demo-01234567/images")
+    limits = {}
+    def execute(command, timeout=90, on_output=None):
+        limits["du" if "du -sb" in command else "rm"] = timeout
+        return "5\n"
+    monkeypatch.setattr(c, "execute", execute)
+    monkeypatch.setattr(c, "_owned", lambda root, project_id: True)
+    assert c.project_usage(profile)["bytes"] == 5
+    c.remove_project(profile)
+    assert limits["du"] >= 1800 and limits["rm"] >= 3600
+

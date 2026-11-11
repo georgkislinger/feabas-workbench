@@ -1,6 +1,6 @@
 # FEABAS Workbench – user guide
 
-This local build adds a cluster mode for LRZ: **Use cluster…** in the top bar (or
+The workbench has a cluster mode for LRZ: **Use cluster…** in the top bar (or
 **Pipeline → Run on cluster…**) signs in over SSH/MFA, sets up storage in your home folder or a
 DSS container, prepares FEABAS at LRZ and synchronizes the images. While cluster mode is on (green
 accents), the normal Run buttons submit Slurm jobs; **Leave cluster mode** switches back to this

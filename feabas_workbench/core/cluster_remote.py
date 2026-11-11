@@ -15,7 +15,8 @@ from pathlib import Path
 from .cluster_bundle import ClusterResources, MAX_BUNDLE_BYTES, file_hash, _portable_config
 from .cluster_workspace import CONTROL, read_json, write_json, section_tasks
 from .configs import ConfigStore, CONFIG_FILES, RESOURCE_KEYS, dump_yaml, load_yaml
-from .local_parallel import input_sections
+from .local_parallel import (MIPMAP_CACHE_TILES, MIPMAP_STEPS, SECTION_STEPS, input_sections, mipmap_worker_gib,
+                             selected_indices, tiles_per_section)
 from .project import VENDOR_DIR
 from .steps import (STEPS_BY_KEY, PipelineScan, cleared_keys, clear_targets, count_outputs, expected_outputs, finish_clear,
                     step_argv, steps_decided_by, write_fine_match_list, create_snapshot)
@@ -77,6 +78,41 @@ def scientific_config(value):
     if isinstance(value, list):
         return [scientific_config(v) for v in value]
     return value
+
+
+def mipmap_settings(root, command, manifest, resources, fanned=False):
+    """
+    This run's settings for a FEABAS mipmap stage (kind, field, values, note): the PC's 'Automatic'
+    (core.local_parallel.mipmap_plan) within the job's allocation. FEABAS's default mipmaps one section
+    at a time and starts a pool of processes per mip level with one job per tile of that level, which
+    leaves most of the allocation idle (3.6x the time for 8 small sections on 4 cores); with enough
+    sections each worker takes whole sections instead - parallel_within_section: false, same output -
+    and a larger read cache stops the re-reading of source tiles. What the project sets itself is kept.
+    """
+    from types import SimpleNamespace
+    key = command["step"]
+    kind, field, _ = SECTION_STEPS[key]
+    cs = ConfigStore(root / "configs")
+    own = manifest.get("own_mipmap_settings", {}).get(key)
+    if own is None or (key == "thumbnail.downsample" and cs.get("stitching", "rendering.driver", "image") != "image"):
+        return kind, field, {}, ""
+    cache = cs.get(kind, field + ".cache_size") if "cache_size" in own else MIPMAP_CACHE_TILES
+    values = {} if "cache_size" in own else {"cache_size": cache}
+    if fanned or "parallel_within_section" in own:
+        return kind, field, values, ""
+    try:
+        paths, indices = selected_indices(input_sections(root, key, cs), key, command.get("start"),
+                                          command.get("stop"), command.get("stride"))
+    except ValueError:
+        return kind, field, values, ""
+    n, within = len(indices), resources.cpus
+    if not (n > 1 and within > 1 and (n >= within or (n >= 4 and tiles_per_section([paths[i] for i in indices]) <= 16 * within))):
+        return kind, field, values, f"{n} section(s), one at a time with {within} workers each; {cache}-tile read cache"
+    volume = SimpleNamespace(state=SimpleNamespace(volume=SimpleNamespace(dtype=manifest.get("dtype") or "uint16")))
+    per_worker = mipmap_worker_gib(volume, cs, key, int(cache or 4))
+    workers = max(1, min(n, within, int(0.8 * resources.memory_gib // per_worker)))     # 80 % of --mem
+    values.update(parallel_within_section=False, num_workers=workers)
+    return kind, field, values, f"{n} sections, {workers} at once with one worker each; {cache}-tile read cache"
 
 
 def relocate_existing_results(root, manifest):
@@ -297,14 +333,30 @@ def run_commands(bundle, root, manifest):
     def execute(command, index, parallel=1, section=None):
         work = bundle / "commands" / str(index)
         work.mkdir(parents=True, exist_ok=True)
-        env = None
+        env = dict(os.environ)
         shutil.copytree(root / "configs", work / "configs", dirs_exist_ok=True)
         # Whole-stack operations may use the full allocation. Section fan-out
         # uses the explicit workers-per-section budget.
         budget = resources.workers if parallel > 1 else resources.cpus
         configs = ConfigStore(work / "configs")
+        # FEABAS takes the general settings (and the defaults) from the folder it runs in, but reads the
+        # stage configs from the working directory - the project's, which carry 'workers per section'.
+        # This run's worker count and stage settings therefore reach it through the run-time hook
+        # (vendor/winfix); the copies written here record them.
+        env["FW_NUM_WORKERS"] = str(budget)
+        tuned = {}
+        if command["kind"] == "step" and command["step"] in MIPMAP_STEPS:
+            stage, field, values, note = mipmap_settings(root, command, manifest, resources, fanned=section is not None)
+            if values:
+                tuned[stage] = (field, values)
+                env["FW_STAGE_SETTINGS"] = json.dumps(dict(kind=stage, field=field, values=values))
+            if note:
+                print(f"{STEPS_BY_KEY[command['step']].label}: {note}", flush=True)
         for kind, filename in CONFIG_FILES.items():
-            dump_yaml(work / "configs" / filename, _portable_config(configs[kind].merged, budget))
+            data = _portable_config(configs[kind].merged, budget)
+            if kind in tuned:
+                data.setdefault(tuned[kind][0], {}).update(tuned[kind][1])
+            dump_yaml(work / "configs" / filename, data)
         general = load_yaml(work / "configs/general_configs.yaml")
         general.update(cpu_budget=max(1, resources.cpus // parallel), logging_directory=str(work / "logs"))
         dump_yaml(work / "configs/general_configs.yaml", general)
@@ -321,7 +373,7 @@ def run_commands(bundle, root, manifest):
                 resource = work / "resources.json"
                 write_json(resource, dict(kind="thumbnail", field="downsample", workers=budget,
                                           logging_directory=str(work / "logs"), section_name=section))
-                env = dict(os.environ, FW_LOCAL_RESOURCES_FILE=str(resource))
+                env["FW_LOCAL_RESOURCES_FILE"] = str(resource)
                 argv = step_argv(sys.executable, step, 0, 1)
         elif kind == "worker":
             payload = work / "payload.json"

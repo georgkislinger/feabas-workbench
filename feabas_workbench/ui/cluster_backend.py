@@ -25,6 +25,11 @@ from ..core.jobs import JobResult, JobSpec
 from .threads import ThreadRunner
 
 
+# Not part of the project that LRZ continues from: this PC's cluster records, snapshots, logs and
+# test runs (sandboxes whose montages are links into the project).
+PROJECT_EXCLUDE = (CONTROL, ".git", "snapshots", "tests", "workbench.log")
+
+
 def apply_previews(archive, view, snapshot, previous):
     """Verified bounded extraction. Preserve edits made locally while a job ran."""
     conflicts, total = [], 0
@@ -120,7 +125,7 @@ class ClusterBackend(QObject):
 
     @property
     def transferring(self):
-        return any(t.get("state") in {"SUBMITTING", "ACTIVE"} for t in self.transfers)
+        return any(t.get("state") in {"SUBMITTING", "ACTIVE", "INACTIVE"} for t in self.transfers)
 
     def status(self, text):
         self.message = text
@@ -396,7 +401,7 @@ class ClusterBackend(QObject):
                 if initial:
                     self._transfer(p["computer_collection"], local_globus_path(self.local.root),
                                           p["destination_collection"], p["destination_project"], "initial project",
-                                          exclude=(CONTROL, ".git", "snapshots", "workbench.log"), metadata=meta)
+                                          exclude=PROJECT_EXCLUDE, metadata=meta)
                 self.persist()
                 return "Uploading via Globus. Keep the source computer/NAS available; jobs unlock after verification."
             self._work("Checking folders and starting synchronization…", stage)
@@ -413,7 +418,7 @@ class ClusterBackend(QObject):
                        p["remote_tiles"], report, cancelled, exclude=(CONTROL,), fingerprint=fp, metadata=meta)
         if initial:
             self._ssh_copy("initial project", self.client.upload_tree, self.local.root, p["remote_project"], report,
-                           cancelled, exclude=(CONTROL, ".git", "snapshots", "workbench.log"), metadata=meta)
+                           cancelled, exclude=PROJECT_EXCLUDE, metadata=meta)
         self.synced = dict(source_signature=fp, timestamp=time.time(), scope=meta["scope"])
         write_json(self.directory / "synchronized.json", self.synced)
         return "Images synchronized over SSH · ready to run"
@@ -566,6 +571,20 @@ class ClusterBackend(QObject):
         self.ctx.state_changed.emit()
         return True
 
+    def _tidy_previews(self, incoming, manifest):
+        """After previews went into the view: drop what LRZ no longer has from the kept folder, and the
+        per-job folders of earlier versions (their previews are in the view or superseded)."""
+        base = self.directory / "incoming-previews"
+        try:
+            for folder in base.iterdir():
+                if folder.is_dir() and not folder.is_symlink() and folder.resolve() != Path(incoming).resolve():
+                    shutil.rmtree(folder, ignore_errors=True)
+            for f in Path(incoming).rglob("*"):
+                if f.is_file() and f.relative_to(incoming).as_posix() not in manifest:
+                    f.unlink()
+        except OSError:
+            pass                                    # tidying up is never a reason to fail a refresh
+
     def refresh(self):
         # Monitoring writes into the cluster view and reports through the shared job signals,
         # so it pauses while the project computes on this PC; jobs keep running at LRZ.
@@ -582,7 +601,7 @@ class ClusterBackend(QObject):
             for t in self.transfers:
                 if t["state"] == "SUBMITTING" and not t["task_id"]:
                     notices.append("Unconfirmed transfer. Check Globus Activity and recover its task ID in setup.")
-                elif t["state"] == "ACTIVE":
+                elif t["state"] in {"ACTIVE", "INACTIVE"}:   # INACTIVE: paused by Globus, resumes or fails later
                     result = self.globus().task(t["task_id"])
                     t.update(state=result["status"], bytes=result.get("bytes_transferred", 0),
                              details=result.get("nice_status_short_description", ""))
@@ -590,6 +609,7 @@ class ClusterBackend(QObject):
                     conflicts = apply_preview_directory(Path(t["local_destination"]), self.ctx.project.root,
                                                         t["preview_manifest"], t.get("previous_previews", {}))
                     t["applied"] = True
+                    self._tidy_previews(Path(t["local_destination"]), t["preview_manifest"])
                     notices.append("All previews downloaded" + (f"; preserved {len(conflicts)} local edits" if conflicts else ""))
             if self.transfers and not self.transferring:
                 uploads = [t for t in self.transfers if t["purpose"] in {"raw images", "initial project"} and not t.get("replaced")]
@@ -642,7 +662,10 @@ class ClusterBackend(QObject):
                     entry["result"] = state
                     notices.append(f"Job {entry['job_id']}: {entry['state']}")
                     if state.get("previews_skipped") and not any(t.get("preview_run") == entry["run_id"] for t in self.transfers):
-                        incoming = self.directory / "incoming-previews" / entry["run_id"]
+                        # One folder for every job: files that did not change are not fetched again (they
+                        # keep their size and time at LRZ), and nothing piles up. It used to be a new folder
+                        # per job, with every preview downloaded again and none ever removed.
+                        incoming = self.directory / "incoming-previews" / "current"
                         incoming.mkdir(parents=True, exist_ok=True)
                         if shutil.disk_usage(incoming).free < 2 * state.get("preview_bytes", 0):
                             raise RuntimeError("Not enough local disk space for the complete preview cache.")
@@ -650,11 +673,20 @@ class ClusterBackend(QObject):
                                     preview_manifest=state["preview_manifest"], previous_previews=previous_manifest)
                         cache = "/.workbench-cluster/" + entry["run_id"] + "/preview-cache"
                         if self.profile.get("transfer") != "globus":
-                            t = self._ssh_copy("download previews", self.client.download_tree,
-                                               self.profile["remote_project"].rstrip("/") + cache, incoming, metadata=meta)
-                            conflicts = apply_preview_directory(incoming, self.ctx.project.root, t["preview_manifest"],
-                                                                t["previous_previews"])
+                            source = self.profile["remote_project"].rstrip("/") + cache
+                            t = self._ssh_copy("download previews", self.client.download_tree, source, incoming, metadata=meta)
+                            try:
+                                conflicts = apply_preview_directory(incoming, self.ctx.project.root, t["preview_manifest"],
+                                                                    t["previous_previews"])
+                            except ValueError:
+                                # a kept file no longer matches what LRZ has under the same size and time: fetch afresh
+                                shutil.rmtree(incoming, ignore_errors=True)
+                                incoming.mkdir(parents=True, exist_ok=True)
+                                self.client.download_tree(source, incoming)
+                                conflicts = apply_preview_directory(incoming, self.ctx.project.root, t["preview_manifest"],
+                                                                    t["previous_previews"])
                             t["applied"] = True
+                            self._tidy_previews(incoming, t["preview_manifest"])
                             notices.append("All previews downloaded" + (f"; preserved {len(conflicts)} local edits" if conflicts else ""))
                         else:
                             self._transfer(self.profile["destination_collection"], self.profile["destination_project"].rstrip("/")
@@ -669,7 +701,14 @@ class ClusterBackend(QObject):
                     word = first[1] if first[0].strip() == entry["job_id"] and len(first) > 1 else first[0]
                     word = word.strip().split()[0].rstrip("+") if word.strip() else "UNKNOWN"
                     if word in TERMINAL:
-                        entry["state"] = "FAILED" if word == "COMPLETED" and state.get("state") != "COMPLETED" else word
+                        latest = state
+                        if word == "COMPLETED" and state.get("state") != "COMPLETED":
+                            # it may have written its result after the status file was read above
+                            latest = self.client.read_remote_json(entry["remote_bundle"] + "/status.json", {}) or {}
+                        if latest is not state and latest.get("state") in TERMINAL:
+                            word = "finishing"       # the next refresh takes the result and previews from there
+                        else:
+                            entry["state"] = "FAILED" if word == "COMPLETED" else word
                     notices.append(f"Job {entry['job_id']}: {word}")
                 else:
                     if state.get("state") == "RUNNING":
@@ -701,9 +740,11 @@ class ClusterBackend(QObject):
                     if t.get("local_destination"):
                         self.ctx.export_downloaded.emit(t["local_destination"])
                     notices.append("Export downloaded and verified")
-            active = [t for t in self.transfers if t["state"] == "ACTIVE"]
+            active = [t for t in self.transfers if t["state"] in {"ACTIVE", "INACTIVE"}]
             failed = [t for t in self.transfers if t["state"] == "FAILED"]
-            if active:
+            if any(t["state"] == "INACTIVE" for t in active):
+                notices.append("Globus paused a transfer · sign in to Globus again or bring its endpoint back online")
+            elif active:
                 notices.append(f"Transferring · {sum(t.get('bytes', 0) for t in active) / 2**30:.2f} GiB copied")
             elif failed:
                 notices.append("Transfer failed · see Cluster settings / Globus Activity")
@@ -826,7 +867,7 @@ class ClusterBackend(QObject):
                     self.client.cancel(entry["job_id"], entry["cluster"])
                 elif entry["state"] in {"STAGING", "READY"}:
                     for t in self.transfers:
-                        if t.get("job_input_key", "").startswith(entry["run_id"] + "/") and t["state"] == "ACTIVE":
+                        if t.get("job_input_key", "").startswith(entry["run_id"] + "/") and t["state"] in {"ACTIVE", "INACTIVE"}:
                             self.globus().cancel(t["task_id"])
                     entry["state"] = "CANCELLED"
             self.persist()

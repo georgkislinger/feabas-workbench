@@ -184,7 +184,7 @@ project/
 The project folder *is* the FEABAS working directory. Your raw tiles stay where they are.
 </details>
 
-## Running at LRZ (cluster mode, local build)
+## Running at LRZ (cluster mode)
 
 The same pages and Run buttons can send the work to the LRZ Linux Cluster instead of this PC. Cluster mode is
 chosen per project and is off until you switch it on; workstation runs and their results are untouched.

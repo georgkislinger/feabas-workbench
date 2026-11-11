@@ -303,6 +303,16 @@ def build_workspace_bundle(project, local, profile, commands, destination):
         pkg = out / "runtime" / "feabas_workbench"
         shutil.copytree(Path(__file__).parent.parent / "workers", pkg / "workers",
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        # for the mipmap stages at LRZ (cluster_remote.mipmap_settings): the settings this project sets itself
+        # are kept there too, and the request's config files no longer tell them from FEABAS's defaults
+        from .configs import ConfigStore
+        from .local_parallel import MIPMAP_STEPS, SECTION_STEPS
+        configs = ConfigStore(project.configs_dir)
+        manifest["own_mipmap_settings"] = {
+            key: [name for name in ("parallel_within_section", "cache_size")
+                  if configs[SECTION_STEPS[key][0]].is_overridden(SECTION_STEPS[key][1] + "." + name)]
+            for key in MIPMAP_STEPS}
+        manifest["dtype"] = project.state.volume.dtype
         manifest.update(format=2, workspace=True, project_id=profile["project_id"], commands=prepared,
                         steps=[], raw_tiles=profile["remote_tiles"], remote_dl_python=profile.get("remote_dl_python", ""),
                         path_mappings=[(str(src), dst) for src, dst in mapper.mappings])

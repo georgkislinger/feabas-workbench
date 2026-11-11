@@ -65,6 +65,27 @@ versions follow [Semantic Versioning](https://semver.org/).
   rounds the corner and keeps the size. Match files written before are repaired when *Optimize montage*
   loads them, so the sections that failed only need that step run again - no new matching. Tiles that
   really differ in size are refused as before.
+- **Cluster mode: every step ran with the "workers per section" count**, also the steps that work on the
+  whole stack and should use the whole allocation (fine matching with 16 of 32 cores in the CPU preset; with
+  one worker per section, one process). The cluster runner wrote each step's settings into a folder of its
+  own, but FEABAS reads the stage configs from the working directory and only the general settings from
+  the folder it runs in, so that copy was never read. A step's worker count now reaches FEABAS through the
+  run-time hook (`FW_NUM_WORKERS`).
+- **Cluster mode: the mipmap steps** (*Make thumbnails* with one section at a time, *Mipmaps for PNG stack*)
+  decide as *Automatic* does on the PC, within the job's cores and memory: whole sections per worker and a
+  16-tile read cache, unless the project sets these itself. For 8 sections on 4 cores: 97 s instead of 357 s
+  (100 s on the PC).
+- **Cluster mode: previews.** Once a job's previews no longer fit the small package (64 MB, 16 MB per
+  file), every finished job downloaded all of them again into a folder of its own that was never removed.
+  They now go into one folder that is kept: files that did not change are not fetched again, and the
+  folders of earlier jobs are removed.
+- **Cluster mode: *Free this project's LRZ storage…*** measured the project with a limit of 90 seconds, too
+  short for the millions of files of a large project on a DSS container - the very projects it is for. It
+  now has an hour, and the deletion four.
+- Cluster mode: a job that ended in the moment between reading its status and asking Slurm was recorded as
+  failed although it had completed; a transfer that Globus paused (expired sign-in, endpoint offline) was
+  never looked at again; and the first synchronization uploaded this PC's test runs with the project.
+- Cluster guide and README no longer describe cluster mode as a local build of 0.3.3.
 
 ### Validation
 - Reproduced on Linux with Python 3.11.18: 6.12.0 loses exactly one reference per emission, 6.11.2 and 6.11.3
@@ -73,7 +94,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   Windows was not tested.
 - Cluster code run end to end on one machine, as a job script under a stand-in for Slurm: all 12 steps of
   the pipeline on 8 sections with 4 at once. With thumbnails at mip 3, *Make thumbnails* left 2 of 8
-  thumbnails missing and the job failed; with the fix, three runs from scratch gave 8 of 8 each.
+  thumbnails missing and the job failed; with the fix, three runs from scratch gave 8 of 8 each. After all
+  changes the whole pipeline completes again, in 295 s of step time against 667 s before on the same 4
+  cores (*Mipmaps for PNG stack* 106 s against 361 s).
 - The login-node commands for submitting and finding a job run in tests against stand-ins for `sbatch`,
   `squeue` and `sacct`: accepted, refused, timed out, found in the queue, in the accounting, by its log.
 - Tile sizes, against FEABAS 3.0.5 itself: four tiles of 4095 × 6145 px at positions ending in .5 give four

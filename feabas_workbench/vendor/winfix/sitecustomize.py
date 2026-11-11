@@ -248,7 +248,34 @@ def _stage_settings():
     stage.update(setting.get("values") or {})
 
 
+def _worker_budget():
+    """FW_NUM_WORKERS: this run's number of worker processes, for every ``num_workers`` of the stage
+    configs. For cluster jobs, whose steps run in a folder of their own: FEABAS takes only the general
+    settings and the defaults from the folder it runs in and reads the stage configs from the working
+    directory, so a per-run copy of them is never read."""
+    raw = os.environ.get("FW_NUM_WORKERS")
+    if not raw:
+        return
+    from feabas import config
+    workers = max(1, int(raw))
+
+    def walk(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "num_workers":
+                    node[key] = workers
+                else:
+                    walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    for getter in (config.stitch_configs, config.thumbnail_configs, config.align_configs):
+        walk(getter())
+
+
 def _config_overrides():
+    _worker_budget()
     _local_resources()
     _stage_settings()
 
