@@ -15,6 +15,7 @@ from pathlib import Path
 from .cluster_bundle import ClusterResources, MAX_BUNDLE_BYTES, file_hash, _portable_config
 from .cluster_workspace import CONTROL, read_json, write_json, section_tasks
 from .configs import ConfigStore, CONFIG_FILES, RESOURCE_KEYS, dump_yaml, load_yaml
+from .local_parallel import input_sections
 from .project import VENDOR_DIR
 from .steps import (STEPS_BY_KEY, PipelineScan, cleared_keys, clear_targets, count_outputs, expected_outputs, finish_clear,
                     step_argv, write_fine_match_list, create_snapshot)
@@ -277,9 +278,10 @@ def run_commands(bundle, root, manifest):
             write_json(bundle / "heartbeat.json", dict(timestamp=time.time(), peak_memory_bytes=peak[0], memory_bytes=total))
     monitor = threading.Thread(target=sample_memory, daemon=True)
     monitor.start()
-    def execute(command, index, parallel=1):
+    def execute(command, index, parallel=1, section=None):
         work = bundle / "commands" / str(index)
         work.mkdir(parents=True, exist_ok=True)
+        env = None
         shutil.copytree(root / "configs", work / "configs", dirs_exist_ok=True)
         # Whole-stack operations may use the full allocation. Section fan-out
         # uses the explicit workers-per-section budget.
@@ -295,6 +297,16 @@ def run_commands(bundle, root, manifest):
             step = STEPS_BY_KEY[command["step"]]
             argv = step_argv(sys.executable, step, command.get("start"), command.get("stop"),
                              command.get("stride"), command.get("filter"), command.get("extra_args"))
+            if section:
+                # FEABAS makes thumbnails in phases, each of which lists the sections that have reached it:
+                # a section's position changes while others run, and one that overtakes an earlier section
+                # finds nothing at its own. The run-time hook (vendor/winfix) keeps every listing of this
+                # process to the named section, which is then always the first - as local parallelism does.
+                resource = work / "resources.json"
+                write_json(resource, dict(kind="thumbnail", field="downsample", workers=budget,
+                                          logging_directory=str(work / "logs"), section_name=section))
+                env = dict(os.environ, FW_LOCAL_RESOURCES_FILE=str(resource))
+                argv = step_argv(sys.executable, step, 0, 1)
         elif kind == "worker":
             payload = work / "payload.json"
             write_json(payload, command["payload"])
@@ -308,7 +320,7 @@ def run_commands(bundle, root, manifest):
             raise RuntimeError(f"Unsupported command type: {kind}")
         output = {}
         started = time.monotonic()
-        with subprocess.Popen(argv, cwd=work, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        with subprocess.Popen(argv, cwd=work, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True, encoding="utf-8", errors="replace", bufsize=1) as proc:
             with lock:
                 active.add(proc.pid)
@@ -353,9 +365,18 @@ def run_commands(bundle, root, manifest):
                 tasks = section_tasks(command, manifest["sections"], resources)
                 if not tasks:
                     raise RuntimeError("The selected section range is empty.")
+                names = [None] * len(tasks)
+                if step and step.key == "thumbnail.downsample" and len(tasks) > 1:
+                    # one section per process: named, in FEABAS's own order of the stitched sections
+                    inputs = input_sections(root, step.key, ConfigStore(root / "configs"))
+                    known = [p.parent.name if p.name == "metadata.txt" else p.stem for p in inputs]
+                    tasks = [t for t in tasks if t["start"] < len(known)]
+                    names = [known[t["start"]] for t in tasks]
+                    if not tasks:
+                        raise RuntimeError(f"{step.label}: no stitched sections in the selected range.")
                 concurrency = min(len(tasks), resources.section_concurrency)
                 with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
-                    futures = [pool.submit(execute, c, f"{index}-{i}", concurrency) for i, c in enumerate(tasks)]
+                    futures = [pool.submit(execute, c, f"{index}-{i}", concurrency, names[i]) for i, c in enumerate(tasks)]
                     command_results = [f.result() for f in futures]
                 if step:
                     errors = list((root / step.out_subdir).glob(step.err_glob)) if step.err_glob else []

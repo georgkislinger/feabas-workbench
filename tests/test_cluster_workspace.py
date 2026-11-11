@@ -457,3 +457,42 @@ def test_stop_waiting_releases_a_job_whose_state_cannot_be_settled(window, proje
     assert backend.forget("run1") and entry["state"] == "CANCELLED" and not backend.running
     assert "Job 12 keeps running at LRZ" in entry["result"]["error"] and finished and finished[0].cancelled
 
+
+def test_parallel_thumbnail_tasks_name_their_section(tmp_path, monkeypatch):
+    """FEABAS makes thumbnails in phases that each list the sections which have reached them, so a section
+    addressed by its position found nothing when it overtook an earlier one (2 of 8 thumbnails missing and a
+    failed job in a simulated run). Each process is given its section's name, as local parallelism does."""
+    from feabas_workbench.core import cluster_remote
+    from feabas_workbench.core.project import Project
+    root = Project.create(tmp_path / "remote").root
+    sections = ["s0001", "s0002", "s0003"]
+    (root / "stitch/stitch_coord").mkdir(parents=True, exist_ok=True)
+    for name in sections:
+        (root / "stitched_sections/mip0" / name).mkdir(parents=True)
+        (root / "stitched_sections/mip0" / name / "metadata.txt").write_text("{ROOT_DIR}\t.\n")
+        (root / "stitch/stitch_coord" / f"{name}.txt").write_text("{TILE_SIZE}\t8\t8\n")
+    launched = []
+    class Process:
+        pid, stdout = 1, ()
+        def __init__(self, argv, **options):
+            launched.append((argv, options.get("env")))
+        def __enter__(self):
+            return self
+        def __exit__(self, *error):
+            return False
+        def wait(self):
+            return 0
+    monkeypatch.setattr(cluster_remote.subprocess, "Popen", Process)
+    bundle = tmp_path / "bundle"; bundle.mkdir()
+    manifest = dict(resources=asdict(ClusterResources("serial_std", 4, 8, 1, 2, 2)), sections=sections,
+                    commands=[dict(kind="step", step="thumbnail.downsample")], run_id="run", project_id="project")
+    with pytest.raises(RuntimeError, match="missing outputs"):       # the stand-in process makes no thumbnails
+        run_commands(bundle, root, manifest)
+    assert sorted(read_json(env["FW_LOCAL_RESOURCES_FILE"])["section_name"] for _, env in launched) == sections
+    assert all(argv[-2:] == ["--stop", "1"] and "--start" not in argv for argv, _ in launched)
+    launched.clear()                     # one section at a time: FEABAS's own loop over all of them, as before
+    manifest["resources"] = asdict(ClusterResources("serial_std", 4, 8, 1, 4, 1))
+    with pytest.raises(RuntimeError, match="missing outputs"):
+        run_commands(bundle, root, manifest)
+    assert len(launched) == 1 and launched[0][1] is None and "--stop" not in launched[0][0]
+

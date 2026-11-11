@@ -32,12 +32,23 @@ versions follow [Semantic Versioning](https://semver.org/).
   - **Cluster settings → Advanced → Stop waiting for a job…** is a way out for a job whose state can no
     longer be settled. Nothing is cancelled at LRZ.
   - Cancelling a job that has already ended is no longer an error.
+- **Cluster mode: *Make thumbnails* failed at random with more than one simultaneous section.** Each section
+  ran as its own FEABAS process and was addressed by its position. FEABAS makes thumbnails in phases that
+  each list the sections which have reached them, so a section that overtook an earlier one found nothing at
+  its position: no thumbnail, no mask, and the job ended with "missing outputs". Every process is now given
+  its section's name, as local parallelism does. (The demo project hid this: its thumbnails are made from
+  full resolution, which every section has from the start.)
 
 ### Validation
 - Reproduced on Linux with Python 3.11.18: 6.12.0 loses exactly one reference per emission, 6.11.2 and 6.11.3
   none; the real main window aborted in `core/jobs.py` after 3,700 lines of a 5,000-line job, and runs 6,000
   lines and exits cleanly with the compensation. Other projects report the bug for the Linux build of PySide6;
   Windows was not tested.
+- Cluster code run end to end on one machine, as a job script under a stand-in for Slurm: all 12 steps of
+  the pipeline on 8 sections with 4 at once. With thumbnails at mip 3, *Make thumbnails* left 2 of 8
+  thumbnails missing and the job failed; with the fix, three runs from scratch gave 8 of 8 each.
+- The login-node commands for submitting and finding a job run in tests against stand-ins for `sbatch`,
+  `squeue` and `sacct`: accepted, refused, timed out, found in the queue, in the accounting, by its log.
 - A test emits 200 signals and fails if any reference is lost, so a later PySide6 with the same fault shows up
   in CI (which had passed for 0.3.9 one day before 6.12.0 appeared).
 
