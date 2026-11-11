@@ -16,6 +16,14 @@ the affected module is imported.
    URLs in specs passed to tensorstore.open / tensorstore.Spec / tensorstore.KvStore.open
    and makes ``KvStore.url`` report the FEABAS form again, so FEABAS's own ``'file://'``
    stripping keeps producing valid Windows paths.
+
+3. Tiles of one size keep that size. ``Stitcher`` rounds a tile's two corners separately
+   (``np.round``: halves to even), so with an odd tile size and a position ending in .5 the
+   corners go opposite ways and that tile comes out 1 px taller, shorter, wider or narrower
+   than the others. Optimize montage then stops with "tile size in group 0 not consistent"
+   (heights; unequal widths pass a mistyped check and give those tiles a mesh of the wrong
+   width). Patched to round the corner and keep the size, and - for match files written
+   before - to give tiles that are 1 px off their group's size when the group is set.
 """
 
 import os
@@ -111,6 +119,66 @@ def _install_matcher():
     stitcher = sys.modules.get("feabas.stitcher")
     if stitcher is not None and hasattr(stitcher, "stitching_matcher"):
         stitcher.stitching_matcher = stitching_matcher
+
+
+def _true_size(sizes):
+    """The size that tiles of one size were given before FEABAS's rounding put some 1 px off
+    (see 3. above), or None if *sizes* differ for another reason. Only an odd size is ever
+    put off, to the even numbers next to it - so it is the one odd number in their range."""
+    low, high = int(min(sizes)), int(max(sizes))
+    if low == high or high - low > 2:
+        return None
+    odd = [v for v in range(low, high + 1) if v % 2]
+    return odd[0] if len(odd) == 1 else None
+
+
+def _install_stitcher():
+    """Make feabas.stitcher.Stitcher keep the size of its tiles (see 3. above)."""
+    try:
+        import numpy as np
+        from feabas import stitcher
+    except Exception:  # noqa: BLE001
+        return
+    cls = getattr(stitcher, "Stitcher", None)
+    if cls is None or getattr(cls, "_feabas_workbench_size_fix", False):
+        return
+    orig_init, orig_groupings = cls.__init__, cls.set_groupings
+
+    def __init__(self, imgpaths, bboxes, **kwargs):
+        boxes = np.array(bboxes, dtype=np.float64)
+        if boxes.ndim == 2 and boxes.shape[1] == 4 and len(boxes):
+            # as FEABAS, except for the tiles it would resize: round(min + size) == round(min) + size
+            # for whole sizes unless min ends in .5 and the size is odd
+            corner = np.round(boxes[:, :2])
+            boxes = np.concatenate([corner, corner + np.round(boxes[:, 2:] - boxes[:, :2])], axis=1)
+            bboxes = boxes
+        orig_init(self, imgpaths, bboxes, **kwargs)
+
+    def set_groupings(self, groupings):
+        if groupings is not None:
+            try:
+                labels = np.asarray(groupings).ravel()
+                boxes = self._init_bboxes
+                for g in np.unique(labels):
+                    idx = np.nonzero(labels == g)[0]
+                    if len(idx) < 2 or len(labels) != len(boxes):
+                        continue
+                    for lo, hi in ((0, 2), (1, 3)):          # x: columns 0, 2 (width); y: 1, 3 (height)
+                        size = _true_size(boxes[idx, hi] - boxes[idx, lo])
+                        if size is not None:
+                            boxes[idx, hi] = boxes[idx, lo] + size
+                            if getattr(self, "_refined_init_bboxes", None) is not None:
+                                refined = self._refined_init_bboxes
+                                refined[idx, hi] = refined[idx, lo] + size
+                self.tile_sizes = stitcher.common.bbox_sizes(boxes)
+                self.average_tile_size = np.median(self.tile_sizes, axis=0)
+            except Exception:  # noqa: BLE001 - never worse than FEABAS itself: its own check follows
+                pass
+        return orig_groupings(self, groupings)
+
+    __init__.__doc__, set_groupings.__doc__ = orig_init.__doc__, orig_groupings.__doc__
+    cls.__init__, cls.set_groupings = __init__, set_groupings
+    cls._feabas_workbench_size_fix = True
 
 
 class _Finder:
@@ -237,6 +305,7 @@ def _chain_next_sitecustomize():
 _hook("feabas.config", _config_overrides)
 _hook("feabas.storage", _local_section_listing)
 _hook("feabas.matcher", _install_matcher)
+_hook("feabas.stitcher", _install_stitcher)
 if os.name == "nt":
     _hook("tensorstore", _install)
 _chain_next_sitecustomize()

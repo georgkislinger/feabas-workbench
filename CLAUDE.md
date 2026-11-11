@@ -22,7 +22,10 @@
   FEABAS. (1) all platforms: `matcher.stitching_matcher` only assigns `phtm` when `compute_photometric` is true but
   returns it unconditionally, so every tile pair that passes the coarse confidence check raises `UnboundLocalError`
   and stitch matching yields no matches at all - the patch defaults that flag to true. (2) Windows: FEABAS builds
-  `file://D:/...` URLs that TensorStore rejects, rewritten to `file:///D:/...`. New projects default to the PNG
+  `file://D:/...` URLs that TensorStore rejects, rewritten to `file:///D:/...`. (3) all platforms: `Stitcher` rounds a
+  tile's two corners separately (halves to even), so an odd tile size at a position ending in .5 came out 1 px off and
+  Optimize montage stopped with "tile size in group 0 not consistent" - the patch rounds the corner and keeps the size,
+  and `set_groupings` repairs boxes of match files written before (`_true_size`: only an odd size is ever put off). New projects default to the PNG
   (`image`) render driver. The same file applies per-run settings without touching the YAML: `FW_LOCAL_RESOURCES_FILE`
   (local parallelism) and `FW_STAGE_SETTINGS` (JSON kind/field/values/cpu_budget).
 - Mipmaps (`thumbnail.downsample`, `align.downsample`) default to Local parallelism "Automatic"

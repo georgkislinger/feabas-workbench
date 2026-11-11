@@ -57,6 +57,14 @@ versions follow [Semantic Versioning](https://semver.org/).
   archived the tile matching too. A request now archives the steps its changed settings decide, and what
   comes after them - the rule a local project uses for stale steps. The cluster view marks the same steps
   stale. A new section order starts again from coarse matching, not from the thumbnails.
+- ***Optimize montage* stopped with "tile size in group 0 not consistent"** for sections whose tiles have
+  an odd height and a stage position ending in .5. FEABAS rounds a tile's two corners separately, halves to
+  the even number, so such a tile came out 1 px taller or shorter than the others (4095, 4096, 4094 for
+  three tiles of 4095 px), and FEABAS requires the tiles of a section to be one size. Odd widths had the
+  same fault without the message (FEABAS's width check tests the heights again). The run-time patch now
+  rounds the corner and keeps the size. Match files written before are repaired when *Optimize montage*
+  loads them, so the sections that failed only need that step run again - no new matching. Tiles that
+  really differ in size are refused as before.
 
 ### Validation
 - Reproduced on Linux with Python 3.11.18: 6.12.0 loses exactly one reference per emission, 6.11.2 and 6.11.3
@@ -68,6 +76,12 @@ versions follow [Semantic Versioning](https://semver.org/).
   thumbnails missing and the job failed; with the fix, three runs from scratch gave 8 of 8 each.
 - The login-node commands for submitting and finding a job run in tests against stand-ins for `sbatch`,
   `squeue` and `sacct`: accepted, refused, timed out, found in the queue, in the accounting, by its log.
+- Tile sizes, against FEABAS 3.0.5 itself: four tiles of 4095 × 6145 px at positions ending in .5 give four
+  different sizes and FEABAS's refusal; with the patch one size from the coordinate file and from a match
+  file written before, the same boxes as FEABAS for an even size, and still a refusal for tiles of
+  100 and 90 px. The demo pipeline passes with 384 and 387 px tiles. (At 385 px it does not, with or without
+  the patch: the synthetic tiles there lie 1 px off their coordinates and one tiny montage loses its
+  matches.)
 - A test emits 200 signals and fails if any reference is lost, so a later PySide6 with the same fault shows up
   in CI (which had passed for 0.3.9 one day before 6.12.0 appeared).
 

@@ -289,3 +289,53 @@ def test_stage_settings_reach_feabas_and_leave_the_yaml_alone(project):
     assert p.returncode == 0, p.stderr
     assert json.loads(p.stdout.strip().splitlines()[-1]) == [7, False, 3, 16, 7]
     assert original == {str(f): f.read_bytes() for f in project.configs_dir.glob('*.yaml')}
+
+
+@requires_feabas
+def test_tiles_of_one_size_keep_it_when_feabas_rounds_their_positions(project, tmp_path):
+    """FEABAS rounds a tile's two corners separately, halves to even: with an odd tile size and a position
+    ending in .5 that tile comes out 1 px larger or smaller, and Optimize montage stops with 'tile size in
+    group 0 not consistent'. The run-time patch rounds the corner and keeps the size, and repairs match
+    files written before when their tiles are grouped."""
+    from feabas_workbench.core.jobs import feabas_env
+    def coordinates(name, size, rows):
+        text = "".join(f"{{{k}}}\t{v}\n" for k, v in (("ROOT_DIR", tmp_path.as_posix()), ("RESOLUTION", 10)))
+        text += (f"{{TILE_SIZE}}\t{size[0]}\t{size[1]}\n" if size else "") + "".join(r + "\n" for r in rows)
+        (tmp_path / name).write_text(text)
+        return str(tmp_path / name)
+    positions = ["t0.tif\t0.0\t0.0", "t1.tif\t5500.5\t10.5", "t2.tif\t0.0\t3700.5", "t3.tif\t5501.5\t3711.5"]
+    odd, even = coordinates("odd.txt", (4095, 6145), positions), coordinates("even.txt", (4096, 6144), positions)
+    other = coordinates("other.txt", None, ["t0.tif\t0\t0\t100\t100", "t1.tif\t50\t0\t150\t90"])
+    old_match = str(tmp_path / "old_match.h5")
+    code = ("import json, sys, numpy as np\nfrom feabas.stitcher import Stitcher\nout = []\n"
+            "for name in sys.argv[1:]:\n"
+            "    if name.startswith('save:'):\n"
+            "        source, target = name[5:].split('|')\n"
+            "        Stitcher.from_coordinate_file(source).save_to_h5(target, save_matches=False, save_meshes=False)\n"
+            "        continue\n"
+            "    s = (Stitcher.from_h5(name, load_matches=False, load_meshes=False) if name.endswith('.h5')\n"
+            "         else Stitcher.from_coordinate_file(name))\n"
+            "    try:\n"
+            "        s.set_groupings(np.zeros(s.num_tiles, dtype=np.int32)); problem = ''\n"
+            "    except RuntimeError as e:\n"
+            "        problem = str(e)\n"
+            "    out.append([sorted(set(map(tuple, s.tile_sizes.tolist()))), problem, s._init_bboxes.tolist()])\n"
+            "print(json.dumps(out))\n")
+    def run(env, *names):
+        p = subprocess.run([sys.executable, "-c", code, *names], cwd=project.root, env=env, text=True,
+                           capture_output=True, timeout=120)
+        assert p.returncode == 0, p.stderr
+        return json.loads(p.stdout.strip().splitlines()[-1])
+    plain = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    # FEABAS 3.0.5 as it is: four sizes for four tiles of one size, and its own check refuses them
+    (sizes, problem, _), = run(plain, f"save:{odd}|{old_match}", odd)
+    assert len(sizes) == 4 and "not consistent" in problem
+    patched = dict(os.environ, **feabas_env())
+    fixed, same, different, repaired = run(patched, odd, even, other, old_match)
+    assert fixed[0] == [[4095, 6145]] and fixed[1] == ""
+    assert [b[:2] for b in fixed[2]] == [[0, 0], [5500, 10], [0, 3700], [5502, 3712]]      # corners as FEABAS rounds them
+    assert same[0] == [[4096, 6144]] and same[1] == ""
+    assert same[2] == run(plain, even)[0][2]                     # nothing changes where nothing was wrong
+    assert len(different[0]) == 2 and "not consistent" in different[1]      # really different tiles are still refused
+    assert repaired[0] == [[4095, 6145]] and repaired[1] == ""  # a match file written before the fix
+
