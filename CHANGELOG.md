@@ -3,6 +3,29 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.10] – 2026-11-11
+
+### Fixed
+- **The workbench could end abruptly in the middle of a run** ("Fatal Python error: bool_dealloc") on Python
+  3.10 and 3.11 with PySide6 6.12.0, released the day after 0.3.9. That release gives away one reference to
+  `True` on every `Signal.emit()` (PYSIDE-3477). The main window has about 3,700 of them to lose and uses one
+  per job output line and per progress update (every 1.5 s): roughly 90 minutes of a running job. Python 3.12
+  and newer are not affected (`True` is immortal there), nor is the Windows executable (built with 3.12).
+  `tools/install.bat` creates a Python 3.11 environment, so installations made since 8 October can have it.
+  - New installations and updates get PySide6 below 6.12 on Python 3.10/3.11 (`pyproject.toml`).
+  - An installation that already has it is recognised at start: the workbench compensates for the lost
+    references in that session and the log says how to install another PySide6 (`tools\install.bat` again, or
+    `python -m pip install "PySide6<6.12"`).
+  - `--selfcheck` reports the PySide6 version and fails on a binding that loses references.
+
+### Validation
+- Reproduced on Linux with Python 3.11.18: 6.12.0 loses exactly one reference per emission, 6.11.2 and 6.11.3
+  none; the real main window aborted in `core/jobs.py` after 3,700 lines of a 5,000-line job, and runs 6,000
+  lines and exits cleanly with the compensation. Other projects report the bug for the Linux build of PySide6;
+  Windows was not tested.
+- A test emits 200 signals and fails if any reference is lost, so a later PySide6 with the same fault shows up
+  in CI (which had passed for 0.3.9 one day before 6.12.0 appeared).
+
 ## [0.3.9] – 2026-10-07
 
 ### Added – segmentation masks exported at a mip level

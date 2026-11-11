@@ -1,6 +1,6 @@
 [project]
 name = "feabas-workbench"
-version = "0.3.9"
+version = "0.3.10"
 description = "Desktop workbench around FEABAS: data prep, preprocessing, stitching, masks, structure-guided alignment and export for serial-section EM"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,7 +19,10 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Image Processing",
 ]
 dependencies = [
-    "PySide6>=6.5",
+    # 6.12.0 gives away a reference to True on every Signal.emit() (PYSIDE-3477). From Python 3.12 on True is
+    # immortal and nothing happens; on 3.10/3.11 the interpreter aborts once they run out (ui/qtcheck.py).
+    "PySide6>=6.5,<6.12; python_version < '3.12'",
+    "PySide6>=6.5; python_version >= '3.12'",
     "numpy",
     "scipy",
     "PyYAML>=6.0",
