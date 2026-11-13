@@ -3,7 +3,7 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [0.3.10] – 2026-11-11
+## [0.3.10] – 2026-11-13
 
 ### Fixed
 - **The workbench could end abruptly in the middle of a run** ("Fatal Python error: bool_dealloc") on Python
