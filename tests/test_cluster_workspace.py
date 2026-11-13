@@ -14,7 +14,8 @@ import pytest
 
 from feabas_workbench.core.cluster_bundle import ClusterResources
 from feabas_workbench.core.cluster_workspace import (build_workspace_bundle, profile_for, save_profile, view_project,
-    read_json, write_json, section_tasks, resources_for, source_signature, remote_scan, sync_scope)
+    read_json, write_json, section_tasks, resources_for, source_signature, remote_scan, sync_scope, refresh_view,
+    adopt_local_masks, mask_changes)
 from feabas_workbench.core.cluster_remote import install_workspace_inputs, run_commands
 from feabas_workbench.core.configs import ConfigStore
 from feabas_workbench.core.synthetic import make_demo_project
@@ -373,3 +374,434 @@ def test_globus_consent_scopes_are_remembered_and_granted_in_browser(monkeypatch
     assert cli.login() == "Granted"
     assert calls == [["session", "consent", scope]]
     assert not cli.required_scopes
+
+
+def _job_entry(profile, **values):
+    entry = dict(run_id="run1", state="READY", job_id="", remote_bundle="/dss/example/work/.workbench-cluster/run1",
+                 cluster="serial", input_plan={}, host=profile["host"], username=profile["username"], port=profile["port"],
+                 preview_stamp=0, last_scheduler_check=0, started=time.time(), notified=False, job_name="feabas-0123abcd",
+                 commands=[dict(kind="step", step="stitch.matching", name="Match tiles")])
+    entry.update(values)
+    return entry
+
+
+def test_job_refused_by_slurm_fails_at_once_and_frees_the_run_buttons(window, project, profile, monkeypatch):
+    """sbatch refusing a job (QOS, memory, partition access) used to leave the request 'submitting' for good:
+    every Run button and the settings that could correct the request stayed blocked."""
+    from feabas_workbench.core.cluster_transport import SubmissionRejected
+    from feabas_workbench.ui.cluster_setup import ClusterSetupDialog
+    window.open_project(project.root); window.ctx.use_cluster(profile)
+    backend = window.ctx.cluster
+    entry = _job_entry(profile)
+    backend.journal = [entry]
+    def refuse(*a):
+        raise SubmissionRejected("sbatch: error: Batch job submission failed: Invalid qos specification")
+    backend.client = SimpleNamespace(connected=True, submit=refuse, close=lambda: None)
+    backend._stage_or_submit(entry)
+    assert entry["state"] == "FAILED" and "Invalid qos specification" in entry["result"]["error"]
+    assert not backend.running
+    finished = []
+    window.ctx.jobs.job_finished.connect(finished.append)
+    monkeypatch.setattr(backend, "_work", lambda text, fn, done=None, **k: done(fn()))
+    backend.refresh()                                   # the pages hear that the step failed
+    assert len(finished) == 1 and not finished[0].ok and "Invalid qos" in finished[0].last_lines[0]
+    dialog = ClusterSetupDialog(window.ctx, window)     # and the request can be corrected
+    dialog.fields["memory_gib"].setValue(8)
+    assert dialog.save.isEnabled() and dialog._store()["memory_gib"] == 8
+    dialog.shutdown(); dialog.close()
+
+
+def test_unconfirmed_submission_is_settled_by_looking_for_the_job(window, project, profile, monkeypatch):
+    from feabas_workbench.core.cluster_transport import JobRecord, SubmissionRejected, SubmissionUncertain
+    window.open_project(project.root); window.ctx.use_cluster(profile)
+    backend = window.ctx.cluster
+    entry = _job_entry(profile)
+    backend.journal = [entry]
+    answers, names = [None], []
+    def recover(bundle, cluster, name):
+        names.append(name)
+        if isinstance(answers[0], Exception):
+            raise answers[0]
+        return answers[0]
+    def lost(*a):
+        raise SubmissionUncertain("connection lost")
+    backend.client = SimpleNamespace(connected=True, submit=lost, recover=recover, read_remote_json=lambda *a: {},
+                                     status=lambda *a: "PENDING|0:00|Priority", close=lambda: None)
+    backend._stage_or_submit(entry)                     # sent, no confirmation: not an error, not a second job
+    assert entry["state"] == "SUBMITTING" and "connection lost" in entry["submit_error"]
+    monkeypatch.setattr(backend, "_work", lambda text, fn, done=None, **k: done(fn()))
+    backend.refresh()
+    assert entry["state"] == "SUBMITTING" and backend.running and names == ["feabas-0123abcd"]   # too early to say
+    entry["submit_attempted"] -= 300
+    backend.refresh()
+    assert entry["state"] == "FAILED" and "never became a job" in entry["result"]["error"] and not backend.running
+    found = _job_entry(profile, run_id="run2", state="SUBMITTING", submit_attempted=time.time())
+    backend.journal = [found]
+    answers[0] = JobRecord("77", "serial", found["remote_bundle"], found["remote_bundle"] + "/slurm-77.out")
+    backend.refresh()
+    assert found["job_id"] == "77" and found["state"] == "PENDING" and found["scheduler_status"].startswith("PENDING")
+    refused = _job_entry(profile, run_id="run3", state="SUBMITTING", submit_attempted=time.time())
+    backend.journal = [refused]
+    answers[0] = SubmissionRejected("sbatch: error: Requested node configuration is not available")
+    backend.refresh()
+    assert refused["state"] == "FAILED" and "node configuration" in refused["result"]["error"]
+
+
+def test_stop_waiting_releases_a_job_whose_state_cannot_be_settled(window, project, profile):
+    window.open_project(project.root); window.ctx.use_cluster(profile)
+    backend = window.ctx.cluster
+    entry = _job_entry(profile, state="PENDING", job_id="12")
+    backend.journal = [entry]
+    finished = []
+    window.ctx.jobs.job_finished.connect(finished.append)
+    assert backend.running and not backend.forget("other") and backend.running
+    assert backend.forget("run1") and entry["state"] == "CANCELLED" and not backend.running
+    assert "Job 12 keeps running at LRZ" in entry["result"]["error"] and finished and finished[0].cancelled
+
+
+def test_parallel_thumbnail_tasks_name_their_section(tmp_path, monkeypatch):
+    """FEABAS makes thumbnails in phases that each list the sections which have reached them, so a section
+    addressed by its position found nothing when it overtook an earlier one (2 of 8 thumbnails missing and a
+    failed job in a simulated run). Each process is given its section's name, as local parallelism does."""
+    from feabas_workbench.core import cluster_remote
+    from feabas_workbench.core.project import Project
+    root = Project.create(tmp_path / "remote").root
+    sections = ["s0001", "s0002", "s0003"]
+    (root / "stitch/stitch_coord").mkdir(parents=True, exist_ok=True)
+    for name in sections:
+        (root / "stitched_sections/mip0" / name).mkdir(parents=True)
+        (root / "stitched_sections/mip0" / name / "metadata.txt").write_text("{ROOT_DIR}\t.\n")
+        (root / "stitch/stitch_coord" / f"{name}.txt").write_text("{TILE_SIZE}\t8\t8\n")
+    launched = []
+    class Process:
+        pid, stdout = 1, ()
+        def __init__(self, argv, **options):
+            launched.append((argv, options.get("env")))
+        def __enter__(self):
+            return self
+        def __exit__(self, *error):
+            return False
+        def wait(self):
+            return 0
+    monkeypatch.setattr(cluster_remote.subprocess, "Popen", Process)
+    bundle = tmp_path / "bundle"; bundle.mkdir()
+    manifest = dict(resources=asdict(ClusterResources("serial_std", 4, 8, 1, 2, 2)), sections=sections,
+                    commands=[dict(kind="step", step="thumbnail.downsample")], run_id="run", project_id="project")
+    with pytest.raises(RuntimeError, match="missing outputs"):       # the stand-in process makes no thumbnails
+        run_commands(bundle, root, manifest)
+    assert sorted(read_json(env["FW_LOCAL_RESOURCES_FILE"])["section_name"] for _, env in launched) == sections
+    assert all(argv[-2:] == ["--stop", "1"] and "--start" not in argv for argv, _ in launched)
+    launched.clear()                     # one section at a time: FEABAS's own loop over all of them, as before
+    manifest["resources"] = asdict(ClusterResources("serial_std", 4, 8, 1, 4, 1))
+    with pytest.raises(RuntimeError, match="missing outputs"):
+        run_commands(bundle, root, manifest)
+    assert len(launched) == 1 and "FW_LOCAL_RESOURCES_FILE" not in launched[0][1] and "--stop" not in launched[0][0]
+
+
+def _later(path, seconds=5):
+    stamp = path.stat().st_mtime + seconds
+    os.utime(path, (stamp, stamp))
+
+
+def test_coordinates_written_on_the_pc_reach_the_next_cluster_request(project, profile, tmp_path):
+    """The cluster view is a copy made once. Coordinates rewritten on the PC afterwards were not the ones
+    sent to LRZ, and nothing said so."""
+    view = view_project(project)
+    assert refresh_view(project, view) == []                       # a fresh copy: nothing to carry over
+    coords = sorted(project.stitch_coord_dir.glob("*.txt"))
+    lines = coords[0].read_text().splitlines()
+    name, x, y = lines[-1].split("\t")
+    lines[-1] = f"{name}\t{float(x) + 40:.1f}\t{float(y) + 40:.1f}"
+    coords[0].write_text("\n".join(lines) + "\n"); _later(coords[0])
+    coords[-1].unlink()                                            # one section fewer, as after a new scan
+    project.state.volume.section_names = [p.stem for p in coords[:-1]]
+    project.state.volume.pixel_size_nm = 7.5
+    (project.root / "section_order.txt").write_text("\n".join(reversed(project.state.volume.section_names)) + "\n")
+    view = view_project(project)                                   # 'Use cluster' again
+    notes = refresh_view(project, view)
+    assert len(notes) == 2 and "coordinates written on this PC (2 sections)" in notes[0] and "section order" in notes[1]
+    assert sorted(p.name for p in view.stitch_coord_dir.glob("*.txt")) == [p.name for p in coords[:-1]]
+    assert view.state.volume.pixel_size_nm == 7.5 and view.section_names() == project.section_names()
+    kept = list((project.root / ".workbench-cluster/replaced").rglob(coords[-1].name))
+    assert len(kept) == 1                                          # what the view lost is not gone
+    bundle = build_workspace_bundle(view, project, profile, [dict(kind="step", step="stitch.matching")], tmp_path / "bundles")
+    sent = (bundle / "inputs/stitch/stitch_coord" / coords[0].name).read_text().splitlines()[-1]
+    assert sent.split("\t")[1:] == lines[-1].split("\t")[1:]
+    assert (bundle / "inputs/section_order.txt").is_file()
+    assert refresh_view(project, view_project(project)) == []      # and only once
+
+
+def test_coordinates_written_in_cluster_mode_are_kept(project):
+    view = view_project(project)
+    coord = sorted(view.stitch_coord_dir.glob("*.txt"))[0]
+    coord.write_text(coord.read_text() + "extra.tif\t1.0\t2.0\n"); _later(coord)
+    assert refresh_view(project, view) == [] and "extra.tif" in coord.read_text()
+
+
+def test_preprocessed_tiles_of_the_pc_are_named_as_the_views(project):
+    view = view_project(project)
+    old = Path(project.state.source.root_dir).as_posix()
+    for coord in project.stitch_coord_dir.glob("*.txt"):
+        coord.write_text(coord.read_text().replace(old, (project.preprocessed_dir / "histmatch").as_posix())); _later(coord)
+    project.state.preprocessing.active_source = "histmatch"
+    assert len(refresh_view(project, view)) == 1 and view.state.preprocessing.active_source == "histmatch"
+    text = sorted(view.stitch_coord_dir.glob("*.txt"))[0].read_text()
+    assert "{ROOT_DIR}\t" + (view.preprocessed_dir / "histmatch").as_posix() in text
+
+
+def test_masks_of_the_pc_are_reported_and_copied_only_on_request(project):
+    view = view_project(project)
+    (view.root / "masks/folds").mkdir(parents=True); (view.root / "masks/folds/s0001.png").write_bytes(b"made at LRZ")
+    (project.root / "masks/folds").mkdir(parents=True, exist_ok=True)
+    mask = project.root / "masks/folds/s0001.png"; mask.write_bytes(b"drawn on this PC"); _later(mask, 60)
+    (project.root / "thumbnail_align/manual_matches").mkdir(parents=True, exist_ok=True)
+    (project.root / "thumbnail_align/manual_matches/a__to__b.h5").write_bytes(b"picked by hand")
+    notes = refresh_view(project, view)
+    assert len(notes) == 1 and notes[0].startswith("2 mask or manual-match file(s)")
+    assert (view.root / "masks/folds/s0001.png").read_bytes() == b"made at LRZ"      # never on its own
+    assert adopt_local_masks(project, view) == 2 and mask_changes(project, view) == []
+    assert (view.root / "masks/folds/s0001.png").read_bytes() == b"drawn on this PC"
+    assert (view.root / "thumbnail_align/manual_matches/a__to__b.h5").is_file()
+    kept = list((project.root / ".workbench-cluster/replaced").rglob("s0001.png"))
+    assert len(kept) == 1 and kept[0].read_bytes() == b"made at LRZ"
+
+
+def test_a_changed_setting_names_the_steps_it_decides(project):
+    from feabas_workbench.core.steps import steps_decided_by
+    cfg = ConfigStore(project.configs_dir)
+    def after(kind, key, value):
+        old = copy.deepcopy(cfg[kind].merged)
+        new = copy.deepcopy(old)
+        node = new
+        *parents, leaf = key.split(".")
+        for part in parents:
+            node = node.setdefault(part, {})
+        node[leaf] = value
+        return steps_decided_by(kind, old, new)
+    assert after("alignment", "rendering.remap_interp", "CUBIC") == ["align.rendering"]
+    assert after("alignment", "downsample.max_mip", 3) == ["align.downsample"]
+    assert after("alignment", "matching.working_mip_level", 5) == ["align.matching"]
+    assert after("alignment", "rendering.num_workers", 3) == []                  # how it runs, not what it gives
+    assert after("stitching", "rendering.tile_size", [2048, 2048]) == ["stitch.rendering"]
+    assert after("stitching", "optimization.use_group", False) == ["stitch.optimization"]
+    assert after("thumbnail", "thumbnail_mip_level", 5) == ["thumbnail.downsample"]
+    assert after("thumbnail", "alignment.optimization.stiffness", 0.5) == ["thumbnail.optimization"]
+    assert after("thumbnail", "alignment.match_mode", "template") == ["thumbnail.matching"]
+
+
+def test_a_render_setting_does_not_undo_the_alignment_at_lrz(project, profile, tmp_path):
+    """Any change in a settings file used to archive everything from that file's first step on: a new
+    resampling method for the aligned stack moved meshes, fine matches and the optimization away, and the
+    next Render failed with 'needs Optimize stack'."""
+    view = view_project(project)
+    command = [dict(kind="step", step="align.rendering")]
+    bundle = build_workspace_bundle(view, project, profile, command, tmp_path / "bundles")
+    root = tmp_path / "remote"
+    write_json(root / ".workbench-cluster/owner.json", dict(project_id=profile["project_id"]))
+    install_workspace_inputs(bundle, root, read_json(bundle / "manifest.json"))
+    results = ["stitch/match_h5/s0001.h5", "stitch/tform/s0001.h5", "stitched_sections/mip0/s0001/metadata.txt",
+               "thumbnail_align/thumbnails/s0001.png", "thumbnail_align/matches/s0001__to__s0002.h5",
+               "align/mesh/s0001.h5", "align/matches/s0001__to__s0002.h5", "align/tform/s0001.h5",
+               "aligned_stack/mip0/0001_s0001/metadata.txt"]
+    for rel in results:
+        (root / rel).parent.mkdir(parents=True, exist_ok=True); (root / rel).write_bytes(b"result")
+    def request_after(kind, key, value):
+        config = ConfigStore(view.configs_dir)
+        config.set(kind, key, value); config.save()
+        new = build_workspace_bundle(view, project, profile, command, tmp_path / "bundles")
+        install_workspace_inputs(new, root, read_json(new / "manifest.json"))
+        return [rel for rel in results if not (root / rel).exists()]
+    assert request_after("alignment", "rendering.num_workers", 3) == []
+    assert request_after("alignment", "rendering.remap_interp", "CUBIC") == ["aligned_stack/mip0/0001_s0001/metadata.txt"]
+    assert remote_scan(view, ConfigStore(view.configs_dir), dict(steps={}, configurations={})).status   # still scans
+    gone = request_after("stitching", "rendering.tile_size", [2048, 2048])
+    assert "stitch/match_h5/s0001.h5" not in gone and "stitch/tform/s0001.h5" not in gone      # matching and montage stay
+    assert "stitched_sections/mip0/s0001/metadata.txt" in gone and "align/tform/s0001.h5" in gone
+
+
+def test_cluster_view_marks_only_the_steps_a_changed_setting_decides(project):
+    cfg = ConfigStore(project.configs_dir)
+    done = dict(state="done", done=3, expected=3)
+    snapshot = dict(steps={k: dict(done) for k in ("align.meshing", "align.matching", "align.optimization", "align.rendering")},
+                    configurations={"alignment": copy.deepcopy(cfg["alignment"].merged)})
+    cfg.set("alignment", "rendering.remap_interp", "CUBIC")
+    scan = remote_scan(project, cfg, snapshot)
+    assert scan["align.rendering"].state == State.STALE
+    assert all(scan[k].state == State.COMPLETE for k in ("align.meshing", "align.matching", "align.optimization"))
+
+
+def _remote_with_sections(tmp_path, base, names):
+    from feabas_workbench.core.project import Project
+    root = Project.create(tmp_path / "remote").root
+    (root / "stitch/stitch_coord").mkdir(parents=True, exist_ok=True)
+    for name in names:
+        (root / base / name).mkdir(parents=True)
+        (root / base / name / "metadata.txt").write_text("{ROOT_DIR}\t.\ntile.png\t0\t0\t64\t64\n")
+        (root / "stitch/stitch_coord" / f"{name.split('_')[-1]}.txt").write_text("{TILE_SIZE}\t8\t8\n")
+    return root
+
+
+def test_mipmaps_at_lrz_take_whole_sections_per_worker_like_on_the_pc(tmp_path):
+    """FEABAS's default mipmaps one section at a time with a pool of processes per mip level: 357 s through
+    the cluster runner against 100 s on the PC for the same 8 sections and 4 cores. The job now decides as
+    the PC's 'Automatic' does, within its allocation, and keeps what the project sets itself."""
+    from feabas_workbench.core.cluster_remote import mipmap_settings
+    names = [f"{i:04d}_s{i:04d}" for i in range(1, 9)]
+    root = _remote_with_sections(tmp_path, "aligned_stack/mip0", names)
+    command = dict(kind="step", step="align.downsample")
+    manifest = dict(own_mipmap_settings={"align.downsample": [], "thumbnail.downsample": []}, dtype="uint8")
+    kind, field, values, note = mipmap_settings(root, command, manifest, ClusterResources("cm4_tiny", 32, 128, 4, 16, 2))
+    assert (kind, field) == ("alignment", "downsample")
+    assert values == dict(cache_size=16, parallel_within_section=False, num_workers=8) and "8 at once" in note
+    # the memory of the job limits how many sections run at once (about 1.7 GiB each for 4096 px 8-bit tiles)
+    assert mipmap_settings(root, command, manifest, ClusterResources("serial_std", 8, 4, 1, 4, 2))[2]["num_workers"] == 1
+    # one section, or a setting of the project's own: FEABAS's way, as before
+    assert mipmap_settings(root, dict(command, start=2, stop=3), manifest, ClusterResources("cm4_tiny", 32, 128, 4, 16, 2))[2] \
+        == dict(cache_size=16)
+    own = dict(own_mipmap_settings={"align.downsample": ["parallel_within_section", "cache_size"]})
+    assert mipmap_settings(root, command, own, ClusterResources("cm4_tiny", 32, 128, 4, 16, 2))[2] == {}
+    assert mipmap_settings(root, command, {}, ClusterResources("cm4_tiny", 32, 128, 4, 16, 2))[2] == {}
+
+
+def test_the_mipmap_plan_reaches_the_config_feabas_reads(tmp_path, monkeypatch):
+    from feabas_workbench.core import cluster_remote
+    from feabas_workbench.core.configs import load_yaml
+    names = [f"{i:04d}_s{i:04d}" for i in range(1, 6)]
+    root = _remote_with_sections(tmp_path, "aligned_stack/mip0", names)
+    seen, environments = [], []
+    class Process:
+        pid, stdout = 1, ()
+        def __init__(self, argv, **options):
+            seen.append(load_yaml(Path(options["cwd"]) / "configs/alignment_configs.yaml")["downsample"])
+            environments.append(options["env"])
+        def __enter__(self):
+            return self
+        def __exit__(self, *error):
+            return False
+        def wait(self):
+            return 0
+    monkeypatch.setattr(cluster_remote.subprocess, "Popen", Process)
+    bundle = tmp_path / "bundle"; bundle.mkdir()
+    manifest = dict(resources=asdict(ClusterResources("serial_std", 4, 16, 1, 2, 1)), sections=[n[5:] for n in names],
+                    commands=[dict(kind="step", step="align.downsample")], run_id="run", project_id="project",
+                    own_mipmap_settings={"align.downsample": []}, dtype="uint8")
+    with pytest.raises(RuntimeError, match="missing outputs"):
+        run_commands(bundle, root, manifest)
+    assert len(seen) == 1 and seen[0]["parallel_within_section"] is False
+    assert seen[0]["num_workers"] == 4 and seen[0]["cache_size"] == 16
+    # FEABAS reads the stage configs from the working directory, not from the folder it runs in: what
+    # counts is what the run-time hook is told (the files above are the record of it)
+    import json
+    setting = json.loads(environments[0]["FW_STAGE_SETTINGS"])
+    assert setting == dict(kind="alignment", field="downsample",
+                           values=dict(cache_size=16, parallel_within_section=False, num_workers=4))
+    assert environments[0]["FW_NUM_WORKERS"] == "4"
+
+
+def test_whole_stack_steps_get_every_core_and_section_tasks_their_share(tmp_path, monkeypatch):
+    """The per-step copies of the stage configs were never read by FEABAS (it reads them from the working
+    directory), so at LRZ every step ran with 'workers per section' processes - fine matching with 16 of 32
+    cores in the CPU preset. The count now reaches FEABAS through the run-time hook."""
+    from feabas_workbench.core import cluster_remote
+    names = [f"s{i:04d}" for i in range(1, 4)]
+    root = _remote_with_sections(tmp_path, "stitched_sections/mip0", names)
+    (root / "stitch/match_h5").mkdir(parents=True); (root / "stitch/match_h5/s0001.h5").write_bytes(b"x")
+    (root / "thumbnail_align/tform").mkdir(parents=True); (root / "thumbnail_align/tform/s0001.h5").write_bytes(b"x")
+    (root / "align/mesh").mkdir(parents=True); (root / "align/mesh/s0001.h5").write_bytes(b"x")
+    budgets = []
+    class Process:
+        pid, stdout = 1, ()
+        def __init__(self, argv, **options):
+            budgets.append((argv[argv.index("--mode") + 1], options["env"]["FW_NUM_WORKERS"]))
+        def __enter__(self):
+            return self
+        def __exit__(self, *error):
+            return False
+        def wait(self):
+            return 0
+    monkeypatch.setattr(cluster_remote.subprocess, "Popen", Process)
+    bundle = tmp_path / "bundle"; bundle.mkdir()
+    manifest = dict(resources=asdict(ClusterResources("cm4_tiny", 32, 128, 4, 16, 2)), sections=names, run_id="run",
+                    project_id="project", commands=[dict(kind="step", step="align.matching")])
+    with pytest.raises(RuntimeError, match="missing outputs"):
+        run_commands(bundle, root, manifest)
+    assert budgets == [("matching", "32")]                      # the whole stack: all of the allocation
+    budgets.clear()
+    manifest["commands"] = [dict(kind="step", step="stitch.optimization")]
+    with pytest.raises(RuntimeError, match="missing outputs"):
+        run_commands(bundle, root, manifest)
+    assert sorted(budgets) == [("optimization", "16")] * 3      # three sections, two at a time, 16 workers each
+
+
+def test_previews_are_kept_in_one_folder_and_old_ones_go(window, project, profile, monkeypatch):
+    """Every finished job used to download all previews again into a folder of its own that was never removed."""
+    window.open_project(project.root); window.ctx.use_cluster(profile)
+    backend = window.ctx.cluster
+    old = backend.directory / "incoming-previews" / "an-earlier-run"; old.mkdir(parents=True)
+    (old / "a.png").write_bytes(b"old")
+    current = backend.directory / "incoming-previews" / "current"; current.mkdir()
+    (current / "gone-at-lrz.png").write_bytes(b"stale")
+    rel = "thumbnail_align/thumbnails/s0001.png"
+    digest = hashlib.sha256(b"thumbnail").hexdigest()
+    entry = _job_entry(profile, state="RUNNING", job_id="12", log_path="")
+    backend.journal = [entry]
+    status = dict(state="COMPLETED", timestamp=5, project_id=profile["project_id"], run_id="run1", results=[],
+                  previews_skipped=1, preview_bytes=9, preview_manifest={rel: digest})
+    fetched = []
+    def download_tree(remote, local, **options):
+        fetched.append(remote)
+        (Path(local) / rel).parent.mkdir(parents=True, exist_ok=True)
+        (Path(local) / rel).write_bytes(b"thumbnail")
+        return dict(files=1, copied=1, bytes=9)
+    backend.client = SimpleNamespace(connected=True, read_remote_json=lambda *a: dict(status), download_tree=download_tree,
+                                     close=lambda: None)
+    monkeypatch.setattr(backend, "_work", lambda text, fn, done=None, **k: done(fn()))
+    backend.refresh()
+    assert entry["state"] == "COMPLETED" and fetched[0].endswith("/run1/preview-cache")
+    assert (window.ctx.project.root / rel).read_bytes() == b"thumbnail"
+    assert (current / rel).is_file() and not (current / "gone-at-lrz.png").exists() and not old.exists()
+    assert backend.transfers[-1]["local_destination"] == str(current)
+
+
+def test_a_job_that_ends_between_two_checks_is_not_recorded_as_failed(window, project, profile, monkeypatch):
+    window.open_project(project.root); window.ctx.use_cluster(profile)
+    backend = window.ctx.cluster
+    entry = _job_entry(profile, state="RUNNING", job_id="12", log_path="")
+    backend.journal = [entry]
+    answers = [dict(state="RUNNING", timestamp=0, project_id=profile["project_id"], run_id="run1"),
+               dict(state="COMPLETED", timestamp=0, project_id=profile["project_id"], run_id="run1", results=[])]
+    reads = []
+    def read(*a):
+        reads.append(a)
+        return dict(answers[min(len(reads) - 1, 1)])
+    backend.client = SimpleNamespace(connected=True, read_remote_json=read, status=lambda *a: "12|COMPLETED|0:0|00:10:00",
+                                     close=lambda: None)
+    monkeypatch.setattr(backend, "_work", lambda text, fn, done=None, **k: done(fn()))
+    backend.refresh()                  # status file read as RUNNING, Slurm says COMPLETED, second look: it finished
+    assert entry["state"] == "RUNNING" and len(reads) == 2
+    backend.refresh()
+    assert entry["state"] == "COMPLETED"
+    killed = _job_entry(profile, run_id="run2", state="RUNNING", job_id="13", log_path="")
+    backend.journal = [killed]
+    backend.client.read_remote_json = lambda *a: dict(state="RUNNING", timestamp=0, project_id=profile["project_id"], run_id="run2")
+    backend.client.status = lambda *a: "13|COMPLETED|0:0|00:10:00"
+    backend.refresh()                  # ended without a result of its own: that is a failure
+    assert killed["state"] == "FAILED"
+
+
+def test_a_transfer_globus_paused_is_still_watched(window, project, profile, monkeypatch):
+    window.open_project(project.root); window.ctx.use_cluster(profile)
+    backend = window.ctx.cluster
+    backend.transfers = [dict(purpose="raw images", state="INACTIVE", task_id="1", batch="b", batch_size=1,
+                              fingerprint="source", scope=sync_scope(profile))]
+    assert backend.transferring
+    monkeypatch.setattr(backend, "globus", lambda: SimpleNamespace(task=lambda _: dict(status="SUCCEEDED")))
+    monkeypatch.setattr(backend, "_work", lambda text, fn, done=None, **k: done(fn()))
+    backend.refresh()
+    assert backend.transfers[0]["state"] == "SUCCEEDED" and backend.synced
+
+
+def test_test_runs_and_snapshots_stay_on_the_pc():
+    from feabas_workbench.ui.cluster_backend import PROJECT_EXCLUDE
+    assert {"tests", "snapshots", ".workbench-cluster"} <= set(PROJECT_EXCLUDE)
+

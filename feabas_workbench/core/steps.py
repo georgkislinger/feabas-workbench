@@ -188,6 +188,33 @@ STAGE_LABELS = {
 GLOBAL_STEPS = frozenset({"thumbnail.optimization", "align.optimization"})
 
 
+def _settings(data, prefix: str = "") -> dict:
+    """A config as {dotted key: value}; lists are values."""
+    out = {}
+    for k, v in (data or {}).items():
+        key = f"{prefix}{k}"
+        if isinstance(v, dict) and v:
+            out.update(_settings(v, key + "."))
+        else:
+            out[key] = v
+    return out
+
+
+def steps_decided_by(kind: str, old: dict, new: dict) -> list[str]:
+    """
+    The steps whose results differ between two versions of one config (*kind*: stitching, thumbnail,
+    alignment, material), in pipeline order: each step by its config_keys/config_exclude, and never for
+    settings that only say how a run is carried out (RESOURCE_KEYS). The same rule as the per-setting
+    staleness of a local project, for a comparison of two files (cluster requests).
+    """
+    from .configs import RESOURCE_KEYS
+    a, b = _settings(old), _settings(new)
+    changed = [k for k in a.keys() | b.keys() if a.get(k) != b.get(k) and k.rsplit(".", 1)[-1] not in RESOURCE_KEYS]
+    inside = lambda key, prefixes: any(key == p or key.startswith(p + ".") for p in prefixes)   # noqa: E731
+    return [s.key for s in STEPS if s.config_kind == kind and any(
+        (not s.config_keys or inside(k, s.config_keys)) and not inside(k, s.config_exclude) for k in changed)]
+
+
 def downstream(key: str) -> list[Step]:
     """All steps that (transitively) require *key*, in pipeline order."""
     out: list[Step] = []

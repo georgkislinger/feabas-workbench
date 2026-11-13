@@ -1,15 +1,16 @@
 # Use your normal Workbench workflow at LRZ
 
-Local build **0.3.3+cluster.5**. Open your project on your PC, choose **Use cluster…**,
+Part of FEABAS Workbench since 0.3.4. Open your project on your PC, choose **Use cluster…**,
 complete setup, save cluster settings, then use **Sync project & images**. The normal
 Run buttons now submit work to LRZ. The green accents and the **Execution: LRZ cluster**
 banner show which computer will do the computation. **Leave cluster mode** (top bar,
 Pipeline menu or the setup window) switches back to this PC at any time.
 
-The cluster.2 build passed a real 13-command synthetic FEABAS pipeline, including
-rendering, mipmaps and VAST export. A live LRZ check (job 5610645) confirmed SSH/MFA
-sign-in, Slurm submission, file round trips and download for this account; FEABAS
-itself has not run at LRZ yet. This is a local modification, not an upstream release.
+What has been checked: the whole pipeline runs through the cluster code on one machine, as the
+job script under a stand-in for Slurm (0.3.10: 12 steps on 8 sections, several at once), and the
+sign-in, setup and transfer steps run against a local SSH server in the tests. A live LRZ check
+(job 5610645) confirmed SSH/MFA sign-in, Slurm submission, file round trips and download. A
+complete FEABAS run at LRZ itself has not been validated yet.
 
 ## Before you start: your LRZ access and storage
 
@@ -27,7 +28,7 @@ itself has not run at LRZ yet. This is a local modification, not an upstream rel
 
 ## First live check: sign in, choose storage, prepare FEABAS
 
-1. Restart Workbench after updating. Confirm **0.3.3+cluster.5** in the title/About dialog.
+1. Use Workbench 0.3.10 or newer (the version is in the title bar and in Help → About).
 2. Open the tutorial project. Click **Use cluster…** (also available as
    **Pipeline → Run on cluster…**).
 3. In **1 Cluster setup**, enter your LRZ username and click **1. Sign in and find my storage**.
@@ -168,7 +169,10 @@ is a benchmark starting point, not a guarantee that every processing stage fits.
 
 Within-section workers and simultaneous sections are bounded together. Matching,
 montage optimization/rendering and thumbnail mipmapping can run independent sections
-concurrently. Whole-stack operations remain coordinated and can use the full CPU budget.
+concurrently. Whole-stack operations remain coordinated and use the full CPU budget (until
+0.3.9 they ran with the workers-per-section count: fine matching with 16 of 32 cores in the
+CPU preset). The mipmap steps take whole sections per worker, as on the PC, as far as the
+job's memory allows.
 The implementation does not combine RAM across nodes and does not make FEABAS an MPI
 application. A cluster job is not automatically faster than your 64-core/512 GB workstation.
 
@@ -178,8 +182,19 @@ Use the same preprocessing, stitching, masking, alignment and export pages. Batc
 run at LRZ; interactive previews and editing remain on the PC. Settings and authored
 masks are uploaded with each request. Large masks/checkpoints travel with the chosen
 transfer method before computation is submitted. Changing scientific settings archives
-affected remote outputs so FEABAS does not silently reuse stale results. These archives
-consume storage space.
+the remote outputs of the steps those settings decide, and of the steps after them, so FEABAS
+does not silently reuse stale results: a new render setting archives the rendered stack, not
+the matching behind it. The cluster view marks the same steps stale before you submit. These
+archives consume storage space (`.workbench-cluster/previous` in the remote work folder).
+
+**What follows this PC, and what does not.** Cluster mode works on its own copy of the
+project's inputs. When you switch cluster mode on, and before each request, that copy takes
+over the coordinate files and the section order if the ones on this PC are newer (the log
+says so; LRZ then starts again from tile matching). Coordinates written in cluster mode are
+newer and stay. Masks, detections and manual matches are tied to the thumbnails of the side
+they were made on and are not sent on their own: the log counts the ones this PC has newer,
+and **Advanced → Copy this PC's masks into the cluster copy…** carries them over when the
+thumbnails on both sides were made with the same settings.
 
 Pipeline state, progress, logs and memory estimates return to the GUI. Small previews
 arrive over SSH. Larger preview/model caches follow over SSH or through Globus; wait for
@@ -208,9 +223,14 @@ Globus transfers are checked more often. Queued-job status may therefore be dela
 - Standard FEABAS HDF5 image roots, PNG metadata and TensorStore path specifications are
   relocated when an existing Windows project is mirrored. Unusual custom external output
   folders are rejected with a clear message; use the managed project folders.
-- If submission is uncertain, reconnect and refresh to recover the saved job receipt.
-  Do not create another job until the LRZ queue has been checked. The immutable request
-  package and log are retained for diagnosis.
+- A job that Slurm refuses (wrong QOS, too much memory, no access to the partition) fails at
+  once with Slurm's message; correct the request in **3 Computing power** and run the step
+  again. If a submission could not be confirmed (connection lost), Workbench looks for the job
+  itself at the next refresh - by its receipt, its log, the queue and the accounting, under
+  the job's own name `feabas-<8 characters>` - and never submits a second job for one
+  request. **Advanced → Stop waiting for a job…** is the way out for a job whose state can no
+  longer be settled; nothing is cancelled at LRZ. The request package and log are kept for
+  diagnosis.
 - Synthetic Zeiss-like data still uses filename/grid settings and explicit calibration.
   No changes were made to Zeiss microscope metadata parsing.
 

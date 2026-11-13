@@ -15,9 +15,11 @@ from pathlib import Path
 from .cluster_bundle import ClusterResources, MAX_BUNDLE_BYTES, file_hash, _portable_config
 from .cluster_workspace import CONTROL, read_json, write_json, section_tasks
 from .configs import ConfigStore, CONFIG_FILES, RESOURCE_KEYS, dump_yaml, load_yaml
+from .local_parallel import (MIPMAP_CACHE_TILES, MIPMAP_STEPS, SECTION_STEPS, input_sections, mipmap_worker_gib,
+                             selected_indices, tiles_per_section)
 from .project import VENDOR_DIR
 from .steps import (STEPS_BY_KEY, PipelineScan, cleared_keys, clear_targets, count_outputs, expected_outputs, finish_clear,
-                    step_argv, write_fine_match_list, create_snapshot)
+                    step_argv, steps_decided_by, write_fine_match_list, create_snapshot)
 
 
 def archive_outputs(root, keys, run_id):
@@ -38,16 +40,27 @@ def archive_outputs(root, keys, run_id):
     return [str(p.relative_to(root)) for p in moved]
 
 
-def changed_steps(old, new):
+# the config files of a request, and the first step of each for when the two versions cannot be compared
+CONFIG_STEPS = {"configs/stitching_configs.yaml": ("stitching", "stitch.matching"),
+                "configs/thumbnail_configs.yaml": ("thumbnail", "thumbnail.downsample"),
+                "configs/alignment_configs.yaml": ("alignment", "align.meshing")}
+
+
+def changed_steps(old, new, versions=None):
+    """The steps to archive (with everything after them) when the inputs change from *old* to *new*
+    ({file: hash}). A changed config file counts for the steps its changed settings decide - a new
+    render setting does not undo the matching - given *versions*(file) -> (old config, new config)."""
     changed = {k for k in old.keys() | new.keys() if old.get(k) != new.get(k)}
     keys = set()
     for rel in changed:
-        if rel.startswith("stitch/stitch_coord/") or rel == "configs/stitching_configs.yaml":
+        if rel.startswith("stitch/stitch_coord/"):
             keys.add("stitch.matching")
-        elif rel in {"configs/thumbnail_configs.yaml", "section_order.txt"}:
-            keys.add("thumbnail.downsample")
-        elif rel == "configs/alignment_configs.yaml":
-            keys.add("align.meshing")
+        elif rel in CONFIG_STEPS:
+            kind, first = CONFIG_STEPS[rel]
+            pair = versions(rel) if versions else None
+            keys.update(steps_decided_by(kind, *pair) if pair else [first])
+        elif rel == "section_order.txt":
+            keys.add("thumbnail.matching")       # the order decides the pairs; thumbnails and mipmaps stay
         elif "material" in rel or rel.startswith("masks/"):
             keys.add("thumbnail.matching"); keys.add("align.meshing")
         elif rel.startswith("thumbnail_align/manual_matches/"):
@@ -65,6 +78,41 @@ def scientific_config(value):
     if isinstance(value, list):
         return [scientific_config(v) for v in value]
     return value
+
+
+def mipmap_settings(root, command, manifest, resources, fanned=False):
+    """
+    This run's settings for a FEABAS mipmap stage (kind, field, values, note): the PC's 'Automatic'
+    (core.local_parallel.mipmap_plan) within the job's allocation. FEABAS's default mipmaps one section
+    at a time and starts a pool of processes per mip level with one job per tile of that level, which
+    leaves most of the allocation idle (3.6x the time for 8 small sections on 4 cores); with enough
+    sections each worker takes whole sections instead - parallel_within_section: false, same output -
+    and a larger read cache stops the re-reading of source tiles. What the project sets itself is kept.
+    """
+    from types import SimpleNamespace
+    key = command["step"]
+    kind, field, _ = SECTION_STEPS[key]
+    cs = ConfigStore(root / "configs")
+    own = manifest.get("own_mipmap_settings", {}).get(key)
+    if own is None or (key == "thumbnail.downsample" and cs.get("stitching", "rendering.driver", "image") != "image"):
+        return kind, field, {}, ""
+    cache = cs.get(kind, field + ".cache_size") if "cache_size" in own else MIPMAP_CACHE_TILES
+    values = {} if "cache_size" in own else {"cache_size": cache}
+    if fanned or "parallel_within_section" in own:
+        return kind, field, values, ""
+    try:
+        paths, indices = selected_indices(input_sections(root, key, cs), key, command.get("start"),
+                                          command.get("stop"), command.get("stride"))
+    except ValueError:
+        return kind, field, values, ""
+    n, within = len(indices), resources.cpus
+    if not (n > 1 and within > 1 and (n >= within or (n >= 4 and tiles_per_section([paths[i] for i in indices]) <= 16 * within))):
+        return kind, field, values, f"{n} section(s), one at a time with {within} workers each; {cache}-tile read cache"
+    volume = SimpleNamespace(state=SimpleNamespace(volume=SimpleNamespace(dtype=manifest.get("dtype") or "uint16")))
+    per_worker = mipmap_worker_gib(volume, cs, key, int(cache or 4))
+    workers = max(1, min(n, within, int(0.8 * resources.memory_gib // per_worker)))     # 80 % of --mem
+    values.update(parallel_within_section=False, num_workers=workers)
+    return kind, field, values, f"{n} sections, {workers} at once with one worker each; {cache}-tile read cache"
 
 
 def relocate_existing_results(root, manifest):
@@ -153,7 +201,12 @@ def install_workspace_inputs(bundle, root, manifest):
                     comparison[rel] = digest
                 elif rel.startswith("configs/") and scientific_config(load_yaml(existing)) == scientific_config(load_yaml(bundle / "inputs" / rel)):
                     comparison[rel] = digest
-        keys = changed_steps(comparison, hashes)
+        def versions(rel):
+            before, after = root / rel, bundle / "inputs" / rel
+            if before.is_file() and after.is_file() and not before.is_symlink():
+                return load_yaml(before), load_yaml(after)
+            return None
+        keys = changed_steps(comparison, hashes, versions)
         a = load_yaml(root / "configs/general_configs.yaml")
         b = load_yaml(bundle / "inputs/configs/general_configs.yaml")
         if any(a.get(k) != b.get(k) for k in ("full_resolution", "section_thickness")):
@@ -277,16 +330,33 @@ def run_commands(bundle, root, manifest):
             write_json(bundle / "heartbeat.json", dict(timestamp=time.time(), peak_memory_bytes=peak[0], memory_bytes=total))
     monitor = threading.Thread(target=sample_memory, daemon=True)
     monitor.start()
-    def execute(command, index, parallel=1):
+    def execute(command, index, parallel=1, section=None):
         work = bundle / "commands" / str(index)
         work.mkdir(parents=True, exist_ok=True)
+        env = dict(os.environ)
         shutil.copytree(root / "configs", work / "configs", dirs_exist_ok=True)
         # Whole-stack operations may use the full allocation. Section fan-out
         # uses the explicit workers-per-section budget.
         budget = resources.workers if parallel > 1 else resources.cpus
         configs = ConfigStore(work / "configs")
+        # FEABAS takes the general settings (and the defaults) from the folder it runs in, but reads the
+        # stage configs from the working directory - the project's, which carry 'workers per section'.
+        # This run's worker count and stage settings therefore reach it through the run-time hook
+        # (vendor/winfix); the copies written here record them.
+        env["FW_NUM_WORKERS"] = str(budget)
+        tuned = {}
+        if command["kind"] == "step" and command["step"] in MIPMAP_STEPS:
+            stage, field, values, note = mipmap_settings(root, command, manifest, resources, fanned=section is not None)
+            if values:
+                tuned[stage] = (field, values)
+                env["FW_STAGE_SETTINGS"] = json.dumps(dict(kind=stage, field=field, values=values))
+            if note:
+                print(f"{STEPS_BY_KEY[command['step']].label}: {note}", flush=True)
         for kind, filename in CONFIG_FILES.items():
-            dump_yaml(work / "configs" / filename, _portable_config(configs[kind].merged, budget))
+            data = _portable_config(configs[kind].merged, budget)
+            if kind in tuned:
+                data.setdefault(tuned[kind][0], {}).update(tuned[kind][1])
+            dump_yaml(work / "configs" / filename, data)
         general = load_yaml(work / "configs/general_configs.yaml")
         general.update(cpu_budget=max(1, resources.cpus // parallel), logging_directory=str(work / "logs"))
         dump_yaml(work / "configs/general_configs.yaml", general)
@@ -295,6 +365,16 @@ def run_commands(bundle, root, manifest):
             step = STEPS_BY_KEY[command["step"]]
             argv = step_argv(sys.executable, step, command.get("start"), command.get("stop"),
                              command.get("stride"), command.get("filter"), command.get("extra_args"))
+            if section:
+                # FEABAS makes thumbnails in phases, each of which lists the sections that have reached it:
+                # a section's position changes while others run, and one that overtakes an earlier section
+                # finds nothing at its own. The run-time hook (vendor/winfix) keeps every listing of this
+                # process to the named section, which is then always the first - as local parallelism does.
+                resource = work / "resources.json"
+                write_json(resource, dict(kind="thumbnail", field="downsample", workers=budget,
+                                          logging_directory=str(work / "logs"), section_name=section))
+                env["FW_LOCAL_RESOURCES_FILE"] = str(resource)
+                argv = step_argv(sys.executable, step, 0, 1)
         elif kind == "worker":
             payload = work / "payload.json"
             write_json(payload, command["payload"])
@@ -308,7 +388,7 @@ def run_commands(bundle, root, manifest):
             raise RuntimeError(f"Unsupported command type: {kind}")
         output = {}
         started = time.monotonic()
-        with subprocess.Popen(argv, cwd=work, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        with subprocess.Popen(argv, cwd=work, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True, encoding="utf-8", errors="replace", bufsize=1) as proc:
             with lock:
                 active.add(proc.pid)
@@ -353,9 +433,18 @@ def run_commands(bundle, root, manifest):
                 tasks = section_tasks(command, manifest["sections"], resources)
                 if not tasks:
                     raise RuntimeError("The selected section range is empty.")
+                names = [None] * len(tasks)
+                if step and step.key == "thumbnail.downsample" and len(tasks) > 1:
+                    # one section per process: named, in FEABAS's own order of the stitched sections
+                    inputs = input_sections(root, step.key, ConfigStore(root / "configs"))
+                    known = [p.parent.name if p.name == "metadata.txt" else p.stem for p in inputs]
+                    tasks = [t for t in tasks if t["start"] < len(known)]
+                    names = [known[t["start"]] for t in tasks]
+                    if not tasks:
+                        raise RuntimeError(f"{step.label}: no stitched sections in the selected range.")
                 concurrency = min(len(tasks), resources.section_concurrency)
                 with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
-                    futures = [pool.submit(execute, c, f"{index}-{i}", concurrency) for i, c in enumerate(tasks)]
+                    futures = [pool.submit(execute, c, f"{index}-{i}", concurrency, names[i]) for i, c in enumerate(tasks)]
                     command_results = [f.result() for f in futures]
                 if step:
                     errors = list((root / step.out_subdir).glob(step.err_glob)) if step.err_glob else []

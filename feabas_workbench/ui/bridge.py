@@ -158,7 +158,7 @@ class AppContext(QObject):
         return self.cluster
 
     def use_cluster(self, profile):
-        from ..core.cluster_workspace import save_profile, view_project
+        from ..core.cluster_workspace import refresh_view, save_profile, view_project
         backend = self.cluster_setup()
         if backend.busy or (backend.running and self.cluster_enabled) or self.jobs.queue.running:
             raise RuntimeError("Wait for the active cluster operation before changing its settings.")
@@ -166,10 +166,14 @@ class AppContext(QObject):
         save_profile(self.local_project, profile)
         backend.profile = profile
         self.project = view_project(self.local_project)
+        # the view is a copy made once: bring in what was written on this PC since (coordinates, section order)
+        notes = refresh_view(self.local_project, self.project)
         self.configs = ConfigStore(self.local_project.configs_dir)
         self.cluster_enabled = True
         self.project_changed.emit(self.project)
         self.execution_changed.emit()
+        for note in notes:
+            self.log(note, "warn")
 
     def use_local(self):
         """Back to This PC. Submitted LRZ jobs and Globus transfers keep running; the backend

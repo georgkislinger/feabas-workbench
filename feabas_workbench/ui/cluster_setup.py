@@ -16,7 +16,7 @@ from ..core.cluster_bundle import PARTITIONS, remote_path
 from ..core.cluster_transport import project_folder
 from ..core.cluster_storage import (ENVIRONMENT_BYTES, STORAGE_FACTOR, estimate_project_bytes, fit_warning, is_home,
                                     preprocessing_copies, project_storage_path, raw_image_bytes, storage_message)
-from ..core.cluster_workspace import local_globus_path, resources_for, save_profile, sync_scope, write_json
+from ..core.cluster_workspace import TERMINAL, local_globus_path, resources_for, save_profile, sync_scope, write_json
 
 LRZ_COLLECTION = "c3f32bba-797e-11e6-8435-22000b97daec"
 STORAGE_DOC = "https://doku.lrz.de/file-systems-and-io-on-linux-cluster-10745972.html"
@@ -147,6 +147,12 @@ class ClusterSetupDialog(QDialog):
         b.clicked.connect(self._retry_transfer); form.addRow(b)
         b = QPushButton("Download completed exports")
         b.clicked.connect(lambda: self.backend.download_exports()); form.addRow(b)
+        b = QPushButton("Copy this PC's masks into the cluster copy…")
+        b.setToolTip("Masks, detections and manual matches made on this PC are not sent to LRZ on their own.")
+        b.clicked.connect(self._adopt_masks); form.addRow(b)
+        b = QPushButton("Stop waiting for a job…")
+        b.setToolTip("A way out when a job's state can no longer be settled. Nothing is cancelled at LRZ.")
+        b.clicked.connect(self._forget_job); form.addRow(b)
         self.tabs.addTab(self._scrolled(advanced), "Advanced")
 
         # Tabs and the log share a splitter: drag the handle to give the log more room.
@@ -481,6 +487,42 @@ class ClusterSetupDialog(QDialog):
                 t.update(state="FAILED", details="User confirmed no matching task exists in Globus Activity")
                 self.backend.persist()
                 self.backend.status("Transfer can now be retried")
+
+    def _adopt_masks(self):
+        from ..core.cluster_workspace import adopt_local_masks, mask_changes, view_project
+        local = self.ctx.local_project
+        if self.backend.busy or self.backend.running:
+            QMessageBox.information(self, "Masks", "Wait for the running cluster job or operation first.")
+            return
+        view = view_project(local)
+        n = len(mask_changes(local, view))
+        if not n:
+            QMessageBox.information(self, "Masks", "The cluster copy already has every mask, detection and manual match "
+                                    "of this PC.")
+            return
+        if QMessageBox.question(self, "Copy this PC's masks into the cluster copy",
+                f"{n} mask, detection or manual-match file(s) on this PC are newer than the cluster copy's, or missing "
+                "from it.\n\nCopy them into the cluster copy? They are sent to LRZ with the next step. Masks are images "
+                "at thumbnail size: do this only if the thumbnails on this PC and at LRZ were made with the same "
+                "settings.\n\nWhat the cluster copy loses is kept in .workbench-cluster/replaced.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        copied = adopt_local_masks(local, view)
+        self.backend.status(f"{copied} mask file(s) of this PC copied into the cluster copy")
+        self.ctx.state_changed.emit()
+
+    def _forget_job(self):
+        waiting = [j for j in self.backend.journal if j.get("state") not in TERMINAL]
+        if not waiting:
+            QMessageBox.information(self, "Cluster jobs", "Workbench is not waiting for any cluster job.")
+            return
+        labels = [("job " + j["job_id"] if j.get("job_id") else "no job id yet") + " · " + j["state"].lower() + " · started "
+                  + time.strftime("%d %b %H:%M", time.localtime(j.get("started", 0))) + " · " + j["run_id"][:8] for j in waiting]
+        label, ok = QInputDialog.getItem(self, "Stop waiting for a job", "Workbench stops waiting for this job on this PC, "
+                                         "so the Run buttons and these settings work again.\nNothing is cancelled at LRZ: "
+                                         "a job that should stop is cancelled with Cancel in the main window.", labels, 0, False)
+        if ok:
+            self.backend.forget(waiting[labels.index(label)]["run_id"])
 
     def _retry_transfer(self):
         if self.backend.busy:

@@ -3,6 +3,111 @@
 All notable changes to FEABAS Workbench. The format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.10] – 2026-11-13
+
+### Fixed
+- **The workbench could end abruptly in the middle of a run** ("Fatal Python error: bool_dealloc") on Python
+  3.10 and 3.11 with PySide6 6.12.0, released the day after 0.3.9. That release gives away one reference to
+  `True` on every `Signal.emit()` (PYSIDE-3477). The main window has about 3,700 of them to lose and uses one
+  per job output line and per progress update (every 1.5 s): roughly 90 minutes of a running job. Python 3.12
+  and newer are not affected (`True` is immortal there), nor is the Windows executable (built with 3.12).
+  `tools/install.bat` creates a Python 3.11 environment, so installations made since 8 October can have it.
+  - New installations and updates get PySide6 below 6.12 on Python 3.10/3.11 (`pyproject.toml`).
+  - An installation that already has it is recognised at start: the workbench compensates for the lost
+    references in that session and the log says how to install another PySide6 (`tools\install.bat` again, or
+    `python -m pip install "PySide6<6.12"`).
+  - `--selfcheck` reports the PySide6 version and fails on a binding that loses references.
+
+- **Cluster mode: a job that Slurm refused locked the project.** When `sbatch` said no (wrong QOS, too much
+  memory, no access to the partition), the request stayed "submitting" for good: Refresh failed each time,
+  Cancel did nothing, every Run button answered "Wait for the current cluster job" and the cluster settings
+  that could correct the request could not be saved. The message named a "Recover job ID" button that never
+  existed.
+  - A refusal is now what it is: the step fails at once with Slurm's own message, nothing is waited for, and
+    the settings can be changed.
+  - A submission whose outcome is unknown (connection lost, `sbatch` timed out) is settled by Workbench
+    itself at the next refresh. Each request's job has its own name (`feabas-<8 characters>`), so it is
+    found by its receipt, its log file, the queue or the accounting; if Slurm knows no such job after two
+    minutes, the request failed and can be run again. No second job is ever submitted for one request.
+  - **Cluster settings → Advanced → Stop waiting for a job…** is a way out for a job whose state can no
+    longer be settled. Nothing is cancelled at LRZ.
+  - Cancelling a job that has already ended is no longer an error.
+- **Cluster mode: *Make thumbnails* failed at random with more than one simultaneous section.** Each section
+  ran as its own FEABAS process and was addressed by its position. FEABAS makes thumbnails in phases that
+  each list the sections which have reached them, so a section that overtook an earlier one found nothing at
+  its position: no thumbnail, no mask, and the job ended with "missing outputs". Every process is now given
+  its section's name, as local parallelism does. (The demo project hid this: its thumbnails are made from
+  full resolution, which every section has from the start.)
+- **Cluster mode: coordinates written on the PC were not the ones sent to LRZ.** Cluster mode works on a
+  copy of the project's inputs that was made once, when cluster mode was first used. Coordinates or a section
+  order written on the PC afterwards never reached it, and the old ones were sent without a word.
+  - When cluster mode is switched on, and before each request, the copy takes over coordinate files (with
+    the source, volume and preprocessing settings that describe them) and `section_order.txt` if the PC's
+    are newer. The log says so, and that LRZ will start again from tile matching. Coordinates written in
+    cluster mode are newer and stay.
+  - Masks, detections and manual matches are images and points at thumbnail size, so they belong to the
+    thumbnails of the side they were made on and are not sent on their own. The log counts the PC's that
+    are newer or missing, and **Cluster settings → Advanced → Copy this PC's masks into the cluster copy…**
+    carries them over on request.
+  - Whatever the copy loses is kept in `.workbench-cluster/replaced/<time>`.
+- **Cluster mode: one changed setting archived far more than it affects.** Any change in a settings file
+  moved everything from that file's first step on into the archive at LRZ: another resampling method for
+  the aligned stack, or fewer mipmap levels, also archived the meshes, the fine matches and the optimization
+  (and the next *Render* failed with "needs Optimize stack"); another tile size for the rendered montages
+  archived the tile matching too. A request now archives the steps its changed settings decide, and what
+  comes after them - the rule a local project uses for stale steps. The cluster view marks the same steps
+  stale. A new section order starts again from coarse matching, not from the thumbnails.
+- ***Optimize montage* stopped with "tile size in group 0 not consistent"** for sections whose tiles have
+  an odd height and a stage position ending in .5. FEABAS rounds a tile's two corners separately, halves to
+  the even number, so such a tile came out 1 px taller or shorter than the others (4095, 4096, 4094 for
+  three tiles of 4095 px), and FEABAS requires the tiles of a section to be one size. Odd widths had the
+  same fault without the message (FEABAS's width check tests the heights again). The run-time patch now
+  rounds the corner and keeps the size. Match files written before are repaired when *Optimize montage*
+  loads them, so the sections that failed only need that step run again - no new matching - and the log
+  says when tile sizes were set this way. Tiles that really differ in size are refused as before.
+- **Cluster mode: every step ran with the "workers per section" count**, also the steps that work on the
+  whole stack and should use the whole allocation (fine matching with 16 of 32 cores in the CPU preset; with
+  one worker per section, one process). The cluster runner wrote each step's settings into a folder of its
+  own, but FEABAS reads the stage configs from the working directory and only the general settings from
+  the folder it runs in, so that copy was never read. A step's worker count now reaches FEABAS through the
+  run-time hook (`FW_NUM_WORKERS`).
+- **Cluster mode: the mipmap steps** (*Make thumbnails* with one section at a time, *Mipmaps for PNG stack*)
+  decide as *Automatic* does on the PC, within the job's cores and memory: whole sections per worker and a
+  16-tile read cache, unless the project sets these itself. For 8 sections on 4 cores: 97 s instead of 357 s
+  (100 s on the PC).
+- **Cluster mode: previews.** Once a job's previews no longer fit the small package (64 MB, 16 MB per
+  file), every finished job downloaded all of them again into a folder of its own that was never removed.
+  They now go into one folder that is kept: files that did not change are not fetched again, and the
+  folders of earlier jobs are removed.
+- **Cluster mode: *Free this project's LRZ storage…*** measured the project with a limit of 90 seconds, too
+  short for the millions of files of a large project on a DSS container - the very projects it is for. It
+  now has an hour, and the deletion four.
+- Cluster mode: a job that ended in the moment between reading its status and asking Slurm was recorded as
+  failed although it had completed; a transfer that Globus paused (expired sign-in, endpoint offline) was
+  never looked at again; and the first synchronization uploaded this PC's test runs with the project.
+- Cluster guide and README no longer describe cluster mode as a local build of 0.3.3.
+
+### Validation
+- Reproduced on Linux with Python 3.11.18: 6.12.0 loses exactly one reference per emission, 6.11.2 and 6.11.3
+  none; the real main window aborted in `core/jobs.py` after 3,700 lines of a 5,000-line job, and runs 6,000
+  lines and exits cleanly with the compensation. Other projects report the bug for the Linux build of PySide6;
+  Windows was not tested.
+- Cluster code run end to end on one machine, as a job script under a stand-in for Slurm: all 12 steps of
+  the pipeline on 8 sections with 4 at once. With thumbnails at mip 3, *Make thumbnails* left 2 of 8
+  thumbnails missing and the job failed; with the fix, three runs from scratch gave 8 of 8 each. After all
+  changes the whole pipeline completes again, in 295 s of step time against 667 s before on the same 4
+  cores (*Mipmaps for PNG stack* 106 s against 361 s).
+- The login-node commands for submitting and finding a job run in tests against stand-ins for `sbatch`,
+  `squeue` and `sacct`: accepted, refused, timed out, found in the queue, in the accounting, by its log.
+- Tile sizes, against FEABAS 3.0.5 itself: four tiles of 4095 × 6145 px at positions ending in .5 give four
+  different sizes and FEABAS's refusal; with the patch one size from the coordinate file and from a match
+  file written before, the same boxes as FEABAS for an even size, and still a refusal for tiles of
+  100 and 90 px. The demo pipeline passes with 384 and 387 px tiles. (At 385 px it does not, with or without
+  the patch: the synthetic tiles there lie 1 px off their coordinates and one tiny montage loses its
+  matches.)
+- A test emits 200 signals and fails if any reference is lost, so a later PySide6 with the same fault shows up
+  in CI (which had passed for 0.3.9 one day before 6.12.0 appeared).
+
 ## [0.3.9] – 2026-10-07
 
 ### Added – segmentation masks exported at a mip level

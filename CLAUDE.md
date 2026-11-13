@@ -22,7 +22,10 @@
   FEABAS. (1) all platforms: `matcher.stitching_matcher` only assigns `phtm` when `compute_photometric` is true but
   returns it unconditionally, so every tile pair that passes the coarse confidence check raises `UnboundLocalError`
   and stitch matching yields no matches at all - the patch defaults that flag to true. (2) Windows: FEABAS builds
-  `file://D:/...` URLs that TensorStore rejects, rewritten to `file:///D:/...`. New projects default to the PNG
+  `file://D:/...` URLs that TensorStore rejects, rewritten to `file:///D:/...`. (3) all platforms: `Stitcher` rounds a
+  tile's two corners separately (halves to even), so an odd tile size at a position ending in .5 came out 1 px off and
+  Optimize montage stopped with "tile size in group 0 not consistent" - the patch rounds the corner and keeps the size,
+  and `set_groupings` repairs boxes of match files written before (`_true_size`: only an odd size is ever put off). New projects default to the PNG
   (`image`) render driver. The same file applies per-run settings without touching the YAML: `FW_LOCAL_RESOURCES_FILE`
   (local parallelism) and `FW_STAGE_SETTINGS` (JSON kind/field/values/cpu_budget).
 - Mipmaps (`thumbnail.downsample`, `align.downsample`) default to Local parallelism "Automatic"
@@ -72,6 +75,21 @@
   inside Slurm on the compute node, never on a login node). `ui/cluster_backend` sits behind `ctx.jobs.submit`, so the
   normal Run buttons dispatch remotely while `ctx.cluster_enabled`; `ui/cluster_setup` is the setup window. Images
   travel over SSH (default) or Globus; passwords, MFA codes and tokens are never stored.
+  Things that are easy to get wrong there: (1) FEABAS takes only `general_configs.yaml` and the `default_*` files from
+  the folder it runs in and reads the stage configs from `working_directory/configs`, so the per-command configs
+  `cluster_remote.execute` writes are a record, not what FEABAS reads - a run's worker count and stage settings go
+  through the run-time hook (`FW_NUM_WORKERS`, `FW_STAGE_SETTINGS`, and `FW_LOCAL_RESOURCES_FILE` to name the one
+  section of a fanned-out thumbnail task). (2) Every request's job is named `feabas-<run id>`; a refused `sbatch`
+  leaves `sbatch-failed` (SubmissionRejected, the step fails), an unconfirmed one is found again by `recover()`
+  (receipt, log, queue, accounting) - never leave a journal entry that nothing can settle. (3) The view is a copy:
+  `cluster_workspace.refresh_view` brings in the PC's newer coordinates and section order on 'use cluster' and before
+  each request; masks belong to one side's thumbnails and only move on request. (4) What a changed setting archives
+  at LRZ (`changed_steps`) and what the view marks stale (`remote_scan`) both come from `steps.steps_decided_by`.
+  The remote side can be run on one machine: build a bundle (`build_workspace_bundle`), copy it and the tiles to the
+  folders its manifest names and run its `job.sh` with `SLURM_JOB_ID` set.
+- PySide6 6.12.0 gives away a reference to `True` per `Signal.emit()` (PYSIDE-3477): on Python < 3.12 the GUI aborts
+  after a few thousand signals. `pyproject.toml` keeps it out there; `ui/qtcheck.py` measures at start and pads the
+  reference counts of an installation that has it; a test fails on any binding that loses references.
 - Workers in other interpreters get `core/jobs.worker_env()` on PYTHONPATH, a staged copy of the package under
   `%APPDATA%/FeabasWorkbench/worker_pkg/<version hash>` holding only `core/`, `workers/`, `vendor/` (one folder per
   version of those files, so a running worker's files are never replaced). Never put `package_root()`

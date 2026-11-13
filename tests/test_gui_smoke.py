@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -313,3 +314,23 @@ def test_log_detail_levels(app, window):
     # the main window's panel writes the choice to the settings
     window.log_panel.set_detail("warnings")
     assert window.ctx.settings.log_detail == "warnings"
+
+
+def test_qt_signals_keep_their_references(app):
+    """PySide6 6.12.0 gave away a reference to True on every Signal.emit() (PYSIDE-3477); on Python 3.10/3.11
+    the workbench aborted after a few thousand job output lines. pyproject.toml keeps that release out - if a
+    later one does the same, this says so before a long run does."""
+    from feabas_workbench.ui.qtcheck import guard_signal_references, lost_references
+    assert lost_references() == 0
+    assert guard_signal_references() == ""
+
+
+@pytest.mark.skipif(sys.version_info >= (3, 12), reason="True is immortal from Python 3.12 on")
+def test_a_binding_that_loses_references_is_compensated(app, monkeypatch):
+    from feabas_workbench.ui import qtcheck
+    monkeypatch.setattr(qtcheck, "lost_references", lambda n=200: n)
+    before = sys.getrefcount(True)
+    note = qtcheck.guard_signal_references()
+    assert "PYSIDE-3477" in note and "compensates" in note and "PySide6<6.12" in note
+    assert sys.getrefcount(True) - before > 10**9
+

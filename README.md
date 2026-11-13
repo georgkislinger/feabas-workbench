@@ -1,5 +1,9 @@
 <h1 align="center">FEABAS Workbench</h1>
 
+> **Version 0.3.10:** fixes the workbench ending abruptly in the middle of a run on Python 3.10/3.11 with PySide6
+> 6.12.0 (a fault in that PySide6 release; installations made with `tools/install.bat` since 8 October can have it) -
+> see the [changelog](CHANGELOG.md).
+>
 > **Version 0.3.9:** segmentation masks exported at a mip level (a half, a quarter, an eighth ... of the images'
 > size) go through the alignment as they are and give a stack that starts at their level, and an image stack's masks
 > keep every row and column (0.3.8 dropped every other one: clear and render again masks made with it) - see
@@ -180,7 +184,7 @@ project/
 The project folder *is* the FEABAS working directory. Your raw tiles stay where they are.
 </details>
 
-## Running at LRZ (cluster mode, local build)
+## Running at LRZ (cluster mode)
 
 The same pages and Run buttons can send the work to the LRZ Linux Cluster instead of this PC. Cluster mode is
 chosen per project and is off until you switch it on; workstation runs and their results are untouched.
@@ -247,5 +251,5 @@ Cite FEABAS for the stitching and alignment – that is where the science is:
 and, if the workbench was useful in your work, the workbench too (GitHub's *Cite this repository*
 button uses [CITATION.cff](CITATION.cff)):
 
-> Kislinger, G. (2026). *FEABAS Workbench* (version 0.3.9) [Computer software].
+> Kislinger, G. (2026). *FEABAS Workbench* (version 0.3.10) [Computer software].
 > https://github.com/georgkislinger/feabas-workbench — ORCID 0000-0002-6559-7421

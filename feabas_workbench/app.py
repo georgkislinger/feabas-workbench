@@ -72,6 +72,16 @@ def selfcheck(out: Path) -> int:
     except Exception as e:  # noqa: BLE001
         rep["problems"].append(f"worker package staging failed: {e}")
     try:
+        import PySide6
+        from .ui.qtcheck import lost_references
+        rep["pyside6"] = PySide6.__version__
+        rep["qt_signal_references_lost"] = lost_references()
+        if rep["qt_signal_references_lost"]:
+            rep["problems"].append(f"PySide6 {PySide6.__version__} gives away a reference on every Qt signal on this "
+                                   f"Python (PYSIDE-3477); install PySide6 < 6.12")
+    except Exception as e:  # noqa: BLE001
+        rep["problems"].append(f"Qt binding check failed: {e}")
+    try:
         s = Settings.load()
         rep["settings"] = {"feabas_python": s.feabas_python, "dl_python": s.dl_python}
     except Exception as e:  # noqa: BLE001
@@ -125,7 +135,9 @@ def main(argv: list[str] | None = None) -> int:
     from .ui.theme import QSS
     from .ui.main_window import MainWindow
     from .core.envs import Settings
+    from .ui.qtcheck import guard_signal_references
 
+    qt_note = guard_signal_references()          # before the first job: see ui/qtcheck.py
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(ORG_NAME)
@@ -138,6 +150,8 @@ def main(argv: list[str] | None = None) -> int:
     sys.excepthook = _excepthook_factory(lambda: holder["w"])
     win = MainWindow(settings)
     holder["w"] = win
+    if qt_note:
+        win.ctx.log(qt_note, "warn")
     win.resize(1500, 950)
     win.show()
     # Never open larger than the screen: a laptop panel (often HiDPI, so a small logical
